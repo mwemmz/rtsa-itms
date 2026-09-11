@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
@@ -20,12 +22,23 @@ from app.api import (
 )
 from app.api.health import router as health_router
 from app.api import incidents, portal, road_network, routing
+from app.core.bootstrap import run_startup_tasks
+from app.core.config import settings
 from app.ui import landing_page
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if settings.RUN_MIGRATIONS_ON_STARTUP:
+        run_startup_tasks()
+    yield
+
 
 app = FastAPI(
     title="RTSA Integrated Transport Management System",
     description="Backend API for vehicle registration, driver licensing, enforcement, toll compliance, road alerts and routing, and more.",
     version="0.8.0",
+    lifespan=lifespan,
 )
 
 app.include_router(health_router, tags=["Health"])

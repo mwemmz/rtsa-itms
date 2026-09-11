@@ -188,11 +188,16 @@ The repo ships with `render.yaml` (a Render Blueprint) defining two services:
 - **web** `rtsa-itms-api` — runs the API (`uvicorn main:app`)
 - **worker** `rtsa-itms-notification-worker` — runs the notification dispatcher
 
-Both point at the same `DATABASE_URL`. A `preDeployCommand` runs
-`alembic upgrade head && python -m scripts.seed` against Neon before each deploy,
-so migrations and demo data apply automatically. The Python version is pinned in
+Both point at the same `DATABASE_URL`. The Python version is pinned in
 `runtime.txt` (Render's native runtime reads it — there is no `pythonVersion`
 Blueprints key).
+
+> **Free-tier note:** Render's free plan supports neither `preDeployCommand` nor
+> a `releaseCommand`. Instead, the web service enables
+> `RUN_MIGRATIONS_ON_STARTUP=true` and applies
+> `alembic upgrade head` + `python -m scripts.seed` **at app startup**
+> (`app/core/bootstrap.py`), before it starts serving traffic. Both steps are
+> idempotent, so redeploys and wake-ups are safe no-ops.
 
 ### 1. Create the Neon database
 
