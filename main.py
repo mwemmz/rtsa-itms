@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import (
     accidents,
@@ -62,7 +63,14 @@ app.include_router(incidents.router)
 app.include_router(routing.router)
 app.include_router(portal.router)
 
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 
 @app.get("/", response_class=HTMLResponse)
 def root():
     return landing_page()
+
+
+@app.get("/app", response_class=HTMLResponse)
+def web_app():
+    return FileResponse("app/static/app.html")

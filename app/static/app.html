@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTSA ITMS — Web App</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>RTSA ITMS</h1>
+      <p class="brand-sub">Zambia Road Transport &amp; Safety Agency</p>
+      <div class="gold-bar"></div>
+      <form id="login-form">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" placeholder="you@example.com" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+        </div>
+        <div class="login-msg" id="login-msg"></div>
+        <button class="btn gold block" type="submit" id="login-btn">Sign in</button>
+      </form>
+      <div class="demo-hint">
+        Demo accounts:<br>
+        <code>admin@rtsa.gov.zm / admin123</code><br>
+        <code>officer@rtsa.gov.zm / officer123</code><br>
+        <code>citizen@example.com / citizen123</code>
+      </div>
+      <p class="small muted" style="text-align:center; margin-top:14px;"><a href="/">Back to site</a></p>
+    </div>
+  </div>
+
+  <div id="shell" class="hidden">
+    <aside>
+      <div class="brand">
+        <div class="logo">RTSA <span>ITMS</span></div>
+        <div class="tag">Integrated Transport Management System</div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="sidebar-foot" id="sidebar-foot">Zambia Road Transport &amp; Safety Agency</div>
+    </aside>
+    <div id="main">
+      <header>
+        <div class="page-title" id="page-title">Dashboard</div>
+        <button class="bell" id="bell" title="Notifications">B&#9875;<span class="badge hidden" id="bell-badge">0</span></button>
+        <div class="user-chip" id="user-chip"></div>
+        <button class="btn ghost sm" id="logout-btn">Sign out</button>
+      </header>
+      <main id="content"></main>
+    </div>
+  </div>
+
+  <div class="drawer hidden" id="notif-drawer">
+    <span class="close" id="notif-close">&#10005;</span>
+    <h3>Notifications</h3>
+    <div id="notif-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <div id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

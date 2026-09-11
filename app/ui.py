@@ -173,6 +173,7 @@ _PAGE = """<!DOCTYPE html>
       <div>
         <h2>Explore the API</h2>
         <ul class="links">
+          <li><a href="/app">Web App &mdash; dashboard, vehicles, fines, tolls &amp; more</a> <code>/app</code></li>
           <li><a href="/docs">Interactive documentation</a> <code>/docs</code></li>
           <li><a href="/redoc">ReDoc reference</a> <code>/redoc</code></li>
           <li><a href="/openapi.json">OpenAPI schema</a> <code>/openapi.json</code></li>
@@ -225,10 +226,10 @@ _PAGE = """<!DOCTYPE html>
         }});
         var data = await res.json();
         if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
-        tokenBox.style.display = 'block';
-        tokenBox.value = data.access_token;
+        window.localStorage.setItem('rtsa_token', data.access_token);
         msg.className = 'ok';
-        msg.textContent = 'Signed in successfully. Token below — in /docs use Authorize → Get token, or paste it straight into the field.';
+        msg.textContent = 'Signed in. Opening the web app…';
+        setTimeout(function () {{ window.location.href = '/app'; }}, 500);
       }} catch (err) {{
         msg.className = 'err';
         msg.textContent = 'Login failed: ' + err.message;
