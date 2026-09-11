@@ -68,9 +68,14 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 def root():
-    return landing_page()
+    return FileResponse("app/static/app.html")
 
 
 @app.get("/app", response_class=HTMLResponse)
 def web_app():
     return FileResponse("app/static/app.html")
+
+
+@app.get("/about", response_class=HTMLResponse)
+def about():
+    return landing_page()
