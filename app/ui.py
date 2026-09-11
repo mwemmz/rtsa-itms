@@ -228,7 +228,7 @@ _PAGE = """<!DOCTYPE html>
         tokenBox.style.display = 'block';
         tokenBox.value = data.access_token;
         msg.className = 'ok';
-        msg.textContent = 'Signed in successfully. Token copied below — you can also paste it straight into the Authorize field in /docs.';
+        msg.textContent = 'Signed in successfully. Token below — in /docs use Authorize → Get token, or paste it straight into the field.';
       }} catch (err) {{
         msg.className = 'err';
         msg.textContent = 'Login failed: ' + err.message;
