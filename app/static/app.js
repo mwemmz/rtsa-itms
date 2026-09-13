@@ -138,7 +138,7 @@ function renderNav() {
   ids.forEach(function (item) {
     var a = document.createElement("a");
     a.href = "#/" + item.id;
-    a.textContent = item.label;
+    a.innerHTML = '<span class="nav-dot" aria-hidden="true"></span>' + item.label;
     if (item.id === VIEW.id) a.className = "active";
     nav.appendChild(a);
   });
@@ -181,7 +181,7 @@ async function go(id) {
 async function doLogin(email, password, msgEl, btn) {
   msgEl.className = "login-msg";
   msgEl.textContent = "Signing in…";
-  if (btn) { btn.disabled = true; }
+  if (btn) { btn.disabled = true; btn.classList.add("loading"); }
   try {
     var data = await api("/api/auth/login", {
       method: "POST",
@@ -193,7 +193,7 @@ async function doLogin(email, password, msgEl, btn) {
     msgEl.className = "login-msg err";
     msgEl.textContent = e.message;
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.classList.remove("loading"); }
   }
 }
 

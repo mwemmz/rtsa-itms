@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
+import mimetypes
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
 
 from app.api import (
     accidents,

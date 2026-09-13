@@ -3,13 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1e242a">
+  <meta name="description" content="RTSA Integrated Transport Management System — vehicle registration, violations, fines, road tolls and route planning for Zambia.">
   <title>RTSA ITMS — Web App</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   <div id="login-screen" class="login-screen">
     <div class="login-card">
-      <h1>RTSA ITMS</h1>
+      <div class="wordmark">
+        <div class="mark" aria-hidden="true">R</div>
+        <div>
+          <h1>RTSA <span>ITMS</span></h1>
+        </div>
+      </div>
       <p class="brand-sub">Zambia Road Transport &amp; Safety Agency</p>
       <div class="gold-bar"></div>
       <form id="login-form">
@@ -36,9 +43,12 @@
 
   <div id="shell" class="hidden">
     <aside>
-      <div class="brand">
-        <div class="logo">RTSA <span>ITMS</span></div>
-        <div class="tag">Integrated Transport Management System</div>
+      <div class="sidebar-brand">
+        <div class="mark" aria-hidden="true">R</div>
+        <div>
+          <div class="logo">RTSA <span>ITMS</span></div>
+          <div class="tag">Transport Management System</div>
+        </div>
       </div>
       <nav id="nav"></nav>
       <div class="sidebar-foot" id="sidebar-foot">Zambia Road Transport &amp; Safety Agency</div>
