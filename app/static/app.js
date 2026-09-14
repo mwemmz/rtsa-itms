@@ -132,18 +132,23 @@ function ensureViewId(id) {
 }
 
 function renderNav() {
-  var nav = $("#nav");
-  nav.innerHTML = "";
   var ids = NAV[USER.role] || [];
-  ids.forEach(function (item) {
-    var a = document.createElement("a");
-    a.href = "#/" + item.id;
-    a.innerHTML = '<span class="nav-dot" aria-hidden="true"></span>' + item.label;
-    if (item.id === VIEW.id) a.className = "active";
-    nav.appendChild(a);
+  [["nav", false], ["mnav-list", true]].forEach(function (slot) {
+    var el = $("#" + slot[0]);
+    if (!el) return;
+    el.innerHTML = "";
+    ids.forEach(function (item) {
+      var a = document.createElement("a");
+      a.href = "#/" + item.id;
+      a.innerHTML = '<span class="nav-dot" aria-hidden="true"></span>' + item.label;
+      if (item.id === VIEW.id) a.className = "active";
+      el.appendChild(a);
+    });
   });
   $("#user-chip").textContent = USER.full_name + " · " + USER.role;
   $("#sidebar-foot").textContent = "Signed in as " + USER.email;
+  var mu = $("#mnav-user");
+  if (mu) mu.textContent = USER.full_name + " · " + USER.role;
 }
 
 function setTitle(t) {
@@ -213,7 +218,17 @@ async function bootstrapApp() {
   await loadRouter();
 }
 
-/* ---------------- notifications ---------------- */
+/* ---------------- notifications & mobile menu ---------------- */
+
+function openMenu() {
+  $("#mnav").classList.remove("hidden");
+  $("#overlay").classList.remove("hidden");
+}
+
+function closeMenu() {
+  $("#mnav").classList.add("hidden");
+  $("#overlay").classList.add("hidden");
+}
 
 async function refreshBell() {
   if (!getToken()) return;
@@ -890,7 +905,14 @@ function wire() {
   $("#notif-drawer").addEventListener("click", function (e) {
     if (e.target === this || e.target.id === "notif-drawer") this.classList.add("hidden");
   });
+  $("#menu-btn").addEventListener("click", openMenu);
+  $("#mnav-close").addEventListener("click", closeMenu);
+  $("#overlay").addEventListener("click", closeMenu);
+  $("#mnav-list").addEventListener("click", function (e) {
+    if (e.target.tagName === "A") closeMenu();
+  });
   window.addEventListener("hashchange", function () {
+    closeMenu();
     if (USER) loadRouter();
   });
 }

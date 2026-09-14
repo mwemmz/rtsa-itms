@@ -55,6 +55,7 @@
     </aside>
     <div id="main">
       <header>
+        <button class="menu-btn" id="menu-btn" aria-label="Open menu" aria-controls="mnav">&#9776;</button>
         <div class="page-title" id="page-title">Dashboard</div>
         <button class="bell" id="bell" title="Notifications">B&#9875;<span class="badge hidden" id="bell-badge">0</span></button>
         <div class="user-chip" id="user-chip"></div>
@@ -68,6 +69,19 @@
     <span class="close" id="notif-close">&#10005;</span>
     <h3>Notifications</h3>
     <div id="notif-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <div class="overlay hidden" id="overlay"></div>
+  <div class="mnav hidden" id="mnav" role="dialog" aria-label="Menu">
+    <div class="mnav-head">
+      <div class="wordmark">
+        <div class="mark" aria-hidden="true">R</div>
+        <div><h1>RTSA <span>ITMS</span></h1></div>
+      </div>
+      <span class="close" id="mnav-close" aria-label="Close menu">&#10005;</span>
+    </div>
+    <nav id="mnav-list"></nav>
+    <div class="mnav-user" id="mnav-user"></div>
   </div>
 
   <div id="toast"></div>
