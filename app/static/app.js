@@ -920,6 +920,7 @@ function wire() {
 window.addEventListener("DOMContentLoaded", function () {
   wire();
   if (getToken()) {
+    $("#login-screen").classList.add("hidden");
     bootstrapApp().catch(function () {
       logout();
     });
