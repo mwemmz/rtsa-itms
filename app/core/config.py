@@ -1,14 +1,33 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://localhost/rtsa_itms"
-    SECRET_KEY: str = "change-me-in-production"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    ENVIRONMENT: str = "development"
-    RUN_MIGRATIONS_ON_STARTUP: bool = False
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    database_url: str = ""
+    jwt_secret: str = "changeme"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+
+    payment_gateway_key: str = ""
+    sms_provider_key: str = ""
+    email_provider_key: str = ""
+    env: str = "development"
+
+    # Brute-force protection
+    max_login_attempts: int = 5
+    lockout_minutes: int = 15
+
+    # Rate limiting (req/min)
+    rate_limit_citizen: int = 60
+    rate_limit_service: int = 600
+
+    # Report async threshold (rows)
+    report_async_row_threshold: int = 10_000
+
+    # Idempotency TTL (hours)
+    idempotency_ttl_hours: int = 24
 
 
 settings = Settings()

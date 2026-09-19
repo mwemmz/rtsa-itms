@@ -1,78 +1,172 @@
-from datetime import datetime, timedelta, timezone
+"""JWT creation/validation, password hashing, RBAC dependency helpers."""
 
-import bcrypt
+import hashlib
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import bcrypt as _bcrypt_lib
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db
-from app.models.user import User
+from app.core.db import get_db
+from app.models.citizen import User, UserRole, UserSession
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# ---------------------------------------------------------------------------
+# Password hashing — use bcrypt directly (passlib 1.7.4 incompatible with bcrypt 4+)
+# ---------------------------------------------------------------------------
 
-ALGORITHM = "HS256"
-
-# Bcrypt only uses the first 72 bytes of a password. Truncate explicitly so
-# newer bcrypt releases (which reject long inputs instead of truncating) behave
-# identically to login checks on the same input.
-_BCRYPT_MAX_BYTES = 72
+_bearer = HTTPBearer(auto_error=False)
 
 
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(
-        password.encode("utf-8")[:_BCRYPT_MAX_BYTES], bcrypt.gensalt()
-    ).decode("utf-8")
+def hash_password(plain: str) -> str:
+    # bcrypt max input is 72 bytes; pre-hash with SHA-256 to support longer passwords
+    digest = hashlib.sha256(plain.encode()).hexdigest().encode()
+    return _bcrypt_lib.hashpw(digest, _bcrypt_lib.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    digest = hashlib.sha256(plain.encode()).hexdigest().encode()
     try:
-        return bcrypt.checkpw(
-            plain.encode("utf-8")[:_BCRYPT_MAX_BYTES], hashed.encode("utf-8")
-        )
-    except ValueError:
+        return _bcrypt_lib.checkpw(digest, hashed.encode())
+    except Exception:
         return False
 
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+# ---------------------------------------------------------------------------
+# JWT
+# ---------------------------------------------------------------------------
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def create_access_token(
+    user_id: str,
+    role: str,
+    permissions: list[str],
+    session_id: str,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    expire = _utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    payload: dict[str, Any] = {
+        "sub": user_id,
+        "roles": [role],
+        "permissions": permissions,
+        "sid": session_id,
+        "exp": expire,
+        "iat": _utcnow(),
+        "jti": str(uuid.uuid4()),
+    }
+    if extra_claims:
+        payload.update(extra_claims)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def create_refresh_token() -> tuple[str, str]:
+    """Returns (raw_token, hashed_token)."""
+    raw = secrets.token_urlsafe(48)
+    hashed = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, hashed
+
+
+def decode_token(token: str) -> dict[str, Any]:
+    try:
+        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHENTICATED", "message": str(exc)},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Request dependency — current authenticated user
+# ---------------------------------------------------------------------------
+
+def _extract_token(credentials: HTTPAuthorizationCredentials | None) -> str:
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHENTICATED", "message": "Missing Authorization header."},
+        )
+    return credentials.credentials
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+    token = _extract_token(credentials)
+    payload = decode_token(token)
+    user_id: str | None = payload.get("sub")
+    session_id: str | None = payload.get("sid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "Invalid token."})
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None or not user.is_active:
-        raise credentials_exception
+    user = db.get(User, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "User not found or inactive."})
+
+    # Verify session is still alive
+    if session_id:
+        sess = db.query(UserSession).filter(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.is_active == True,  # noqa: E712
+        ).first()
+        if sess:
+            # Normalize both sides to naive UTC for SQLite compatibility
+            exp = sess.expires_at
+            now = _utcnow()
+            if exp.tzinfo is not None:
+                exp_naive = exp.replace(tzinfo=None)
+            else:
+                exp_naive = exp
+            if exp_naive < now.replace(tzinfo=None):
+                raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "Session expired."})
+        else:
+            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED", "message": "Session revoked."})
+
     return user
 
 
-def require_role(*allowed_roles: str):
-    def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role.value not in allowed_roles:
+# ---------------------------------------------------------------------------
+# RBAC helpers
+# ---------------------------------------------------------------------------
+
+def require_roles(*allowed: UserRole):
+    """FastAPI dependency factory — raises 403 if user's role is not in allowed."""
+    def _dep(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions",
+                detail={"code": "FORBIDDEN", "message": "Insufficient permissions."},
             )
         return current_user
-    return role_checker
+    return _dep
+
+
+# Convenience shortcuts
+require_admin = require_roles(UserRole.ADMIN)
+require_officer_or_admin = require_roles(UserRole.OFFICER, UserRole.ADMIN)
+require_any_staff = require_roles(UserRole.OFFICER, UserRole.ADMIN, UserRole.INSPECTOR, UserRole.AUDITOR)
+
+
+# ---------------------------------------------------------------------------
+# OTP / MFA helpers
+# ---------------------------------------------------------------------------
+
+def generate_otp(length: int = 6) -> tuple[str, str]:
+    """Returns (plain_otp, hashed_otp)."""
+    otp = "".join([str(secrets.randbelow(10)) for _ in range(length)])
+    hashed = hashlib.sha256(otp.encode()).hexdigest()
+    return otp, hashed
+
+
+def verify_otp(plain: str, hashed: str) -> bool:
+    return hashlib.sha256(plain.encode()).hexdigest() == hashed

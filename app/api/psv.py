@@ -1,120 +1,157 @@
+"""PSV (Public Service Vehicle) Permits API."""
+
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
-from app.core.security import get_current_user
-from app.models.psv import PSVOperator, PSVPermit, PSVPermitStatus
-from app.models.user import User
-from app.models.vehicle import Vehicle
-from app.schemas.psv import (
-    PSVOperatorCreate,
-    PSVOperatorResponse,
-    PSVPermitCreate,
-    PSVPermitResponse,
-)
-from app.services.audit import log_action
+from app.core.audit import log_event
+from app.core.db import get_db
+from app.core.security import get_current_user, require_roles
+from app.models.admin import ActorType
+from app.models.citizen import User, UserRole
+from app.models.psv import PSVPermit, PSVPermitStatus, PSVRouteType
+from app.models.vehicles import Vehicle
+from app.schemas.common import PagedResponse, PaginationMeta
 
-router = APIRouter(prefix="/api/psv", tags=["PSV"])
+router = APIRouter(prefix="/v1/psv", tags=["PSV"])
+
+_STAFF = (UserRole.ADMIN, UserRole.OFFICER, UserRole.INSPECTOR)
 
 
-@router.post("/operators", response_model=PSVOperatorResponse, status_code=status.HTTP_201_CREATED)
-def register_operator(
-    payload: PSVOperatorCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    existing = db.query(PSVOperator).filter(
-        PSVOperator.licence_number == payload.licence_number
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Operator licence already exists")
-
-    operator = PSVOperator(**payload.model_dump())
-    db.add(operator)
-    db.flush()
-    log_action(db, "register", "psv_operator", str(operator.id), f"Registered {operator.name}", current_user.id)
-    db.commit()
-    db.refresh(operator)
-    return operator
+class PSVPermitCreate(BaseModel):
+    vehicle_id: str
+    operator_name: str
+    operator_nrc: str | None = None
+    route_type: PSVRouteType = PSVRouteType.URBAN
+    route_description: str | None = None
+    passenger_capacity: int
+    valid_from: datetime
+    valid_to: datetime
+    notes: str | None = None
 
 
-@router.get("/operators", response_model=list[PSVOperatorResponse])
-def list_operators(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return db.query(PSVOperator).all()
+class PSVPermitUpdate(BaseModel):
+    status: PSVPermitStatus | None = None
+    route_description: str | None = None
+    valid_to: datetime | None = None
+    notes: str | None = None
 
 
-@router.get("/operators/{operator_id}", response_model=PSVOperatorResponse)
-def get_operator(
-    operator_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    operator = db.query(PSVOperator).filter(PSVOperator.id == operator_id).first()
-    if not operator:
-        raise HTTPException(status_code=404, detail="Operator not found")
-    return operator
+class PSVPermitOut(BaseModel):
+    id: str
+    vehicle_id: str
+    permit_number: str
+    operator_name: str
+    operator_nrc: str | None
+    route_type: PSVRouteType
+    route_description: str | None
+    passenger_capacity: int
+    status: PSVPermitStatus
+    valid_from: datetime
+    valid_to: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
-@router.post("/permits", response_model=PSVPermitResponse, status_code=status.HTTP_201_CREATED)
+def _get_or_404(db: Session, permit_id: str) -> PSVPermit:
+    p = db.get(PSVPermit, permit_id)
+    if not p:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "PSV permit not found."})
+    return p
+
+
+@router.get("/health")
+def health():
+    return {"module": "psv", "status": "ok"}
+
+
+@router.post("/permits", response_model=PSVPermitOut, status_code=201)
 def issue_permit(
-    payload: PSVPermitCreate,
+    body: PSVPermitCreate,
+    current_user: User = Depends(require_roles(*_STAFF)),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    operator = db.query(PSVOperator).filter(PSVOperator.id == payload.operator_id).first()
-    if not operator:
-        raise HTTPException(status_code=404, detail="Operator not found")
-
-    vehicle = db.query(Vehicle).filter(Vehicle.id == payload.vehicle_id).first()
+    vehicle = db.get(Vehicle, body.vehicle_id)
     if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Vehicle not found."})
 
-    existing = db.query(PSVPermit).filter(
-        PSVPermit.permit_number == payload.permit_number
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Permit number already exists")
-
-    permit = PSVPermit(**payload.model_dump())
+    permit = PSVPermit(**body.model_dump(), issued_by=current_user.id)
     db.add(permit)
     db.flush()
-    log_action(
-        db, "issue_permit", "psv_permit", str(permit.id),
-        f"Permit {permit.permit_number} for {vehicle.registration_number}", current_user.id
-    )
+    log_event(db, action="PSV.PERMIT.ISSUED", actor_id=current_user.id,
+              actor_type=ActorType.OFFICER, resource_type="PSV_PERMIT", resource_id=permit.id,
+              after={"permit_number": permit.permit_number, "vehicle_id": body.vehicle_id})
     db.commit()
     db.refresh(permit)
     return permit
 
 
-@router.get("/permits", response_model=list[PSVPermitResponse])
+@router.get("/permits", response_model=PagedResponse[PSVPermitOut])
 def list_permits(
+    current_user: User = Depends(require_roles(*_STAFF)),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    limit: int = Query(default=50, le=200, ge=1),
+    cursor: str | None = None,
+    status: PSVPermitStatus | None = None,
+    route_type: PSVRouteType | None = None,
+    operator_nrc: str | None = None,
 ):
-    return db.query(PSVPermit).all()
-
-
-@router.get("/permits/vehicle/{vehicle_id}", response_model=PSVPermitResponse)
-def get_active_permit_for_vehicle(
-    vehicle_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    permit = (
-        db.query(PSVPermit)
-        .filter(
-            PSVPermit.vehicle_id == vehicle_id,
-            PSVPermit.status == PSVPermitStatus.ACTIVE,
-            PSVPermit.expiry_date >= datetime.utcnow(),
-        )
-        .first()
+    q = db.query(PSVPermit)
+    if status:
+        q = q.filter(PSVPermit.status == status)
+    if route_type:
+        q = q.filter(PSVPermit.route_type == route_type)
+    if operator_nrc:
+        q = q.filter(PSVPermit.operator_nrc == operator_nrc)
+    if cursor:
+        q = q.filter(PSVPermit.id > cursor)
+    q = q.order_by(PSVPermit.created_at.desc()).limit(limit + 1)
+    results = q.all()
+    has_more = len(results) > limit
+    items = results[:limit]
+    return PagedResponse(
+        data=items,
+        pagination=PaginationMeta(next_cursor=items[-1].id if has_more else None, has_more=has_more, limit=limit),
     )
-    if not permit:
-        raise HTTPException(status_code=404, detail="No active permit for this vehicle")
-    return permit
+
+
+@router.get("/permits/{permit_id}", response_model=PSVPermitOut)
+def get_permit(permit_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _get_or_404(db, permit_id)
+
+
+@router.put("/permits/{permit_id}", response_model=PSVPermitOut)
+def update_permit(
+    permit_id: str,
+    body: PSVPermitUpdate,
+    current_user: User = Depends(require_roles(*_STAFF)),
+    db: Session = Depends(get_db),
+):
+    p = _get_or_404(db, permit_id)
+    before = {"status": p.status.value}
+    for field, val in body.model_dump(exclude_none=True).items():
+        setattr(p, field, val)
+    log_event(db, action="PSV.PERMIT.UPDATED", actor_id=current_user.id,
+              actor_type=ActorType.OFFICER, resource_type="PSV_PERMIT", resource_id=permit_id,
+              before=before)
+    db.commit()
+    db.refresh(p)
+    return p
+
+
+@router.post("/permits/{permit_id}/suspend", response_model=PSVPermitOut)
+def suspend_permit(
+    permit_id: str,
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.OFFICER)),
+    db: Session = Depends(get_db),
+):
+    p = _get_or_404(db, permit_id)
+    p.status = PSVPermitStatus.SUSPENDED
+    log_event(db, action="PSV.PERMIT.SUSPENDED", actor_id=current_user.id,
+              actor_type=ActorType.OFFICER, resource_type="PSV_PERMIT", resource_id=permit_id)
+    db.commit()
+    db.refresh(p)
+    return p
