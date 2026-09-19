@@ -780,3 +780,17 @@ html { -webkit-text-size-adjust: 100%; }
   tbody tr:hover td { background: var(--gold-soft); }
   .drawer .item:hover { background: var(--panel-2); }
 }
+/* ---- platform modules (reports, tracker, account) ---- */
+.kvs { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 4px 0 10px; }
+.kv { display: flex; gap: 8px; align-items: baseline; font-size: 0.9rem; }
+.steps { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 14px; }
+.step { display: flex; align-items: center; gap: 10px; color: var(--ink-2); }
+.step .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-strong); flex: none; }
+.step.done { color: var(--ink); }
+.step.done .dot { background: var(--ok); border-color: var(--ok); }
+.step.current { font-weight: 600; color: var(--ink); }
+.step.current .dot { border-color: var(--gold-strong); background: var(--gold); }
+.step.failed { color: var(--err); font-weight: 600; }
+.step.failed .dot { background: var(--err); border-color: var(--err); }
+pre.mono { background: var(--gold-soft); color: var(--gold-ink); padding: 10px 12px; border-radius: 9px; overflow-x: auto; }
+h4 { margin: 0 0 8px; font-size: 0.95rem; }

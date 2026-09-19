@@ -4,6 +4,7 @@ Usage:
     python scripts/seed.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -57,6 +58,30 @@ DEFAULT_RULES = [
         "body_template": "{incident_type} reported on {road}. {description} Suggested: {suggestion}",
     },
     {
+        "trigger_event": "psv_permit_expiring",
+        "channels": "in_app,sms",
+        "title_template": "PSV permit expiring",
+        "body_template": "PSV permit {permit_number} for {registration} ({route}) expires on {expiry_date}.",
+    },
+    {
+        "trigger_event": "payment_failed",
+        "channels": "in_app",
+        "title_template": "Payment failed",
+        "body_template": "Your payment {reference} of {amount} did not go through. No money was taken.",
+    },
+    {
+        "trigger_event": "refund_issued",
+        "channels": "in_app,email",
+        "title_template": "Refund issued",
+        "body_template": "A refund of {amount} was issued against payment {reference}.",
+    },
+    {
+        "trigger_event": "new_device_login",
+        "channels": "in_app,email",
+        "title_template": "New device signed in",
+        "body_template": "Your account was accessed from a new device ({device}, {ip}). If this was not you, sign out other sessions and change your password.",
+    },
+    {
         "trigger_event": "licence_renewed",
         "channels": "in_app,email",
         "title_template": "Licence renewed",
@@ -92,7 +117,7 @@ def seed_demo_users() -> None:
         demo_users = [
             User(
                 email="admin@rtsa.gov.zm",
-                hashed_password=hash_password("admin123"),
+                hashed_password=hash_password(os.environ.get("ADMIN_INITIAL_PASSWORD") or "admin123"),
                 full_name="System Administrator",
                 role=UserRole.ADMIN,
             ),
@@ -106,6 +131,7 @@ def seed_demo_users() -> None:
                 email="citizen@example.com",
                 hashed_password=hash_password("citizen123"),
                 full_name="John Mwale",
+                phone_number="+260971000001",
                 role=UserRole.CITIZEN,
             ),
         ]

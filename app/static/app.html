@@ -22,11 +22,15 @@
       <form id="login-form">
         <div class="field">
           <label for="email">Email</label>
-          <input id="email" type="email" autocomplete="username" placeholder="you@example.com" required>
+          <input id="email" type="email" autocomplete="username" placeholder="you@example.com">
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+        </div>
+        <div class="field hidden" id="mfa-field">
+          <label for="mfa-code">Verification code</label>
+          <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
         </div>
         <div class="login-msg" id="login-msg"></div>
         <button class="btn gold block" type="submit" id="login-btn">Sign in</button>
@@ -86,5 +90,6 @@
 
   <div id="toast"></div>
   <script src="/static/app.js"></script>
+  <script src="/static/platform.js"></script>
 </body>
 </html>

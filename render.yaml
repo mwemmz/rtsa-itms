@@ -13,9 +13,20 @@ services:
         value: production
       - key: RUN_MIGRATIONS_ON_STARTUP
         value: "true"
+      - key: FORCE_HTTPS
+        value: "true"
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: SECRET_KEY
+        sync: false
+      # Fernet key for encryption at rest (MFA secrets). Generate once:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Password for the seeded admin account (otherwise the public demo default is used).
+      - key: ADMIN_INITIAL_PASSWORD
         sync: false
 
   - type: worker
@@ -31,4 +42,17 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Optional delivery providers; without them SMS/email are logged only (sandbox).
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMS_WEBHOOK_URL
+        sync: false
+      - key: SMS_WEBHOOK_TOKEN
         sync: false

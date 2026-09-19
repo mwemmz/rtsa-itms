@@ -12,3 +12,4 @@ alembic/versions/*.pyc
 .idea/
 .vscode/
 *.db
+backups/

@@ -2,13 +2,52 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://localhost/rtsa_itms"
+    # Shared team Postgres. Locally: postgresql://<user>:<password>@localhost:3330/rtsa_itms
+    DATABASE_URL: str = "postgresql://localhost:3330/rtsa_itms"
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ENVIRONMENT: str = "development"
     RUN_MIGRATIONS_ON_STARTUP: bool = False
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # --- Security -----------------------------------------------------
+    # Fernet key for encryption at rest (MFA secrets, gateway payloads).
+    # If empty a key is derived from SECRET_KEY.
+    ENCRYPTION_KEY: str = ""
+    FORCE_HTTPS: bool = False  # redirect http->https (behind Render's proxy)
+    # Only enable behind a proxy that appends the real client IP to X-Forwarded-For (Render does).
+    # When off, the header is ignored so clients cannot spoof their IP.
+    TRUST_PROXY_HEADERS: bool = False
+    CORS_ORIGINS: str = ""  # comma separated; empty = same-origin only
+    SESSION_IDLE_MINUTES: int = 30
+    MAX_LOGIN_ATTEMPTS: int = 5
+    LOCKOUT_MINUTES: int = 15
+    PASSWORD_MIN_LENGTH: int = 8
+    REQUIRE_MFA_FOR_STAFF: bool = False
+
+    # --- Notifications ------------------------------------------------
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "no-reply@rtsa.gov.zm"
+    SMS_WEBHOOK_URL: str = ""  # HTTP SMS gateway; empty = log only (sandbox)
+    SMS_WEBHOOK_TOKEN: str = ""
+
+    # --- Inter-agency ---------------------------------------------------
+    NATIONAL_ID_API_URL: str = ""  # empty = sandbox (format check only)
+    NATIONAL_ID_API_TOKEN: str = ""
+
+    # --- Performance / scalability -----------------------------------
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    SLOW_REQUEST_MS: int = 500
+    REPORT_CACHE_SECONDS: int = 30
+
+    # --- Backups / DR -------------------------------------------------
+    BACKUP_DIR: str = "backups"
+    BACKUP_RETENTION: int = 14
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

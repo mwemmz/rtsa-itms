@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 os.environ["SECRET_KEY"] = "test-secret-key"
+os.environ["TRUST_PROXY_HEADERS"] = "true"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -32,10 +33,9 @@ def _reset_rate_limit():
 
 
 def _register_and_login(role: UserRole = UserRole.ADMIN) -> str:
-    email = f"{role.value}_{uuid4().hex[:8]}@test.com"
-    payload = {"email": email, "password": "password123", "full_name": "Test User", "role": role.value}
-    resp = client.post("/api/auth/register", json=payload)
-    assert resp.status_code == 201, resp.text
+    from tests.conftest import create_user
+
+    email, _ = create_user(role.value)
     login = client.post("/api/auth/login", json={"email": email, "password": "password123"})
     assert login.status_code == 200, login.text
     return login.json()["access_token"]
