@@ -55,6 +55,11 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
    | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT lifetime (default 30)                 |
    | `ENVIRONMENT`   | `development` or `production`                       |
 
+   The team's local PostgreSQL listens on **port 3330**, so locally use
+   `DATABASE_URL=postgresql://<user>:<password>@localhost:3330/rtsa_itms`
+   (create the `rtsa_itms` database first). Security, notification, integration,
+   performance and backup variables are documented in `.env.example`.
+
    `.env` is git-ignored; never commit it.
 
 3. **Run migrations**
@@ -94,16 +99,19 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
 python -m pytest tests/ -q
 ```
 
-Tests use an in-memory-on-disk SQLite database so they run without Postgres.
+Tests use an on-disk SQLite database so they run without Postgres (`tests/test_platform.py` covers the
+platform modules; `tests/conftest.py::create_user` creates staff users directly because public registration
+cannot).
 A `conftest.py` rebuilds the schema at the start of every session.
 
 ## Background worker
 
-The notification worker:
-- polls for pending notifications and marks them sent (swap in real SMS/email
-  providers in production),
-- scans for licences expiring within 30 days and sends a `licence_expiring`
-  warning (deduplicated per day).
+The worker:
+- delivers queued SMS/email notifications (SMTP / HTTP SMS gateway when configured, sandbox logging
+  otherwise) with 3 attempts before marking them `failed`,
+- hourly, sends expiry reminders for licences, insurance, fitness certificates and PSV permits at the
+  admin-configured thresholds (default 30/14/7/1 days), once per threshold,
+- daily on PostgreSQL, writes a database backup.
 
 ```bash
 python -m app.workers.notification_worker
@@ -172,14 +180,42 @@ ready for a Leaflet/OpenLayers map), plus a live board at
 - `GET /api/portal/fines` + `POST /api/portal/fines/{id}/pay`
 - `GET /api/portal/alerts` — active incident alerts
 
-## Roles (RBAC)
+## Roles & permissions (RBAC)
 
 | Role            | Scope                                                        |
 |-----------------|--------------------------------------------------------------|
-| `citizen`       | Own vehicles/fines, apply for licences, pay                   |
-| `officer`       | Record violations, inspections, issue licences                |
-| `toll_operator` | Post toll events                                               |
-| `admin`         | User management, notification rules, audit logs, reports       |
+| `citizen`       | Own vehicles/fines/applications/payments, pay, profile & security |
+| `officer`       | Record violations, inspections, issue licences; view + export reports |
+| `toll_operator` | Post toll events; view reports                                 |
+| `admin`         | Everything, including user management, settings, integrations, ops |
+
+Roles map to 13 fine-grained permissions (`reports:export`, `payments:refund`, `settings:manage`, ...)
+that an admin can re-assign per role at runtime. Public registration only ever creates citizens;
+staff accounts are created by an admin.
+
+## Platform modules (Developer 2)
+
+Citizen self-service, payments & revenue, notifications, administration, security, reporting,
+inter-agency integration, performance, availability and scalability. Full details, interfaces for
+the other modules and the honest list of gaps: **[docs/PLATFORM.md](docs/PLATFORM.md)**;
+backup/restore and failure playbook: **[docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)**.
+
+| Area | Base path |
+|---|---|
+| Reports & analytics (JSON, CSV, Excel, PDF) | `/api/reports` |
+| Agency integration + monitoring | `/api/integration` |
+| Metrics, backups, capacity | `/api/system` |
+| Sessions, devices, MFA, password | `/api/auth` |
+| Users, permissions, settings, audit, login history | `/api/admin` |
+| Receipts, refunds, reconciliation, webhooks | `/api/payments` |
+| Citizen: vehicles, fines, applications, profile | `/api/citizen` |
+| Probes | `/health/live`, `/health/ready` |
+
+```bash
+python -m scripts.backup                   # database backup (+ --verify FILE)
+python -m scripts.restore <file> --yes     # restore (see docs/DISASTER_RECOVERY.md)
+python -m scripts.smoke_test               # 28-check end-to-end test against DATABASE_URL (non-destructive)
+```
 
 ## Deployment (Render + Neon)
 
@@ -256,10 +292,16 @@ git push -u origin main
 
 ## Security notes
 
-- Passwords hashed with bcrypt; JWTs signed with `SECRET_KEY` and auto-expire.
-- Login is rate-limited per IP (5 attempts / 5 min) to blunt brute force.
-- Logging never includes passwords, secrets, or full payment details.
+- Passwords hashed with bcrypt and checked against a length + letters/numbers policy; JWTs are bound to a
+  server-side session (logout, idle timeout, revoke-all, blocked devices all take effect immediately).
+- Brute force: per-IP throttle **and** per-account lockout (admin-configurable); every attempt is recorded.
+- Optional TOTP MFA with recovery codes; MFA secrets are encrypted at rest.
+- Payments: server-side amounts, ownership checks, idempotency keys, append-only ledger, signed webhooks.
+- Agencies use hashed, rotatable API keys with per-contract scopes, expiry and rate limits.
+- Security headers, HTTPS redirect (`FORCE_HTTPS`), CSP on the web app.
+- Logging never includes passwords, secrets, message bodies, or full payment details.
 - All secrets come from environment variables; `.env` is git-ignored.
+- **Set `ADMIN_INITIAL_PASSWORD` and `ENCRYPTION_KEY` in production** - the seeded demo accounts use publicly documented passwords.
 
 ## API surface
 

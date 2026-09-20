@@ -8,11 +8,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.timeutil import aware, utcnow
+from app.models.platform import Device, UserSession
 from app.models.user import User
+from app.services import settings as runtime_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 ALGORITHM = "HS256"
+SESSION_TOUCH_SECONDS = 30  # don't write last_seen on every single request
 
 # Bcrypt only uses the first 72 bytes of a password. Truncate explicitly so
 # newer bcrypt releases (which reject long inputs instead of truncating) behave
@@ -35,8 +39,18 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def validate_password_strength(password: str, min_length: int) -> str | None:
+    """Return a human-readable problem, or None if the password is acceptable."""
+    if len(password) < min_length:
+        return f"Password must be at least {min_length} characters"
+    if not any(c.isalpha() for c in password) or not any(c.isdigit() for c in password):
+        return "Password must contain both letters and numbers"
+    return None
+
+
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
+    to_encode.setdefault("typ", "access")
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
@@ -44,26 +58,60 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+
+def _unauthorized(detail: str = "Could not validate credentials") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
+        payload = decode_token(token)
     except JWTError:
-        raise credentials_exception
+        raise _unauthorized()
+    user_id = payload.get("sub")
+    session_id = payload.get("sid")
+    if user_id is None or session_id is None or payload.get("typ") != "access":
+        raise _unauthorized()
+
+    session = db.get(UserSession, session_id)
+    now = utcnow()
+    if session is None or str(session.user_id) != str(user_id):
+        raise _unauthorized()
+    if session.revoked_at is not None:
+        raise _unauthorized("Session has been signed out")
+    if aware(session.expires_at) <= now:
+        raise _unauthorized("Session expired")
+    idle_limit = timedelta(minutes=runtime_settings.get(db, "security.session_idle_minutes"))
+    if now - aware(session.last_seen_at) > idle_limit:
+        session.revoked_at = now
+        session.revoked_reason = "idle_timeout"
+        db.commit()
+        raise _unauthorized("Session timed out due to inactivity")
 
     user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.is_active:
-        raise credentials_exception
+        raise _unauthorized()
+
+    if session.device_id is not None:
+        device = db.get(Device, session.device_id)
+        if device is not None and device.is_blocked:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This device has been blocked")
+
+    if (now - aware(session.last_seen_at)).total_seconds() > SESSION_TOUCH_SECONDS:
+        session.last_seen_at = now
+        db.commit()
+
+    user._session_id = session.id  # type: ignore[attr-defined]
     return user
 
 

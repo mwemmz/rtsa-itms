@@ -11,7 +11,18 @@ from app.models.toll import TollTransaction
 from app.models.psv import PSVOperator, PSVPermit
 from app.models.accident import Accident, AccidentVehicle
 from app.models.payment import Payment
-from app.models.notification import Notification, NotificationRule
+from app.models.notification import Notification, NotificationPreference, NotificationRule
+from app.models.platform import (
+    AgencyClient,
+    Device,
+    IntegrationLog,
+    LoginAttempt,
+    PaymentEvent,
+    ReconciliationRun,
+    RolePermission,
+    SystemSetting,
+    UserSession,
+)
 from app.models.road_network import (
     Intersection,
     Road,
@@ -40,6 +51,16 @@ __all__ = [
     "Payment",
     "Notification",
     "NotificationRule",
+    "NotificationPreference",
+    "AgencyClient",
+    "Device",
+    "IntegrationLog",
+    "LoginAttempt",
+    "PaymentEvent",
+    "ReconciliationRun",
+    "RolePermission",
+    "SystemSetting",
+    "UserSession",
     "Road",
     "Intersection",
     "RoadSegment",

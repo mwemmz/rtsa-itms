@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import create_access_token, verify_password, get_current_user
+from app.core.security import get_current_user
+from app.services.auth import authenticate
 from app.models.driver import Driver, DriverStatus
 from app.models.enforcement import Challan, ChallanStatus, Violation
 from app.models.notification import Notification
@@ -20,7 +21,7 @@ from app.schemas.portal import (
 )
 from app.services.audit import log_action
 from app.services.notifications import notify
-from app.api.payments import generate_payment_reference
+from app.services.payments import create_payment
 
 router = APIRouter(prefix="/api/portal", tags=["Driver Portal"])
 
@@ -207,17 +208,10 @@ def renew_licence(
     if driver.status in (DriverStatus.EXPIRED, DriverStatus.SUSPENDED):
         driver.status = DriverStatus.ACTIVE
 
-    payment = Payment(
-        reference=generate_payment_reference(),
-        payment_type=PaymentType.FEE,
-        related_entity_id=driver.id,
-        amount=LICENCE_RENEWAL_FEE,
-        status=PaymentStatus.COMPLETED,
-        gateway="sandbox",
-        paid_at=datetime.utcnow(),
-        paid_by=current_user.id,
+    create_payment(
+        db, current_user, PaymentType.FEE, driver.id, LICENCE_RENEWAL_FEE,
+        description=f"Licence renewal {driver.licence_number}",
     )
-    db.add(payment)
 
     db.flush()
     log_action(
@@ -300,33 +294,7 @@ def pay_fine(
     if challan.vehicle_id not in [v.id for v in vehicles]:
         raise HTTPException(status_code=403, detail="Challan does not belong to your vehicles")
 
-    if challan.status == ChallanStatus.PAID:
-        raise HTTPException(status_code=400, detail="Challan already paid")
-
-    payment = Payment(
-        reference=generate_payment_reference(),
-        payment_type=PaymentType.FINE,
-        related_entity_id=challan.id,
-        amount=challan.penalty_amount,
-        status=PaymentStatus.COMPLETED,
-        gateway="sandbox",
-        paid_at=datetime.utcnow(),
-        paid_by=current_user.id,
-    )
-    db.add(payment)
-    challan.status = ChallanStatus.PAID
-
-    db.flush()
-    log_action(
-        db, "pay", "challan", str(challan.id),
-        f"{current_user.full_name} paid {challan.reference}", current_user.id
-    )
-    notify(
-        db,
-        current_user.id,
-        "payment_receipt",
-        {"amount": challan.penalty_amount, "reference": payment.reference},
-    )
+    payment, _ = create_payment(db, current_user, PaymentType.FINE, challan.id)
     db.commit()
     return {
         "challan_reference": challan.reference,
@@ -379,8 +347,4 @@ def login(
     password = payload.get("password")
     if not email or not password:
         raise HTTPException(status_code=400, detail="email and password required")
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
-    return {"access_token": token, "token_type": "bearer"}
+    return authenticate(db, request, email, password)

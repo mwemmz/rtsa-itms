@@ -63,6 +63,16 @@ var LICENCE_CLASSES = ["A", "B", "C", "D", "E", "F"];
 /* ---------------- API client ---------------- */
 
 function getToken() { return localStorage.getItem("rtsa_token") || ""; }
+function deviceId() {
+  try {
+    var id = localStorage.getItem("rtsa_device");
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now();
+      localStorage.setItem("rtsa_device", id);
+    }
+    return id;
+  } catch (e) { return ""; }
+}
 function setToken(t) { t ? localStorage.setItem("rtsa_token", t) : localStorage.removeItem("rtsa_token"); }
 
 async function api(path, opts) {
@@ -73,6 +83,7 @@ async function api(path, opts) {
   }
   var t = getToken();
   if (t) opts.headers["Authorization"] = "Bearer " + t;
+  opts.headers["X-Device-Id"] = deviceId();
   var res;
   try {
     res = await fetch(path, opts);
@@ -81,9 +92,9 @@ async function api(path, opts) {
   }
   var ct = res.headers.get("content-type") || "";
   var data = ct.indexOf("application/json") !== -1 ? await res.json() : null;
-  if (res.status === 401 && !/login/.test(path)) {
+  if (res.status === 401 && !/\/api\/auth\/(login|mfa)/.test(path)) {
     logout();
-    throw new Error("Session expired. Please sign in again.");
+    throw new Error((data && data.detail) || "Session expired. Please sign in again.");
   }
   if (!res.ok) {
     var detail = data && (data.detail || data.message);
@@ -122,6 +133,10 @@ var NAV = {
     { id: "planner", label: "Route planner" }
   ]
 };
+NAV.toll_operator = [
+  { id: "dashboard", label: "Home" },
+  { id: "toll", label: "Toll gates" }
+];
 var VIEW = { id: "dashboard", title: "Dashboard" };
 
 function ensureViewId(id) {
@@ -183,18 +198,50 @@ async function go(id) {
 
 /* ---------------- login / logout ---------------- */
 
+var MFA_TOKEN = null;
+
+function resetLoginForm() {
+  MFA_TOKEN = null;
+  $("#mfa-field").classList.add("hidden");
+  $("#password").closest(".field").classList.remove("hidden");
+  $("#email").closest(".field").classList.remove("hidden");
+  $("#mfa-code").value = "";
+  $("#login-btn").textContent = "Sign in";
+}
+
 async function doLogin(email, password, msgEl, btn) {
   msgEl.className = "login-msg";
-  msgEl.textContent = "Signing in…";
+  msgEl.textContent = MFA_TOKEN ? "Verifying…" : "Signing in…";
   if (btn) { btn.disabled = true; btn.classList.add("loading"); }
   try {
-    var data = await api("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email: email, password: password })
-    });
+    var data;
+    if (MFA_TOKEN) {
+      data = await api("/api/auth/mfa/verify", {
+        method: "POST",
+        body: JSON.stringify({ mfa_token: MFA_TOKEN, code: $("#mfa-code").value.trim() })
+      });
+    } else {
+      data = await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: email, password: password })
+      });
+    }
+    if (data.mfa_required) {
+      MFA_TOKEN = data.mfa_token;
+      $("#mfa-field").classList.remove("hidden");
+      $("#password").closest(".field").classList.add("hidden");
+      $("#email").closest(".field").classList.add("hidden");
+      $("#login-btn").textContent = "Verify";
+      msgEl.textContent = "Enter the 6-digit code from your authenticator app (or a recovery code).";
+      $("#mfa-code").focus();
+      return;
+    }
     setToken(data.access_token);
+    resetLoginForm();
+    msgEl.textContent = "";
     await bootstrapApp();
   } catch (e) {
+    if (MFA_TOKEN && /expired|Invalid MFA/i.test(e.message)) resetLoginForm();
     msgEl.className = "login-msg err";
     msgEl.textContent = e.message;
   } finally {
@@ -203,7 +250,12 @@ async function doLogin(email, password, msgEl, btn) {
 }
 
 function logout() {
+  var t = getToken();
+  if (t) {
+    try { fetch("/api/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + t } }); } catch (e) { /* ignore */ }
+  }
   setToken(null);
+  resetLoginForm();
   USER = null;
   $("#shell").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");

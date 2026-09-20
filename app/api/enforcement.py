@@ -16,7 +16,9 @@ from app.schemas.enforcement import (
     ViolationCreate,
     ViolationResponse,
 )
+from app.models.payment import PaymentType
 from app.services.audit import log_action
+from app.services.payments import create_payment
 from app.services.notifications import notify
 
 router = APIRouter(prefix="/api/enforcement", tags=["Enforcement"])
@@ -164,12 +166,8 @@ def pay_challan(
     if not challan:
         raise HTTPException(status_code=404, detail="Challan not found")
 
-    if challan.status == ChallanStatus.PAID:
-        raise HTTPException(status_code=400, detail="Challan already paid")
-
-    challan.status = ChallanStatus.PAID
-    db.flush()
-    log_action(db, "pay", "challan", str(challan.id), f"Paid {challan.reference}", current_user.id)
+    # Settlement (ownership check, ledger, receipt, notification) lives in the payments service.
+    create_payment(db, current_user, PaymentType.FINE, challan.id)
     db.commit()
     db.refresh(challan)
     return ChallanPaymentResult(

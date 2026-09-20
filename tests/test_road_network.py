@@ -48,11 +48,9 @@ def _seed_rules():
 
 
 def _make_user(role: str = "admin"):
-    email = f"{role}_{uuid4().hex[:8]}@test.com"
-    client.post(
-        "/api/auth/register",
-        json={"email": email, "password": "password123", "full_name": "Road Tester", "role": role},
-    )
+    from tests.conftest import create_user
+
+    email, _ = create_user(role)
     login = client.post("/api/auth/login", json={"email": email, "password": "password123"})
     assert login.status_code == 200, login.text
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
