@@ -218,7 +218,8 @@ def list_challans(
         query = query.filter(Challan.vehicle_id == vehicle_id)
     if status_filter:
         query = query.filter(Challan.status == status_filter)
-    return query.order_by(Challan.created_at.desc()).offset(skip).limit(limit).all()
+    challans = query.order_by(Challan.created_at.desc()).offset(skip).limit(limit).all()
+    return _enrich_challans(db, challans)
 
 
 @router.get("/challans/{challan_id}", response_model=ChallanResponse)

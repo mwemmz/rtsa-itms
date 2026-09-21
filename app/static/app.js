@@ -455,8 +455,10 @@ function violationRows(vs) {
 
 function challanRows(cs) {
   return cs.length
-    ? '<table><tr><th>Ref</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
+    ? '<table><tr><th>Ref</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+        var offender = c.driver_name || c.owner_name || "Unknown offender";
+        var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
+        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No challans found.</div>';
 }
