@@ -22,8 +22,10 @@ logger = get_logger("http")
 # so it is exempt from the strict policy.
 _CSP_PATHS = {"/", "/app"}
 _CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+    "default-src 'self'; script-src 'self' https://unpkg.com; "
+    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org; font-src 'self'; "
+    "connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 _HEALTH_PATHS = {"/health", "/health/live", "/health/ready"}
