@@ -122,9 +122,12 @@ var NAV = {
   ],
   officer: [
     { id: "dashboard", label: "Dashboard" },
+    { id: "vehicles", label: "Vehicles" },
+    { id: "drivers", label: "Drivers" },
     { id: "violations", label: "Record violation" },
     { id: "challans", label: "Challans" },
     { id: "toll", label: "Toll gates" },
+    { id: "alerts", label: "Road alerts" },
     { id: "planner", label: "Route planner" }
   ],
   citizen: [
