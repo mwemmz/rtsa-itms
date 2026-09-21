@@ -986,15 +986,18 @@ function renderNetworkOnMap(intersections) {
   var group = L.layerGroup();
   if (intersections && intersections.length) {
     var markers = L.layerGroup();
+    var markerBounds = L.latLngBounds([]);
     intersections.forEach(function (i) {
-      var m = L.circleMarker([i.latitude, i.longitude], {
+      var point = [Number(i.latitude), Number(i.longitude)];
+      markerBounds.extend(point);
+      var m = L.circleMarker(point, {
         radius: 5, color: "#1e242a", weight: 1,
         fillColor: "#DDAF4D", fillOpacity: 0.9
       }).addTo(markers);
       m.bindPopup("<b>" + esc(i.name) + "</b>");
     });
     group.addLayer(markers);
-    plannerMap.fitBounds(markers.getBounds().pad(0.15));
+    plannerMap.fitBounds(markerBounds.pad(0.15));
   }
   loadNetworkGeoJson(function (gj) {
     if (!gj || !gj.features || !window.L || !plannerMap) {
