@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "a7c3d91e5b20"
@@ -20,6 +21,14 @@ NOW = sa.text("(CURRENT_TIMESTAMP)")
 
 def _ts(name, **kw):
     return sa.Column(name, sa.DateTime(timezone=True), **kw)
+
+
+def _existing_notification_channel_enum():
+    if op.get_bind().dialect.name == "postgresql":
+        return postgresql.ENUM(
+            "SMS", "EMAIL", "IN_APP", name="notificationchannel", create_type=False
+        )
+    return sa.Enum("SMS", "EMAIL", "IN_APP", name="notificationchannel")
 
 
 def upgrade() -> None:
@@ -57,7 +66,7 @@ def upgrade() -> None:
         "notification_preferences",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("user_id", sa.Uuid(), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("channel", sa.Enum("SMS", "EMAIL", "IN_APP", name="notificationchannel", create_type=False),
+        sa.Column("channel", _existing_notification_channel_enum(),
                   nullable=False),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.UniqueConstraint("user_id", "channel", name="uq_notif_pref_user_channel"),
