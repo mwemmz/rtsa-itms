@@ -73,6 +73,23 @@ function deviceId() {
     return id;
   } catch (e) { return ""; }
 }
+function offlineTollQueue() {
+  try { return JSON.parse(localStorage.getItem("rtsa_offline_toll") || "[]"); }
+  catch (e) { return []; }
+}
+function saveOfflineTollQueue(items) {
+  localStorage.setItem("rtsa_offline_toll", JSON.stringify(items));
+}
+async function syncOfflineTollEvents() {
+  var items = offlineTollQueue();
+  if (!items.length) return 0;
+  for (var i = 0; i < items.length; i += 1) {
+    await api("/api/toll/offline/events", { method: "POST", body: JSON.stringify(items[i]) });
+  }
+  var result = await api("/api/toll/offline/sync", { method: "POST", body: JSON.stringify({ limit: 500 }) });
+  saveOfflineTollQueue([]);
+  return result.synced;
+}
 function setToken(t) { t ? localStorage.setItem("rtsa_token", t) : localStorage.removeItem("rtsa_token"); }
 
 async function api(path, opts) {
@@ -740,7 +757,8 @@ VIEWS.toll = async function () {
           '<div class="field"><label>Plate number</label><input name="plate_number" placeholder="e.g. BAK 123" required></div>' +
           '<div class="field"><label>Gate ID</label><input name="gate_id" placeholder="e.g. GATE-01" required></div>' +
           '<div class="field"><label>Toll amount (optional)</label><input name="toll_amount" type="number" placeholder="e.g. 30000"></div>' +
-          '<button class="btn gold" type="submit">Process event</button></form>' +
+          '<button class="btn gold" type="submit">Process event</button> ' +
+          '<button class="btn ghost" type="button" id="toll-sync">Sync queued events</button></form>' +
         '<div id="toll-result" class="small" style="margin-top:12px;"></div></div>' +
       '<div class="card"><h3>Recent toll events</h3><div id="toll-list"><div class="empty">Loading…</div></div></div>' +
     "</div>";
@@ -764,11 +782,36 @@ VIEWS.toll = async function () {
       e.target.reset();
       loadTollEvents();
     } catch (err) {
-      out.innerHTML = '<div class="error-box">' + esc(err.message) + "</div>";
+      if (/Network error/i.test(err.message)) {
+        var queued = formData(e.target);
+        queued.device_event_id = deviceId() + "-" + Date.now();
+        queued.occurred_at = new Date().toISOString();
+        queued.cached_issues = ["Compliance check captured while offline"];
+        queued.cached_checks = [];
+        var pending = offlineTollQueue();
+        pending.push(queued);
+        saveOfflineTollQueue(pending);
+        out.innerHTML = '<div class="pill amber">Saved locally. It will sync when connectivity returns.</div>';
+        e.target.reset();
+      } else {
+        out.innerHTML = '<div class="error-box">' + esc(err.message) + "</div>";
+      }
     } finally { btn.disabled = false; }
   });
 
+  $("#toll-sync").addEventListener("click", async function () {
+    var out = $("#toll-result");
+    try {
+      var count = await syncOfflineTollEvents();
+      out.innerHTML = '<div class="pill green">Synchronized ' + count + " queued event(s).</div>";
+      loadTollEvents();
+    } catch (e) { out.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+  });
+
   await loadTollEvents();
+  if (offlineTollQueue().length && navigator.onLine) {
+    try { await syncOfflineTollEvents(); loadTollEvents(); } catch (e) { /* retry from the sync button */ }
+  }
 };
 
 async function loadTollEvents() {

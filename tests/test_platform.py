@@ -83,6 +83,57 @@ def _vehicle_with_fine(owner_id, amount=50000, plate=None):
         db.close()
 
 
+def test_offline_toll_event_queue_and_sync():
+    headers, _, _ = _auth_headers("officer")
+    db = _db()
+    try:
+        vehicle = Vehicle(
+            registration_number=f"OFF{uuid4().hex[:6].upper()}",
+            owner_name="Offline Owner",
+            owner_id_number="offline-owner",
+            make="Toyota",
+            model="Corolla",
+            year=2021,
+        )
+        db.add(vehicle)
+        db.commit()
+        plate = vehicle.registration_number
+    finally:
+        db.close()
+
+    event_id = f"device-{uuid4()}"
+    queued = client.post(
+        "/api/toll/offline/events",
+        json={
+            "device_event_id": event_id,
+            "plate_number": plate,
+            "gate_id": "OFFLINE-01",
+            "occurred_at": datetime.utcnow().isoformat(),
+            "cached_compliance_result": "flagged",
+            "cached_issues": ["network unavailable"],
+        },
+        headers=headers,
+    )
+    assert queued.status_code == 201, queued.text
+    duplicate = client.post(
+        "/api/toll/offline/events",
+        json={
+            "device_event_id": event_id,
+            "plate_number": plate,
+            "gate_id": "OFFLINE-01",
+            "occurred_at": datetime.utcnow().isoformat(),
+        },
+        headers=headers,
+    )
+    assert duplicate.status_code == 201 and duplicate.json()["duplicate"] is True
+
+    synced = client.post("/api/toll/offline/sync", json={"limit": 10}, headers=headers)
+    assert synced.status_code == 200, synced.text
+    assert synced.json()["queued"] == 1
+    assert synced.json()["synced"] == 1
+    assert synced.json()["transactions"][0]["plate_number"] == plate
+
+
 # ============================ security ============================
 
 def test_public_registration_cannot_create_staff():

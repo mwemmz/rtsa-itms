@@ -135,6 +135,21 @@ If all pass → `compliant`. Otherwise → `flagged` with the failing checks,
 auto-generates an e-Challan, alerts the operator, notifies the owner, and
 records the event to the audit log.
 
+For temporary network outages, a toll device can queue an event locally and
+upload it when connectivity returns:
+
+1. `POST /api/toll/offline/events` stores a device event id, the observed plate,
+   gate, timestamp and cached checks. Repeating the same device event id is
+   idempotent.
+2. `POST /api/toll/offline/sync` re-checks each queued vehicle against the
+   central database, creates the normal toll transaction/e-Challan/audit trail,
+   and marks the event `synced` or `rejected`.
+
+The browser toll screen keeps temporary offline events in local storage and
+automatically attempts synchronization when it reconnects. Cached results are
+evidence from the device only; the central compliance result remains
+authoritative.
+
 ```bash
 curl -X POST http://localhost:8000/api/toll/events \
   -H "Authorization: Bearer <token>" \

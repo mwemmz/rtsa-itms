@@ -8,6 +8,7 @@ from app.models.licence import LicenceApplication
 from app.models.enforcement import Violation, Challan
 from app.models.anpr import ANPREvent
 from app.models.toll import TollTransaction
+from app.models.toll_offline import OfflineTollEvent
 from app.models.psv import PSVOperator, PSVPermit
 from app.models.accident import Accident, AccidentVehicle
 from app.models.payment import Payment
@@ -44,6 +45,7 @@ __all__ = [
     "Challan",
     "ANPREvent",
     "TollTransaction",
+    "OfflineTollEvent",
     "PSVOperator",
     "PSVPermit",
     "Accident",
