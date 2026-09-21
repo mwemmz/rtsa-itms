@@ -919,18 +919,20 @@ VIEWS.alerts = async function () {
 
 VIEWS.planner = async function () {
   $("#content").innerHTML =
-    '<div class="row">' +
-      '<div class="card"><h3>Plan a route <span class="subtle">(incident-aware)</span></h3>' +
-        '<div class="field"><label>From (intersection)</label><select id="from-select"></select></div>' +
-        '<div class="field"><label>To (intersection)</label><select id="to-select"></select></div>' +
-        '<label><input type="checkbox" id="avoid-incidents" checked> Avoid incidents / road closures</label>' +
-        '<div style="margin-top:12px;"><button class="btn gold" id="plan-btn">Find route</button></div>' +
-        '<div id="route-result"></div></div>' +
-      '<div class="card"><h3>Map view</h3>' +
+    '<div class="planner-layout">' +
+      '<div class="planner-top row">' +
+        '<div class="card"><h3>Plan a route <span class="subtle">(incident-aware)</span></h3>' +
+          '<div class="field"><label>From (intersection)</label><select id="from-select"></select></div>' +
+          '<div class="field"><label>To (intersection)</label><select id="to-select"></select></div>' +
+          '<label><input type="checkbox" id="avoid-incidents" checked> Avoid incidents / road closures</label>' +
+          '<div style="margin-top:12px;"><button class="btn gold" id="plan-btn">Find route</button></div>' +
+          '<div id="route-result"></div></div>' +
+        '<div class="card"><h3>Live road status</h3><div id="status-board"><div class="empty">Loading…</div></div></div>' +
+      '</div>' +
+      '<div class="card planner-map-card"><h3>Map view</h3>' +
         '<div class="small muted" style="margin:-4px 0 8px;">Road network with live incident/closure info. Click an intersection marker to inspect it.</div>' +
-        '<div id="planner-map" style="height:420px;border-radius:10px;overflow:hidden;"></div>' +
-        "</div>" +
-      '<div class="card"><h3>Live road status</h3><div id="status-board"><div class="empty">Loading…</div></div></div>' +
+        '<div id="planner-map"></div>' +
+      "</div>" +
     "</div>";
 
   var fromSel = $("#from-select"), toSel = $("#to-select");
