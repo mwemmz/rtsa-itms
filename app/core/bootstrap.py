@@ -26,6 +26,9 @@ def upgrade_database() -> None:
     logger.info("Starting Alembic upgrade to head")
     cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    # Render startup logs need the failing PostgreSQL statement when a Neon
+    # migration cannot complete. This is enabled only for the migration run.
+    cfg.set_main_option("sqlalchemy.echo", "true")
     command.upgrade(cfg, "head")
     logger.info("Alembic upgrade completed")
 
