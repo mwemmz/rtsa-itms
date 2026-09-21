@@ -35,6 +35,10 @@ def seed_database() -> None:
 
 def run_startup_tasks() -> None:
     logger.info("Running startup tasks: migrations then seed")
-    upgrade_database()
-    seed_database()
+    try:
+        upgrade_database()
+        seed_database()
+    except Exception:
+        logger.exception("Startup migration or seed failed; application cannot start")
+        raise
     logger.info("Startup tasks complete")
