@@ -107,6 +107,8 @@ async function api(path, opts) {
 /* ---------------- auth / routing ---------------- */
 
 var USER = null;
+var plannerMap = null;
+var INTERSECTIONS_BY_NAME = {};
 var NAV = {
   admin: [
     { id: "dashboard", label: "Dashboard" },
@@ -423,8 +425,10 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<table><tr><th>Type</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
-        return "<tr><td>" + esc(v.violation_type) + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+    ? '<table><tr><th>Type</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+        var offender = v.driver_name || v.owner_name || "Unknown offender";
+        var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
+        return "<tr><td>" + esc(v.violation_type) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No violations recorded.</div>';
 }
@@ -876,6 +880,10 @@ VIEWS.planner = async function () {
         '<label><input type="checkbox" id="avoid-incidents" checked> Avoid incidents / road closures</label>' +
         '<div style="margin-top:12px;"><button class="btn gold" id="plan-btn">Find route</button></div>' +
         '<div id="route-result"></div></div>' +
+      '<div class="card"><h3>Map view</h3>' +
+        '<div class="small muted" style="margin:-4px 0 8px;">Road network with live incident/closure info. Click an intersection marker to inspect it.</div>' +
+        '<div id="planner-map" style="height:420px;border-radius:10px;overflow:hidden;"></div>' +
+        "</div>" +
       '<div class="card"><h3>Live road status</h3><div id="status-board"><div class="empty">Loading…</div></div></div>' +
     "</div>";
 
@@ -885,11 +893,16 @@ VIEWS.planner = async function () {
     var opts = inters.map(function (i) { return '<option value="' + esc(i.name) + '">' + esc(i.name) + "</option>"; }).join("");
     fromSel.innerHTML = opts;
     toSel.innerHTML = opts;
+    INTERSECTIONS_BY_NAME = {};
+    inters.forEach(function (i) { INTERSECTIONS_BY_NAME[i.name] = [i.latitude, i.longitude]; });
   } catch (e) {
     fromSel.innerHTML = "<option>Network unavailable</option>";
     toSel.innerHTML = "<option>Network unavailable</option>";
     $("#status-board").innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
+
+  initPlannerMap();
+  renderNetworkOnMap(inters || []);
 
   $("#plan-btn").addEventListener("click", planRoute);
   fromSel.addEventListener("change", planRoute);
@@ -897,11 +910,138 @@ VIEWS.planner = async function () {
   await loadStatusBoard();
 };
 
+function initPlannerMap() {
+  var el = $("#planner-map");
+  if (plannerMap) {
+    if (el && !document.body.contains(plannerMap.getContainer())) {
+      plannerMap.remove();
+      plannerMap = null;
+    } else {
+      setTimeout(function () { plannerMap.invalidateSize(); }, 0);
+      return;
+    }
+  }
+  if (!el) return;
+  try {
+    plannerMap = L.map(el).setView([-15.42, 28.28], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(plannerMap);
+  } catch (e) {
+    plannerMap = null;
+  }
+}
+
+function renderNetworkOnMap(intersections) {
+  if (!window.L || !plannerMap) return;
+  var existing = plannerMap._rtsaNetwork;
+  if (existing) { plannerMap.removeLayer(existing); plannerMap._rtsaNetwork = null; }
+  var group = L.layerGroup();
+  if (intersections && intersections.length) {
+    var markers = L.layerGroup();
+    intersections.forEach(function (i) {
+      var m = L.circleMarker([i.latitude, i.longitude], {
+        radius: 5, color: "#1e242a", weight: 1,
+        fillColor: "#DDAF4D", fillOpacity: 0.9
+      }).addTo(markers);
+      m.bindPopup("<b>" + esc(i.name) + "</b>");
+    });
+    group.addLayer(markers);
+    plannerMap.fitBounds(markers.getBounds().pad(0.15));
+  }
+  loadNetworkGeoJson(function (gj) {
+    if (!gj || !gj.features || !window.L || !plannerMap) {
+      if (group.getLayers().length) group.addTo(plannerMap);
+      return;
+    }
+    var lines = L.geoJSON(gj, {
+      style: function () { return { color: "#8a94a0", weight: 2, opacity: 0.6 }; },
+      onEachFeature: function (feat, layer) {
+        var p = feat.properties || {};
+        layer.bindPopup("<b>" + esc(p.road) + "</b><br>" + p.distance_km + " km · ~" + p.travel_minutes + " min");
+      }
+    });
+    group.addLayer(lines);
+    group.addTo(plannerMap);
+  });
+  plannerMap._rtsaNetwork = group;
+}
+
+async function loadNetworkGeoJson(onReady) {
+  try {
+    var gj = await api("/api/road-network/geojson");
+    onReady(gj);
+  } catch (e) {
+    onReady(null);
+  }
+}
+
+function showRouteOnMap(r) {
+  if (!window.L || !plannerMap) return;
+  clearRouteLayers();
+  var routeLayers = [];
+  var bounds = [];
+
+  function stepCoords(s) {
+    return [INTERSECTIONS_BY_NAME[s.from_intersection], INTERSECTIONS_BY_NAME[s.to_intersection]]
+      .filter(Boolean);
+  }
+
+  (r.alternatives || []).forEach(function (alt) {
+    var pts = [];
+    alt.steps.forEach(function (s) {
+      var c = stepCoords(s);
+      if (c.length) pts.push.apply(pts, c);
+    });
+    if (pts.length < 2) return;
+    var line = L.polyline(pts, { color: "#5a6570", weight: 3, dashArray: "6 8", opacity: 0.75 });
+    line.bindPopup("<b>Alternative</b> · " + alt.total_distance_km + " km");
+    routeLayers.push(line);
+    bounds = bounds.concat(pts);
+  });
+
+  var primary = r.primary_route;
+  if (primary) {
+    var pts = [];
+    primary.steps.forEach(function (s) {
+      var c = stepCoords(s);
+      if (c.length) pts.push.apply(pts, c);
+    });
+    if (pts.length > 1) {
+      var line = L.polyline(pts, { color: "#c69a34", weight: 5, opacity: 0.95 });
+      line.bindPopup("<b>Primary route</b> · " + primary.total_distance_km + " km");
+      routeLayers.push(line);
+      bounds = bounds.concat(pts);
+    }
+  }
+
+  if (bounds.length) {
+    var startM = L.marker(bounds[0]).addTo(plannerMap);
+    startM.bindPopup("Start: " + esc(r.origin));
+    var endM = L.marker(bounds[bounds.length - 1]).addTo(plannerMap);
+    endM.bindPopup("Destination: " + esc(r.destination));
+    routeLayers.push(startM, endM);
+  }
+
+  routeLayers.forEach(function (l) { l.addTo(plannerMap); });
+  plannerMap._rtsaRoutes = routeLayers;
+  if (bounds.length > 1) plannerMap.fitBounds(L.latLngBounds(bounds).pad(0.1));
+}
+
+function clearRouteLayers() {
+  if (!plannerMap) return;
+  if (plannerMap._rtsaRoutes) {
+    plannerMap._rtsaRoutes.forEach(function (l) { plannerMap.removeLayer(l); });
+    plannerMap._rtsaRoutes = null;
+  }
+}
+
 async function planRoute() {
   var from = $("#from-select").value, to = $("#to-select").value;
   var out = $("#route-result");
   if (!from || !to) return;
-  if (from === to) { out.innerHTML = '<div class="error-box">Choose two different intersections.</div>'; return; }
+  if (from === to) { out.innerHTML = '<div class="error-box">Choose two different intersections.</div>'; clearRouteLayers(); return; }
   var avoid = $("#avoid-incidents").checked;
   out.innerHTML = '<span class="muted">Planning…</span>';
   try {
@@ -920,9 +1060,10 @@ async function planRoute() {
     }
     (r.alternatives || []).forEach(function (alt, idx) {
       blocks.push('<div class="card" style="box-shadow:none;margin:8px 0 0;padding:10px;"><b>Alternative ' + (idx + 1) + "</b> · " + alt.step_count + " steps · " +
-        alt.total_distance_km + " km · ~" + alt.total_minutes + " min</div>");
+        alt.total_distance_km + " km · ~" + alt.total_minutes + " min<br><span class='muted small'>Grey dashed line on the map</span></div>");
     });
     out.innerHTML = blocks.join("");
+    showRouteOnMap(r);
   } catch (e) {
     out.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }

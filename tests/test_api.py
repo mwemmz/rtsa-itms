@@ -177,6 +177,40 @@ def test_challan_generation_flow():
     assert first["reference"].startswith("CH-")
 
 
+def test_violation_list_identifies_offender():
+    token = _register_and_login(UserRole.OFFICER)
+    headers = _auth(token)
+    vehicle = client.post(
+        "/api/vehicles/",
+        json={
+            "registration_number": "TEST 201",
+            "owner_name": "Offender Owner",
+            "owner_id_number": "201122",
+            "make": "Toyota",
+            "model": "Yaris",
+            "year": 2020,
+        },
+        headers=headers,
+    ).json()
+
+    created = client.post(
+        "/api/enforcement/violations",
+        json={
+            "vehicle_id": vehicle["id"],
+            "violation_type": "speeding",
+            "location": "Great East Road",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    listed = client.get("/api/enforcement/violations", headers=headers)
+    assert listed.status_code == 200, listed.text
+    violation = next(item for item in listed.json() if item["id"] == created.json()["id"])
+    assert violation["owner_name"] == "Offender Owner"
+    assert violation["registration_number"] == "TEST 201"
+
+
 def test_toll_compliance_flow():
     token = _register_and_login()
     headers = _auth(token)

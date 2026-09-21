@@ -23,6 +23,10 @@ class ViolationResponse(BaseModel):
     location: str
     timestamp: datetime
     description: str | None
+    registration_number: str | None = None
+    owner_name: str | None = None
+    owner_id_number: str | None = None
+    driver_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -37,6 +41,9 @@ class ChallanResponse(BaseModel):
     due_date: datetime
     status: ChallanStatus
     created_at: datetime
+    registration_number: str | None = None
+    owner_name: str | None = None
+    driver_name: str | None = None
 
     model_config = {"from_attributes": True}
 

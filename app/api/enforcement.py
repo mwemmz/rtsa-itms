@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user, require_role
+from app.models.driver import Driver
 from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
@@ -41,6 +42,81 @@ VIOLATION_PENALTIES = {
 
 def generate_challan_reference() -> str:
     return f"CH-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
+
+
+def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
+    """Attach offender identity (vehicle plate + owner, driver name) to violations."""
+    vehicle_ids = list({v.vehicle_id for v in violations if v.vehicle_id})
+    driver_ids = list({v.driver_id for v in violations if v.driver_id})
+    vehicles = (
+        {str(x.id): x for x in db.query(Vehicle).filter(Vehicle.id.in_(vehicle_ids)).all()}
+        if vehicle_ids
+        else {}
+    )
+    drivers = (
+        {str(x.id): x for x in db.query(Driver).filter(Driver.id.in_(driver_ids)).all()}
+        if driver_ids
+        else {}
+    )
+
+    out = []
+    for v in violations:
+        veh = vehicles.get(str(v.vehicle_id)) if v.vehicle_id else None
+        drv = drivers.get(str(v.driver_id)) if v.driver_id else None
+        out.append(
+            {
+                "id": v.id,
+                "vehicle_id": v.vehicle_id,
+                "driver_id": v.driver_id,
+                "violation_type": v.violation_type,
+                "location": v.location,
+                "timestamp": v.timestamp,
+                "description": v.description,
+                "registration_number": veh.registration_number if veh else None,
+                "owner_name": veh.owner_name if veh else None,
+                "owner_id_number": veh.owner_id_number if veh else None,
+                "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
+            }
+        )
+    return out
+
+
+def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
+    """Attach offender identity to challans so dashboards identify who is charged."""
+    vehicle_ids = list({c.vehicle_id for c in challans if c.vehicle_id})
+    driver_ids = list({c.driver_id for c in challans if c.driver_id})
+    vehicles = (
+        {str(x.id): x for x in db.query(Vehicle).filter(Vehicle.id.in_(vehicle_ids)).all()}
+        if vehicle_ids
+        else {}
+    )
+    drivers = (
+        {str(x.id): x for x in db.query(Driver).filter(Driver.id.in_(driver_ids)).all()}
+        if driver_ids
+        else {}
+    )
+
+    out = []
+    for c in challans:
+        veh = vehicles.get(str(c.vehicle_id)) if c.vehicle_id else None
+        drv = drivers.get(str(c.driver_id)) if c.driver_id else None
+        out.append(
+            {
+                "id": c.id,
+                "reference": c.reference,
+                "violation_id": c.violation_id,
+                "vehicle_id": c.vehicle_id,
+                "driver_id": c.driver_id,
+                "penalty_amount": c.penalty_amount,
+                "due_date": c.due_date,
+                "status": c.status,
+                "created_at": c.created_at,
+                "registration_number": veh.registration_number if veh else None,
+                "owner_name": veh.owner_name if veh else None,
+                "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
+            }
+        )
+    return out
 
 
 def create_challan_for_violation(
@@ -124,7 +200,8 @@ def list_violations(
     query = db.query(Violation)
     if vehicle_id:
         query = query.filter(Violation.vehicle_id == vehicle_id)
-    return query.order_by(Violation.timestamp.desc()).offset(skip).limit(limit).all()
+    violations = query.order_by(Violation.timestamp.desc()).offset(skip).limit(limit).all()
+    return _enrich_violations(db, violations)
 
 
 @router.get("/challans", response_model=list[ChallanResponse])
