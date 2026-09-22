@@ -974,9 +974,10 @@ function initPlannerMap() {
   if (!el) return;
   try {
     plannerMap = L.map(el).setView([-15.42, 28.28], 13);
-    var tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    var tiles = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      subdomains: "abcd",
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
     }).addTo(plannerMap);
     var tileErrors = 0;
     tiles.on("tileerror", function () {
