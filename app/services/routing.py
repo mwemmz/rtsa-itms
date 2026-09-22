@@ -2,6 +2,9 @@ import heapq
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import httpx
+
+from app.core.config import settings
 from sqlalchemy.orm import Session
 
 from app.models.road_network import (
@@ -219,3 +222,35 @@ def find_alternative_routes(
         routes.append(candidate)
 
     return routes
+
+
+def osrm_road_geometry(
+    coords: list[tuple[float, float]],
+) -> list[list[float]] | None:
+    """Snap a list of (lat, lng) points to real OSM roads via the public OSRM server.
+
+    Returns the road-following polyline as [[lat, lng], ...], or None if the
+    OSRM server is unreachable / has no data for the area.
+    """
+    if len(coords) < 2 or not settings.OSRM_API_URL:
+        return None
+    points = ";".join(f"{lng:.6f},{lat:.6f}" for lat, lng in coords)
+    url = (
+        f"{settings.OSRM_API_URL}/{points}"
+        "?overview=full&steps=false&alternatives=false&geometries=geojson"
+    )
+    try:
+        resp = httpx.get(url, timeout=settings.OSRM_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+    routes = (data or {}).get("routes") or []
+    if not routes:
+        return None
+    geometry = routes[0].get("geometry") or {}
+    coords_geom = geometry.get("coordinates") or []
+    if len(coords_geom) < 2:
+        return None
+    # OSRM GeoJSON returns [lng, lat]; the map works in [lat, lng].
+    return [[lat, lng] for lng, lat in coords_geom]

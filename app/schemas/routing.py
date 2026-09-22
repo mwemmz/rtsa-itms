@@ -14,6 +14,8 @@ class RouteOut(BaseModel):
     total_minutes: float
     step_count: int
     steps: list[RouteStepOut]
+    # Real road-following polyline [[lat, lng], ...] from OSRM when available.
+    geometry: list[list[float]] = []
 
 
 class RouteResult(BaseModel):

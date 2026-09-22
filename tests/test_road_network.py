@@ -164,6 +164,43 @@ def test_route_planner_takes_direct_and_reroutes_around_incident():
     assert len(geo["features"]) >= 3
 
 
+def test_route_with_osrm_geometry(monkeypatch):
+    officer = _make_user("officer")
+    citizen = _make_user("citizen")
+    net = _build_network(officer)
+
+    import app.api.routing as routing_api
+
+    monkeypatch.setattr(
+        routing_api,
+        "osrm_road_geometry",
+        lambda coords: [[-15.41, 28.28], [-15.405, 28.29], [-15.40, 28.29]],
+    )
+
+    r = client.get(
+        "/api/routing/route",
+        params={
+            "from_": net["alpha"]["name"],
+            "to": net["beta"]["name"],
+            "use_osrm": True,
+        },
+        headers=citizen,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["primary_route"]["geometry"], "expected OSRM geometry on the primary route"
+    assert all(len(p) == 2 for p in body["primary_route"]["geometry"])
+
+    # Without use_osrm the geometry stays empty (offline/hermetic default).
+    r2 = client.get(
+        "/api/routing/route",
+        params={"from_": net["alpha"]["name"], "to": net["beta"]["name"]},
+        headers=citizen,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["primary_route"]["geometry"] == []
+
+
 def test_incident_broadcasts_alert_to_all_users():
     _make_user("citizen")
     officer = _make_user("officer")

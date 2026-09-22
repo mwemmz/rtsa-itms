@@ -1041,12 +1041,21 @@ function showRouteOnMap(r) {
       .filter(Boolean);
   }
 
-  (r.alternatives || []).forEach(function (alt) {
+  function coordsFor(rt) {
+    // Prefer real road geometry from OSRM; fall back to intersection points.
+    if (rt.geometry && rt.geometry.length >= 2) {
+      return rt.geometry.map(function (p) { return [Number(p[0]), Number(p[1])]; });
+    }
     var pts = [];
-    alt.steps.forEach(function (s) {
+    rt.steps.forEach(function (s) {
       var c = stepCoords(s);
       if (c.length) pts.push.apply(pts, c);
     });
+    return pts;
+  }
+
+  (r.alternatives || []).forEach(function (alt) {
+    var pts = coordsFor(alt);
     if (pts.length < 2) return;
     var line = L.polyline(pts, { color: "#5a6570", weight: 3, dashArray: "6 8", opacity: 0.75 });
     line.bindPopup("<b>Alternative</b> · " + alt.total_distance_km + " km");
@@ -1056,11 +1065,7 @@ function showRouteOnMap(r) {
 
   var primary = r.primary_route;
   if (primary) {
-    var pts = [];
-    primary.steps.forEach(function (s) {
-      var c = stepCoords(s);
-      if (c.length) pts.push.apply(pts, c);
-    });
+    var pts = coordsFor(primary);
     if (pts.length > 1) {
       var line = L.polyline(pts, { color: "#c69a34", weight: 5, opacity: 0.95 });
       line.bindPopup("<b>Primary route</b> · " + primary.total_distance_km + " km");
@@ -1098,7 +1103,7 @@ async function planRoute() {
   var avoid = $("#avoid-incidents").checked;
   out.innerHTML = '<span class="muted">Planning…</span>';
   try {
-    var r = await api("/api/routing/route?from_=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&avoid_incidents=" + avoid + "&include_alternatives=true");
+    var r = await api("/api/routing/route?from_=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&avoid_incidents=" + avoid + "&include_alternatives=true&use_osrm=true");
     var blocks = [];
     if (r.primary_route) {
       blocks.push('<div class="card" style="box-shadow:none;margin:10px 0 0;padding:10px;"><b>Primary route</b> · ' + r.primary_route.step_count + " steps · " +

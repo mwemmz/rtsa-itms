@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     NATIONAL_ID_API_URL: str = ""  # empty = sandbox (format check only)
     NATIONAL_ID_API_TOKEN: str = ""
 
+    # --- Routing -------------------------------------------------------
+    # Public OSRM demo server (OpenStreetMap routing engine). Exchange our
+    # intersection-graph route for real OSM road geometry in the map view.
+    OSRM_API_URL: str = "https://router.project-osrm.org/route/v1/driving"
+    OSRM_TIMEOUT: float = 6.0
+
     # --- Performance / scalability -----------------------------------
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20

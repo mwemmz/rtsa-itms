@@ -11,6 +11,7 @@ from app.services.routing import (
     active_blocking_segments,
     find_alternative_routes,
     find_route,
+    osrm_road_geometry,
 )
 
 router = APIRouter(prefix="/api/routing", tags=["Routing"])
@@ -29,6 +30,7 @@ def plan_route(
     to: str,
     include_alternatives: bool = True,
     avoid_incidents: bool = True,
+    use_osrm: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -44,6 +46,26 @@ def plan_route(
 
     route = find_route(db, str(origin.id), str(destination.id), avoid_incidents=avoid_incidents)
 
+    # Resolve intersection names -> (lat, lng) so OSRM can snap a route to real roads.
+    name_to_coords = (
+        {i.name: (i.latitude, i.longitude) for i in db.query(Intersection).all()}
+        if use_osrm
+        else {}
+    )
+
+    def snap_route(out: RouteOut) -> RouteOut:
+        coords = []
+        for s in out.steps:
+            start = name_to_coords.get(s.from_intersection)
+            end = name_to_coords.get(s.to_intersection)
+            if start and (not coords or coords[-1] != start):
+                coords.append(start)
+            if end and (not coords or coords[-1] != end):
+                coords.append(end)
+        if use_osrm and len(coords) >= 2:
+            out.geometry = osrm_road_geometry(coords) or []
+        return out
+
     alternatives: list[RouteOut] = []
     if include_alternatives and route.steps:
         alt_routes = find_alternative_routes(
@@ -52,20 +74,22 @@ def plan_route(
         for alt in alt_routes[1:]:
             if alt.steps:
                 alternatives.append(
-                    RouteOut(
-                        total_distance_km=alt.total_distance_km,
-                        total_minutes=alt.total_minutes,
-                        step_count=alt.step_count,
-                        steps=[
-                            {
-                                "from_intersection": s.from_intersection,
-                                "to_intersection": s.to_intersection,
-                                "road_name": s.road_name,
-                                "distance_km": s.distance_km,
-                                "travel_minutes": s.travel_minutes,
-                            }
-                            for s in alt.steps
-                        ],
+                    snap_route(
+                        RouteOut(
+                            total_distance_km=alt.total_distance_km,
+                            total_minutes=alt.total_minutes,
+                            step_count=alt.step_count,
+                            steps=[
+                                {
+                                    "from_intersection": s.from_intersection,
+                                    "to_intersection": s.to_intersection,
+                                    "road_name": s.road_name,
+                                    "distance_km": s.distance_km,
+                                    "travel_minutes": s.travel_minutes,
+                                }
+                                for s in alt.steps
+                            ],
+                        )
                     )
                 )
 
@@ -78,20 +102,22 @@ def plan_route(
 
     primary = None
     if route.steps:
-        primary = RouteOut(
-            total_distance_km=route.total_distance_km,
-            total_minutes=route.total_minutes,
-            step_count=route.step_count,
-            steps=[
-                {
-                    "from_intersection": s.from_intersection,
-                    "to_intersection": s.to_intersection,
-                    "road_name": s.road_name,
-                    "distance_km": s.distance_km,
-                    "travel_minutes": s.travel_minutes,
-                }
-                for s in route.steps
-            ],
+        primary = snap_route(
+            RouteOut(
+                total_distance_km=route.total_distance_km,
+                total_minutes=route.total_minutes,
+                step_count=route.step_count,
+                steps=[
+                    {
+                        "from_intersection": s.from_intersection,
+                        "to_intersection": s.to_intersection,
+                        "road_name": s.road_name,
+                        "distance_km": s.distance_km,
+                        "travel_minutes": s.travel_minutes,
+                    }
+                    for s in route.steps
+                ],
+            )
         )
 
     return RouteResult(
