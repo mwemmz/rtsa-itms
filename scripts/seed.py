@@ -111,8 +111,16 @@ def seed_demo_users() -> None:
 
     db = SessionLocal()
     try:
-        if db.query(User).filter(User.email == "admin@rtsa.gov.zm").first():
-            print("Demo users already present")
+        admin = db.query(User).filter(User.email == "admin@rtsa.gov.zm").first()
+        if admin:
+            if admin.role != UserRole.ADMIN:
+                # Self-heal: if the platform admin was demoted (e.g. via the Users
+                # module) there is nobody left to grant roles back, so restore it.
+                admin.role = UserRole.ADMIN
+                db.commit()
+                print(f"Restored admin@rtsa.gov.zm role -> {admin.role.value}")
+            else:
+                print("Demo users already present")
             return
         demo_users = [
             User(
