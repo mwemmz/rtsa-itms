@@ -22,10 +22,10 @@ logger = get_logger("http")
 # so it is exempt from the strict policy.
 _CSP_PATHS = {"/", "/app"}
 _CSP = (
-    "default-src 'self'; script-src 'self' https://unpkg.com; "
-    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
     "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com; font-src 'self'; "
-    "connect-src 'self' https://unpkg.com; "
+    "connect-src 'self' https://cdn.jsdelivr.net; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 _HEALTH_PATHS = {"/health", "/health/live", "/health/ready"}
