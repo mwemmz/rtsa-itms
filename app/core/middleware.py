@@ -24,7 +24,7 @@ _CSP_PATHS = {"/", "/app"}
 _CSP = (
     "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com; font-src 'self'; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; font-src 'self'; "
     "connect-src 'self' https://cdn.jsdelivr.net; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
