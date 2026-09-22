@@ -924,8 +924,8 @@ VIEWS.planner = async function () {
     '<div class="planner-layout">' +
       '<div class="planner-top row">' +
         '<div class="card"><h3>Plan a route <span class="subtle">(incident-aware)</span></h3>' +
-          '<div class="field"><label>From (intersection)</label><select id="from-select"></select></div>' +
-          '<div class="field"><label>To (intersection)</label><select id="to-select"></select></div>' +
+          '<div class="field"><label>From</label><input id="from-select" class="loc-search" placeholder="Type an intersection…" autocomplete="off"><div class="suggest-list" id="from-suggest"></div></div>' +
+          '<div class="field"><label>To</label><input id="to-select" class="loc-search" placeholder="Type an intersection…" autocomplete="off"><div class="suggest-list" id="to-suggest"></div></div>' +
           '<label><input type="checkbox" id="avoid-incidents" checked> Avoid incidents / road closures</label>' +
           '<div style="margin-top:12px;"><button class="btn gold" id="plan-btn">Find route</button></div>' +
           '<div id="route-result"></div></div>' +
@@ -940,14 +940,13 @@ VIEWS.planner = async function () {
   var fromSel = $("#from-select"), toSel = $("#to-select");
   try {
     var inters = await api("/api/road-network/intersections");
-    var opts = inters.map(function (i) { return '<option value="' + esc(i.name) + '">' + esc(i.name) + "</option>"; }).join("");
-    fromSel.innerHTML = opts;
-    toSel.innerHTML = opts;
     INTERSECTIONS_BY_NAME = {};
     inters.forEach(function (i) { INTERSECTIONS_BY_NAME[i.name] = [i.latitude, i.longitude]; });
+    wireLocationSearch(fromSel, $("#from-suggest"), inters, planRoute);
+    wireLocationSearch(toSel, $("#to-suggest"), inters, planRoute);
   } catch (e) {
-    fromSel.innerHTML = "<option>Network unavailable</option>";
-    toSel.innerHTML = "<option>Network unavailable</option>";
+    fromSel.value = "";
+    toSel.value = "";
     $("#status-board").innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
 
@@ -955,10 +954,67 @@ VIEWS.planner = async function () {
   renderNetworkOnMap(inters || []);
 
   $("#plan-btn").addEventListener("click", planRoute);
-  fromSel.addEventListener("change", planRoute);
-  toSel.addEventListener("change", planRoute);
   await loadStatusBoard();
 };
+
+function wireLocationSearch(input, list, inters, onPick) {
+  function matches(q) {
+    return inters.filter(function (i) {
+      return i.name.toLowerCase().indexOf(q) !== -1;
+    });
+  }
+  function render(q) {
+    var ql = (q || "").toLowerCase().trim();
+    if (!ql) { list.style.display = "none"; return; }
+    var hits = matches(ql).slice(0, 8);
+    if (!hits.length) { list.style.display = "none"; return; }
+    list.innerHTML = hits.map(function (i) {
+      return '<div class="suggest-item" data-name="' + esc(i.name) + '">' + esc(i.name) + "</div>";
+    }).join("");
+    list.style.display = "block";
+  }
+  function hide() { list.style.display = "none"; }
+  function select(active) {
+    var el = active || list.querySelector(".suggest-item.select");
+    if (!el) return;
+    input.value = el.getAttribute("data-name");
+    hide();
+    onPick();
+  }
+  input.addEventListener("input", function () { render(input.value); });
+  input.addEventListener("focus", function () { render(input.value); });
+  input.addEventListener("blur", function () { setTimeout(hide, 120); });
+  input.addEventListener("keydown", function (e) {
+    var items = $$(".suggest-item", list);
+    if (e.key === "ArrowDown" && items.length) {
+      e.preventDefault();
+      var cur = items.indexOf(list.querySelector(".suggest-item.select"));
+      items.forEach(function (el) { el.classList.remove("select"); });
+      items[(cur + 1) % items.length].classList.add("select");
+    } else if (e.key === "ArrowUp" && items.length) {
+      e.preventDefault();
+      var cur = items.indexOf(list.querySelector(".suggest-item.select"));
+      items.forEach(function (el) { el.classList.remove("select"); });
+      items[(cur - 1 + items.length) % items.length].classList.add("select");
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      var sel = list.querySelector(".suggest-item.select");
+      if (sel) { select(sel); } else { planRoute(); }
+    } else if (e.key === "Escape") {
+      hide();
+    }
+  });
+  list.addEventListener("mousedown", function (e) {
+    var el = e.target.closest(".suggest-item");
+    if (el) { e.preventDefault(); select(el); }
+  });
+  list.addEventListener("mouseover", function (e) {
+    var el = e.target.closest(".suggest-item");
+    if (!el || !el.parentNode) return;
+    $$(".suggest-item", list).forEach(function (x) { x.classList.remove("select"); });
+    el.classList.add("select");
+  });
+}
 
 function initPlannerMap() {
   var el = $("#planner-map");

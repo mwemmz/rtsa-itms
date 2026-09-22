@@ -274,6 +274,31 @@ td select:focus {
   box-shadow: var(--ring);
 }
 
+/* ---------- location typeahead ---------- */
+.planner-top .field { position: relative; }
+.suggest-list {
+  display: none;
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-md);
+}
+.suggest-item {
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.suggest-item:hover,
+.suggest-item.select { background: var(--gold-soft); color: var(--gold-ink); }
+
 /* ---------- buttons ---------- */
 .btn {
   display: inline-flex;
