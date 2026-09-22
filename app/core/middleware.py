@@ -24,8 +24,8 @@ _CSP_PATHS = {"/", "/app"}
 _CSP = (
     "default-src 'self'; script-src 'self' https://unpkg.com; "
     "style-src 'self' 'unsafe-inline' https://unpkg.com; "
-    "img-src 'self' data: https://*.tile.openstreetmap.org; font-src 'self'; "
-    "connect-src 'self'; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; font-src 'self'; "
+    "connect-src 'self' https://unpkg.com; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 _HEALTH_PATHS = {"/health", "/health/live", "/health/ready"}

@@ -974,10 +974,25 @@ function initPlannerMap() {
   if (!el) return;
   try {
     plannerMap = L.map(el).setView([-15.42, 28.28], 13);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    var tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(plannerMap);
+    var tileErrors = 0;
+    tiles.on("tileerror", function () {
+      tileErrors += 1;
+      if (tileErrors === 3 && !plannerMap._rtsaTileWarned) {
+        plannerMap._rtsaTileWarned = true;
+        var oct = L.control({ position: "topleft" });
+        oct.onAdd = function () {
+          var d = L.DomUtil.create("div", "leaflet-bar");
+          d.style.cssText = "background:#fff;border:1px solid #ccc;border-radius:4px;padding:6px 10px;font-size:12px;";
+          d.innerText = "Street tiles unreachable — map shows network only";
+          return d;
+        };
+        oct.addTo(plannerMap);
+      }
+    });
   } catch (e) {
     plannerMap = null;
   }
