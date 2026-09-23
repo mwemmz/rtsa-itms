@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import mimetypes
 
 from fastapi import FastAPI
@@ -19,6 +20,7 @@ from app.api import (
     citizen,
     drivers,
     enforcement,
+    events,
     inspections,
     insurance,
     licence,
@@ -34,11 +36,13 @@ from app.api import incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
 from app.core.config import settings
 from app.core.middleware import PlatformMiddleware
+from app.services.events import hub
 from app.ui import landing_page
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    hub.bind(asyncio.get_running_loop())
     if settings.RUN_MIGRATIONS_ON_STARTUP:
         run_startup_tasks()
     yield
@@ -86,6 +90,7 @@ app.include_router(reports.router)
 app.include_router(lookup.router)
 app.include_router(integration.router)
 app.include_router(system.router)
+app.include_router(events.router)
 
 # Middleware runs bottom-up: gzip is innermost, the platform middleware
 # (HTTPS redirect, security headers, timing, metrics) is outermost.

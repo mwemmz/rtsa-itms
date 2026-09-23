@@ -70,10 +70,8 @@ def _unauthorized(detail: str = "Could not validate credentials") -> HTTPExcepti
     )
 
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> User:
+def get_user_from_token(token: str, db: Session) -> User:
+    """Resolve a (still-valid) access token to a live User, or raise 401."""
     try:
         payload = decode_token(token)
     except JWTError:
@@ -113,6 +111,13 @@ def get_current_user(
 
     user._session_id = session.id  # type: ignore[attr-defined]
     return user
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    return get_user_from_token(token, db)
 
 
 def require_role(*allowed_roles: str):

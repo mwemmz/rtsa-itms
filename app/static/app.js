@@ -277,6 +277,7 @@ function logout() {
     try { fetch("/api/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + t } }); } catch (e) { /* ignore */ }
   }
   setToken(null);
+  closeLiveStream();
   resetLoginForm();
   USER = null;
   $("#shell").classList.add("hidden");
@@ -290,6 +291,70 @@ async function bootstrapApp() {
   $("#login-screen").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   await loadRouter();
+  openLiveStream();
+}
+
+/* ---------------- live updates (SSE) ---------------- */
+
+// Which views should auto-reload when a given entity changes elsewhere.
+var LIVE_VIEWS = {
+  vehicle: ["vehicles", "challans", "dashboard"],
+  driver: ["drivers", "dashboard"],
+  challan: ["challans", "fines", "dashboard"],
+  payment: ["fines", "receipts", "challans", "payments", "reports", "dashboard"],
+  user: ["users", "audits", "dashboard"],
+  role: ["users", "audits"],
+  setting: ["settings"],
+  notification_rule: ["rules"],
+  road_incident: ["alerts", "dashboard"],
+  accident: ["alerts", "dashboard"],
+  toll_transaction: ["toll", "reports"],
+  toll_offline_event: ["toll"],
+  anpr_event: ["dashboard"],
+  inspection: ["vehicles"],
+  insurance: ["vehicles"],
+  licence_application: ["applications", "fines"],
+  agency: ["integrations"],
+  session: ["users", "account"],
+  psv_operator: ["psv"],
+  psv_permit: ["psv"]
+};
+// Views that hold in-progress user input: only toast, never auto-reload.
+var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1 };
+var LIVE_ES = null;
+var LIVE_RELOAD_TIMER = null;
+
+function openLiveStream() {
+  closeLiveStream();
+  if (!getToken()) return;
+  var es = new EventSource("/api/events/stream?token=" + encodeURIComponent(getToken()));
+  LIVE_ES = es;
+  es.onmessage = function (e) {
+    try { onLiveEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed */ }
+  };
+  es.onerror = function () {
+    if (!getToken()) closeLiveStream(); // EventSource reconnects automatically otherwise
+  };
+}
+
+function closeLiveStream() {
+  if (LIVE_ES) { try { LIVE_ES.close(); } catch (e) { /* ignore */ } LIVE_ES = null; }
+}
+
+function onLiveEvent(ev) {
+  if (!ev || !ev.entity) return;
+  if (ev.entity === "notification") { refreshBell(); return; }
+  var targets = LIVE_VIEWS[ev.entity] || [];
+  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") refreshBell();
+  if (VIEW.id && targets.indexOf(VIEW.id) !== -1) {
+    if (LIVE_FORM_VIEWS[VIEW.id]) { toast("Live update: " + (ev.action || "data") + " — refresh to see changes"); return; }
+    if (LIVE_RELOAD_TIMER) clearTimeout(LIVE_RELOAD_TIMER);
+    LIVE_RELOAD_TIMER = setTimeout(function () {
+      LIVE_RELOAD_TIMER = null;
+      if (!getToken()) return;
+      go(VIEW.id).catch(function () { /* ignore */ });
+    }, 700);
+  }
 }
 
 /* ---------------- notifications & mobile menu ---------------- */
