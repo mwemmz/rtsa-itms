@@ -128,13 +128,35 @@ def _log_outbound(db: Session, name: str, endpoint: str, code: int, ms: float, d
     db.commit()
 
 
+NATIONAL_ID_RETRIES = 2  # total attempts = 1 + this, only for network/5xx errors
+NATIONAL_ID_TIMEOUT_S = 8
+
+
+def _national_id_misconfigured() -> str | None:
+    """Human-readable problem with the registry config, or None if it's usable."""
+    url = settings.NATIONAL_ID_API_URL
+    if not url:
+        return None  # sandbox mode - not a misconfiguration
+    if not url.lower().startswith("https://") and settings.ENVIRONMENT == "production":
+        return "NATIONAL_ID_API_URL must be https:// in production (NRC numbers are PII)"
+    if not settings.NATIONAL_ID_API_TOKEN:
+        return "NATIONAL_ID_API_URL is set but NATIONAL_ID_API_TOKEN is empty"
+    return None
+
+
 def verify_national_id(db: Session, nrc: str) -> dict:
     """Verify a National Registration Card number.
 
     With ``NATIONAL_ID_API_URL`` configured the request is forwarded to the
-    registry. Otherwise a **sandbox** result is returned: the number is only
-    format-checked and the response says so explicitly, so nobody mistakes it
-    for a real identity check.
+    registry (GET ``{url}?nrc=...``, bearer token, expects a JSON body with at
+    least ``{"verified": bool}`` and optionally ``"full_name"``). Otherwise a
+    **sandbox** result is returned: the number is only format-checked and the
+    response says so explicitly, so nobody mistakes it for a real identity check.
+
+    Transient failures (timeout, connection error, 5xx) are retried a couple of
+    times with a short backoff before giving up - registries like this are
+    sometimes flaky, and NRC verification is usually on a human's critical path
+    (issuing a licence, registering a vehicle).
     """
     nrc = nrc.strip()
     if not NRC_PATTERN.match(nrc):
@@ -146,17 +168,45 @@ def verify_national_id(db: Session, nrc: str) -> dict:
                   "note": "No national ID registry configured; only the number format was checked."}
         _log_outbound(db, "National ID (sandbox)", "verify", 200, (time.perf_counter() - start) * 1000, "format check")
         return result
-    try:
-        resp = httpx.get(url, params={"nrc": nrc}, timeout=8,
-                         headers={"Authorization": f"Bearer {settings.NATIONAL_ID_API_TOKEN}"})
+    problem = _national_id_misconfigured()
+    if problem:
+        _log_outbound(db, "National ID", "verify", 500, (time.perf_counter() - start) * 1000, problem)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"National ID registry misconfigured: {problem}")
+
+    last_error: str | None = None
+    for attempt in range(NATIONAL_ID_RETRIES + 1):
+        try:
+            resp = httpx.get(url, params={"nrc": nrc}, timeout=NATIONAL_ID_TIMEOUT_S,
+                             headers={"Authorization": f"Bearer {settings.NATIONAL_ID_API_TOKEN}"})
+        except httpx.HTTPError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt < NATIONAL_ID_RETRIES:
+                time.sleep(0.3 * (attempt + 1))
+                continue
+            _log_outbound(db, "National ID", "verify", 502, (time.perf_counter() - start) * 1000, last_error[:200])
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry unavailable")
+
+        if resp.status_code >= 500 and attempt < NATIONAL_ID_RETRIES:
+            last_error = f"HTTP {resp.status_code}"
+            time.sleep(0.3 * (attempt + 1))
+            continue
+
         _log_outbound(db, "National ID", "verify", resp.status_code, (time.perf_counter() - start) * 1000, None)
-        resp.raise_for_status()
-        data = resp.json()
+        if resp.status_code >= 400:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry unavailable")
+        try:
+            data = resp.json()
+        except ValueError:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry returned an invalid response")
+        if not isinstance(data, dict):
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry returned an invalid response")
+        full_name = data.get("full_name")
         return {"nrc": nrc, "format_valid": True, "verified": bool(data.get("verified")),
-                "source": "national_id_registry", "full_name": data.get("full_name")}
-    except httpx.HTTPError as exc:
-        _log_outbound(db, "National ID", "verify", 502, (time.perf_counter() - start) * 1000, str(exc)[:200])
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry unavailable")
+                "source": "national_id_registry",
+                "full_name": full_name if isinstance(full_name, str) else None}
+
+    # Unreachable (the loop above always returns or raises), but keeps type-checkers happy.
+    raise HTTPException(status.HTTP_502_BAD_GATEWAY, "National ID registry unavailable")
 
 
 # --- monitoring ---------------------------------------------------------------------------------

@@ -14,6 +14,11 @@ class UserCreate(BaseModel):
     # Public self-registration only ever creates citizens; any other value is
     # rejected. Staff accounts are created by an administrator.
     role: UserRole = UserRole.CITIZEN
+    # CAPTCHA (only checked when the "security.captcha_enabled" setting is on).
+    # Sandbox provider: captcha_id + captcha_answer. Real provider: captcha_token.
+    captcha_id: str | None = None
+    captcha_answer: str | None = None
+    captcha_token: str | None = None
 
 
 class AdminUserCreate(BaseModel):
@@ -57,6 +62,11 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    # CAPTCHA (only checked when the "security.captcha_enabled" setting is on).
+    # Sandbox provider: captcha_id + captcha_answer. Real provider: captcha_token.
+    captcha_id: str | None = None
+    captcha_answer: str | None = None
+    captcha_token: str | None = None
 
 
 class MFAVerifyRequest(BaseModel):

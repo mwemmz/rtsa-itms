@@ -266,6 +266,86 @@ def test_mfa_enrolment_login_and_recovery_code():
     assert again.status_code == 401
 
 
+def test_admin_must_enrol_own_mfa_before_requiring_it_platform_wide():
+    admin, _, _ = _auth_headers("admin")
+    # refuses to flip the switch while the acting admin - a staff role too - has no MFA,
+    # which would otherwise lock them out of Settings the moment it takes effect
+    r = client.put("/api/admin/settings/security.require_mfa_staff", json={"value": True}, headers=admin)
+    assert r.status_code == 400 and "mfa" in r.json()["detail"].lower()
+
+
+def test_hard_mfa_enforcement_blocks_staff_until_enrolled():
+    admin, _, admin_id = _auth_headers("admin")
+    setup = client.post("/api/auth/mfa/setup", headers=admin).json()
+    assert client.post("/api/auth/mfa/enable", json={"code": totp.totp_now(setup["secret"])},
+                        headers=admin).status_code == 200
+    assert client.put("/api/admin/settings/security.require_mfa_staff", json={"value": True},
+                       headers=admin).status_code == 200
+    try:
+        h, email, _ = _auth_headers("officer")
+        # logging in succeeds (no MFA enabled yet, so no mfa_required challenge)...
+        r = _login(email)
+        assert r.status_code == 200 and r.json()["access_token"]
+        assert r.json()["mfa_setup_required"] is True
+        # ...but every endpoint except the MFA-setup ones is blocked
+        assert client.get("/api/notifications/", headers=h).status_code == 403
+        assert client.get("/api/notifications/", headers=h).json()["detail"].lower().count("mfa") > 0
+        assert client.get("/api/auth/me", headers=h).json()["mfa_setup_required"] is True
+        # citizens are unaffected by the staff-only policy
+        ch, cemail, _ = _auth_headers("citizen")
+        assert client.get("/api/notifications/", headers=ch).status_code == 200
+        # enrol, then the officer regains full access
+        setup = client.post("/api/auth/mfa/setup", headers=h).json()
+        enabled = client.post("/api/auth/mfa/enable", json={"code": totp.totp_now(setup["secret"])}, headers=h)
+        assert enabled.status_code == 200
+        assert client.get("/api/notifications/", headers=h).status_code == 200
+        assert client.get("/api/auth/me", headers=h).json()["mfa_setup_required"] is False
+    finally:
+        client.delete("/api/admin/settings/security.require_mfa_staff", headers=admin)
+        runtime_settings.invalidate_cache()
+
+
+def test_captcha_sandbox_challenge_gates_login_and_registration():
+    admin, _, _ = _auth_headers("admin")
+    assert client.put("/api/admin/settings/security.captcha_enabled", json={"value": True},
+                       headers=admin).status_code == 200
+    try:
+        challenge = client.get("/api/auth/captcha").json()
+        assert challenge["provider"] == "sandbox" and "captcha_id" in challenge and "question" in challenge
+        a, b = (int(x) for x in challenge["question"].replace("What is ", "").replace("?", "").split(" + "))
+
+        # registration without solving the captcha is rejected
+        payload = {"email": f"cap{uuid4().hex[:6]}@test.com", "password": PW, "full_name": "Cap Tester"}
+        assert client.post("/api/auth/register", json=payload).status_code == 400
+        # wrong answer is rejected
+        bad = dict(payload, captcha_id=challenge["captcha_id"], captcha_answer=str(a + b + 1))
+        assert client.post("/api/auth/register", json=bad).status_code == 400
+        # correct answer succeeds
+        good = dict(payload, captcha_id=challenge["captcha_id"], captcha_answer=str(a + b))
+        assert client.post("/api/auth/register", json=good).status_code == 201
+
+        # login is gated the same way
+        email, _ = create_user("citizen")
+        assert _login(email).status_code == 400
+        challenge2 = client.get("/api/auth/captcha").json()
+        a2, b2 = (int(x) for x in challenge2["question"].replace("What is ", "").replace("?", "").split(" + "))
+        r = client.post("/api/auth/login", json={
+            "email": email, "password": PW,
+            "captcha_id": challenge2["captcha_id"], "captcha_answer": str(a2 + b2),
+        })
+        assert r.status_code == 200
+
+        # a challenge can't be replayed with a different (or the same, twice-checked) id after tampering
+        tampered = client.get("/api/auth/captcha").json()
+        assert client.post("/api/auth/login", json={
+            "email": email, "password": PW,
+            "captcha_id": tampered["captcha_id"] + "x", "captcha_answer": "0",
+        }).status_code == 400
+    finally:
+        client.delete("/api/admin/settings/security.captcha_enabled", headers=admin)
+        runtime_settings.invalidate_cache()
+
+
 def test_totp_matches_rfc6238_vector():
     import base64
 
@@ -329,6 +409,66 @@ def test_admin_creates_staff_and_manages_users():
     # admins can't lock themselves out
     assert client.patch(f"/api/admin/users/{admin_id}", json={"is_active": False}, headers=admin).status_code == 400
     assert client.patch(f"/api/admin/users/{admin_id}/role?new_role=citizen", headers=admin).status_code == 400
+
+
+def test_cannot_remove_the_last_admin():
+    from app.core import permissions
+    from app.models.user import User, UserRole
+
+    admin, _, admin_id = _auth_headers("admin")
+    other_admin, _, other_id = _auth_headers("admin")
+
+    # The test DB is shared across the whole session, so other tests may have left
+    # admin accounts lying around. Deactivate every admin except our two so the
+    # "last admin" scenario below is deterministic regardless of run order.
+    db = _db()
+    try:
+        others = (
+            db.query(User)
+            .filter(User.role == UserRole.ADMIN, User.is_active.is_(True), User.id.notin_([admin_id, other_id]))
+            .all()
+        )
+        stashed_ids = [u.id for u in others]
+        for u in others:
+            u.is_active = False
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        # two active admins exist, so a third party may demote/deactivate either one
+        assert client.patch(f"/api/admin/users/{other_id}/role?new_role=officer", headers=admin).status_code == 200
+        assert client.patch(f"/api/admin/users/{other_id}", json={"role": "admin"}, headers=admin).status_code == 200
+        assert client.patch(f"/api/admin/users/{other_id}", json={"is_active": False}, headers=admin).status_code == 200
+        assert client.patch(f"/api/admin/users/{other_id}", json={"is_active": True, "role": "admin"},
+                             headers=admin).status_code == 200
+        # now demote `other_id` for good, leaving `admin_id` as the sole active admin
+        assert client.patch(f"/api/admin/users/{other_id}/role?new_role=officer", headers=admin).status_code == 200
+        # a third party with elevated permissions (but not the admin role itself) still can't
+        # demote or deactivate the last remaining admin, via either endpoint
+        officer, _, _ = _auth_headers("officer")
+        assert client.put("/api/admin/permissions/officer/users:manage?granted=true", headers=admin).status_code == 200
+        assert client.put("/api/admin/permissions/officer/roles:manage?granted=true", headers=admin).status_code == 200
+        permissions.invalidate_cache()
+        try:
+            assert client.patch(f"/api/admin/users/{admin_id}/role?new_role=officer",
+                                 headers=officer).status_code == 400
+            assert client.patch(f"/api/admin/users/{admin_id}", json={"is_active": False},
+                                 headers=officer).status_code == 400
+            assert client.patch(f"/api/admin/users/{admin_id}", json={"role": "officer"},
+                                 headers=officer).status_code == 400
+        finally:
+            client.put("/api/admin/permissions/officer/users:manage?granted=false", headers=admin)
+            client.put("/api/admin/permissions/officer/roles:manage?granted=false", headers=admin)
+            permissions.invalidate_cache()
+    finally:
+        db = _db()
+        try:
+            for u in db.query(User).filter(User.id.in_(stashed_ids)).all():
+                u.is_active = True
+            db.commit()
+        finally:
+            db.close()
 
 
 def test_permission_matrix_can_be_edited():
@@ -864,6 +1004,85 @@ def test_national_id_verification_is_honest_in_sandbox():
     assert r.status_code == 200 and r.json()["verified"] is False and r.json()["source"] == "sandbox"
     assert client.get("/api/integration/national-id/verify?nrc=garbage", headers=officer).status_code == 422
     assert client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=citizen).status_code == 403
+
+
+def test_national_id_real_provider_success_retry_and_bad_config(monkeypatch):
+    from app.core.config import settings as env
+    from app.services import integration as integration_service
+
+    officer, _, _ = _auth_headers("officer")
+    monkeypatch.setattr(env, "NATIONAL_ID_API_URL", "https://registry.example.gov.zm/verify")
+    monkeypatch.setattr(env, "NATIONAL_ID_API_TOKEN", "test-token")
+    monkeypatch.setattr(integration_service.time, "sleep", lambda *_: None)  # don't slow the test down
+
+    class FakeResponse:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def json(self):
+            if self._body is None:
+                raise ValueError("no body")
+            return self._body
+
+    # happy path
+    calls = []
+
+    def ok(url, params, timeout, headers):
+        calls.append(params["nrc"])
+        assert headers["Authorization"] == "Bearer test-token"
+        return FakeResponse(200, {"verified": True, "full_name": "Jane Banda"})
+
+    monkeypatch.setattr(integration_service.httpx, "get", ok)
+    r = client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer)
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"nrc": "123456/78/1", "format_valid": True, "verified": True,
+                     "source": "national_id_registry", "full_name": "Jane Banda"}
+
+    # a transient 503 is retried and then succeeds
+    attempts = {"n": 0}
+
+    def flaky(url, params, timeout, headers):
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            return FakeResponse(503, None)
+        return FakeResponse(200, {"verified": False})
+
+    monkeypatch.setattr(integration_service.httpx, "get", flaky)
+    r = client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer)
+    assert r.status_code == 200 and r.json()["verified"] is False and attempts["n"] == 2
+
+    # persistent failure surfaces as a clean 502, not a crash
+    def always_down(url, params, timeout, headers):
+        return FakeResponse(503, None)
+
+    monkeypatch.setattr(integration_service.httpx, "get", always_down)
+    assert client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer).status_code == 502
+
+    # a malformed (non-JSON / non-dict) response is also a clean 502
+    def bad_body(url, params, timeout, headers):
+        return FakeResponse(200, None)
+
+    monkeypatch.setattr(integration_service.httpx, "get", bad_body)
+    assert client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer).status_code == 502
+
+    # missing token is caught as a misconfiguration, not attempted
+    monkeypatch.setattr(env, "NATIONAL_ID_API_TOKEN", "")
+
+    def should_not_be_called(*a, **k):
+        raise AssertionError("must not call out with a missing token")
+
+    monkeypatch.setattr(integration_service.httpx, "get", should_not_be_called)
+    r = client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer)
+    assert r.status_code == 500 and "TOKEN" in r.json()["detail"]
+
+    # a non-https URL is refused in production
+    monkeypatch.setattr(env, "NATIONAL_ID_API_TOKEN", "test-token")
+    monkeypatch.setattr(env, "NATIONAL_ID_API_URL", "http://registry.example.gov.zm/verify")
+    monkeypatch.setattr(env, "ENVIRONMENT", "production")
+    r = client.get("/api/integration/national-id/verify?nrc=123456/78/1", headers=officer)
+    assert r.status_code == 500 and "https" in r.json()["detail"]
 
 
 # ============================ operations ============================

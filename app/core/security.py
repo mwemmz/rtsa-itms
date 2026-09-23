@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.timeutil import aware, utcnow
 from app.models.platform import Device, UserSession
-from app.models.user import User
+from app.models.user import STAFF_ROLES, User
 from app.services import settings as runtime_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -70,6 +70,32 @@ def _unauthorized(detail: str = "Could not validate credentials") -> HTTPExcepti
     )
 
 
+# Endpoints a staff member who still owes a mandatory MFA enrolment may still reach -
+# just enough to set MFA up, inspect their own account and get out. Everything else
+# is blocked while `security.require_mfa_staff` is on and enrolment is outstanding.
+MFA_SETUP_EXEMPT_PATHS = {
+    "/api/auth/me",
+    "/api/auth/mfa/setup",
+    "/api/auth/mfa/enable",
+    "/api/auth/logout",
+    "/api/auth/change-password",
+}
+
+
+def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
+    """Block staff who still owe a mandatory MFA enrolment, except on MFA-setup paths."""
+    if (
+        user.role in STAFF_ROLES
+        and not user.mfa_enabled
+        and runtime_settings.get(db, "security.require_mfa_staff")
+        and path not in MFA_SETUP_EXEMPT_PATHS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MFA enrolment is required for your role. Set it up via POST /api/auth/mfa/setup.",
+        )
+
+
 def get_user_from_token(token: str, db: Session) -> User:
     """Resolve a (still-valid) access token to a live User, or raise 401."""
     try:
@@ -114,10 +140,13 @@ def get_user_from_token(token: str, db: Session) -> User:
 
 
 def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    return get_user_from_token(token, db)
+    user = get_user_from_token(token, db)
+    enforce_staff_mfa(user, request.url.path, db)
+    return user
 
 
 def require_role(*allowed_roles: str):

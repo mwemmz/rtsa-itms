@@ -14,12 +14,12 @@ import asyncio
 import json
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_user_from_token
+from app.core.security import enforce_staff_mfa, get_user_from_token
 from app.models.user import User
 from app.services.events import hub
 
@@ -29,6 +29,7 @@ HEARTBEAT_SECONDS = 25
 
 
 def _auth_dependency(
+    request: Request,
     token: str | None = Query(default=None, description="Access token (EventSource cannot set headers)"),
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -40,7 +41,9 @@ def _auth_dependency(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return get_user_from_token(raw, db)
+    user = get_user_from_token(raw, db)
+    enforce_staff_mfa(user, request.url.path, db)
+    return user
 
 
 @router.get("/stream")

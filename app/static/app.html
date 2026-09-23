@@ -33,6 +33,10 @@
           <label for="mfa-code">Verification code</label>
           <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
         </div>
+        <div class="field hidden" id="captcha-field">
+          <label for="captcha-answer" id="captcha-question">Verification</label>
+          <input id="captcha-answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Your answer">
+        </div>
         <div class="login-msg" id="login-msg"></div>
         <button class="btn gold block" type="submit" id="login-btn">Sign in</button>
       </form>
@@ -43,6 +47,22 @@
         <code>citizen@example.com / citizen123</code>
       </div>
       <p class="small muted" style="text-align:center; margin-top:14px;"><a href="/about">About the platform</a> · <a href="/docs">API docs</a></p>
+    </div>
+  </div>
+
+  <div id="mfa-gate" class="login-screen hidden">
+    <div class="login-card">
+      <div class="wordmark">
+        <div class="mark" aria-hidden="true">R</div>
+        <div>
+          <h1>RTSA <span>ITMS</span></h1>
+        </div>
+      </div>
+      <div class="gold-bar"></div>
+      <h3 style="margin-top:8px">Two-factor authentication required</h3>
+      <p class="small muted">Your role requires two-factor authentication before you can continue. Set it up below with an authenticator app (Google Authenticator, Authy, etc).</p>
+      <div id="mfa-gate-box"></div>
+      <p class="small muted" style="text-align:center; margin-top:14px;"><a href="#" id="mfa-gate-signout">Sign out</a></p>
     </div>
   </div>
 
@@ -91,7 +111,7 @@
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=live-1"></script>
+  <script src="/static/app.js?v=mfa-captcha-sse-1"></script>
   <script src="/static/platform.js"></script>
 </body>
 </html>

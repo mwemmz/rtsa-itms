@@ -16,6 +16,10 @@ class UserRole(str, enum.Enum):
     ADMIN = "admin"
 
 
+# Roles that count as "staff" for policies such as mandatory MFA. Citizens are excluded.
+STAFF_ROLES = {UserRole.OFFICER, UserRole.TOLL_OPERATOR, UserRole.ADMIN}
+
+
 class User(Base):
     __tablename__ = "users"
 

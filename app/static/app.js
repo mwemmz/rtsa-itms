@@ -221,14 +221,38 @@ async function go(id) {
 /* ---------------- login / logout ---------------- */
 
 var MFA_TOKEN = null;
+var CAPTCHA = null; // { captcha_id } once a sandbox challenge is pending
 
 function resetLoginForm() {
   MFA_TOKEN = null;
+  CAPTCHA = null;
   $("#mfa-field").classList.add("hidden");
+  $("#captcha-field").classList.add("hidden");
   $("#password").closest(".field").classList.remove("hidden");
   $("#email").closest(".field").classList.remove("hidden");
   $("#mfa-code").value = "";
+  $("#captcha-answer").value = "";
   $("#login-btn").textContent = "Sign in";
+}
+
+// Only called after a login attempt is rejected for a missing/wrong CAPTCHA -
+// most deployments run with it off, so we don't pay this round trip up front.
+async function ensureCaptcha() {
+  try {
+    var c = await api("/api/auth/captcha");
+    if (c.provider === "sandbox") {
+      CAPTCHA = { captcha_id: c.captcha_id };
+      $("#captcha-question").textContent = c.question;
+      $("#captcha-answer").value = "";
+      $("#captcha-field").classList.remove("hidden");
+      $("#captcha-answer").focus();
+    } else {
+      // A real provider (reCAPTCHA/hCaptcha/Turnstile) is configured server-side;
+      // rendering its widget needs that provider's script + a CSP allowance, which
+      // this minimal shell doesn't wire up. See docs/PLATFORM.md.
+      CAPTCHA = null;
+    }
+  } catch (e) { /* the login attempt itself will surface an error */ }
 }
 
 async function doLogin(email, password, msgEl, btn) {
@@ -243,10 +267,12 @@ async function doLogin(email, password, msgEl, btn) {
         body: JSON.stringify({ mfa_token: MFA_TOKEN, code: $("#mfa-code").value.trim() })
       });
     } else {
-      data = await api("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email: email, password: password })
-      });
+      var body = { email: email, password: password };
+      if (CAPTCHA && CAPTCHA.captcha_id) {
+        body.captcha_id = CAPTCHA.captcha_id;
+        body.captcha_answer = $("#captcha-answer").value.trim();
+      }
+      data = await api("/api/auth/login", { method: "POST", body: JSON.stringify(body) });
     }
     if (data.mfa_required) {
       MFA_TOKEN = data.mfa_token;
@@ -266,6 +292,7 @@ async function doLogin(email, password, msgEl, btn) {
     if (MFA_TOKEN && /expired|Invalid MFA/i.test(e.message)) resetLoginForm();
     msgEl.className = "login-msg err";
     msgEl.textContent = e.message;
+    if (!MFA_TOKEN && /captcha/i.test(e.message)) ensureCaptcha();
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove("loading"); }
   }
@@ -281,6 +308,7 @@ function logout() {
   resetLoginForm();
   USER = null;
   $("#shell").classList.add("hidden");
+  $("#mfa-gate").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");
   location.hash = "";
   refreshBell();
@@ -289,6 +317,12 @@ function logout() {
 async function bootstrapApp() {
   USER = await api("/api/auth/me");
   $("#login-screen").classList.add("hidden");
+  if (USER.mfa_setup_required) {
+    $("#shell").classList.add("hidden");
+    renderMfaGate();
+    return;
+  }
+  $("#mfa-gate").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   await loadRouter();
   openLiveStream();
@@ -355,6 +389,42 @@ function onLiveEvent(ev) {
       go(VIEW.id).catch(function () { /* ignore */ });
     }, 700);
   }
+}
+
+function renderMfaGate() {
+  $("#shell").classList.add("hidden");
+  $("#mfa-gate").classList.remove("hidden");
+  var box = $("#mfa-gate-box");
+  box.innerHTML = '<button class="btn gold block" id="mfa-gate-start">Set up two-factor authentication</button>';
+  $("#mfa-gate-start").addEventListener("click", async function () {
+    box.innerHTML = "Loading…";
+    try {
+      var s = await api("/api/auth/mfa/setup", { method: "POST" });
+      box.innerHTML = '<p class="small">In your authenticator app choose "enter a setup key" and paste:</p>' +
+        '<pre class="mono" style="white-space:pre-wrap;word-break:break-all">' + esc(s.secret) + '</pre>' +
+        '<p class="small muted">Or open this link on your phone:<br><span class="mono" style="word-break:break-all">' + esc(s.otpauth_uri) + "</span></p>" +
+        '<form id="mfa-gate-form"><div class="field"><input name="code" inputmode="numeric" placeholder="6-digit code" required></div>' +
+        '<button class="btn gold block">Confirm &amp; enable</button></form><div class="login-msg" id="mfa-gate-msg"></div>';
+      $("#mfa-gate-form").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var msgEl = $("#mfa-gate-msg");
+        msgEl.className = "login-msg";
+        msgEl.textContent = "";
+        try {
+          var r = await api("/api/auth/mfa/enable", { method: "POST", body: JSON.stringify(formData(e.target)) });
+          box.innerHTML = '<p class="small"><b>Save these recovery codes</b> — each works once if you lose your phone. They will not be shown again.</p>' +
+            '<pre class="mono">' + r.recovery_codes.map(esc).join("\n") + '</pre>' +
+            '<button class="btn gold block" id="mfa-gate-continue">Continue</button>';
+          $("#mfa-gate-continue").addEventListener("click", function () { bootstrapApp().catch(logout); });
+        } catch (err) {
+          msgEl.className = "login-msg err";
+          msgEl.textContent = err.message;
+        }
+      });
+    } catch (e) {
+      box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+    }
+  });
 }
 
 /* ---------------- notifications & mobile menu ---------------- */
@@ -1288,6 +1358,7 @@ function wire() {
     doLogin($("#email").value.trim(), $("#password").value, $("#login-msg"), $("#login-btn"));
   });
   $("#logout-btn").addEventListener("click", logout);
+  $("#mfa-gate-signout").addEventListener("click", function (e) { e.preventDefault(); logout(); });
   $("#bell").addEventListener("click", openNotifs);
   $("#notif-close").addEventListener("click", function () { $("#notif-drawer").classList.add("hidden"); });
   $("#notif-drawer").addEventListener("click", function (e) {

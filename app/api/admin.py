@@ -13,7 +13,7 @@ from app.models.enforcement import Challan, ChallanStatus
 from app.models.notification import Notification, NotificationRule, NotificationStatus
 from app.models.payment import Payment
 from app.models.platform import Device, LoginAttempt, RolePermission, UserSession
-from app.models.user import User, UserRole
+from app.models.user import STAFF_ROLES, User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.notification import NotificationRuleCreate, NotificationRuleResponse
 from app.schemas.user import (
@@ -28,6 +28,18 @@ from app.services import settings as runtime_settings
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+def _is_last_admin(db: Session, user: User) -> bool:
+    """True if `user` is an active admin and no other active admin exists."""
+    if user.role != UserRole.ADMIN or not user.is_active:
+        return False
+    other_admins = (
+        db.query(User)
+        .filter(User.role == UserRole.ADMIN, User.is_active.is_(True), User.id != user.id)
+        .first()
+    )
+    return other_admins is None
 
 
 # --- User management ---------------------------------------------------------
@@ -103,6 +115,10 @@ def update_user(
         changes.get("is_active") is False or ("role" in changes and changes["role"] != UserRole.ADMIN)
     ):
         raise HTTPException(status_code=400, detail="You cannot deactivate or demote your own account")
+    demoting = "role" in changes and changes["role"] != UserRole.ADMIN
+    deactivating = changes.get("is_active") is False
+    if (demoting or deactivating) and _is_last_admin(db, user):
+        raise HTTPException(status_code=400, detail="Cannot remove the last remaining admin account")
     for field, value in changes.items():
         setattr(user, field, value)
     if changes.get("is_active") is False:
@@ -123,6 +139,8 @@ def update_user_role(
     user = _get_user(db, user_id)
     if user.id == current_user.id and new_role != UserRole.ADMIN:
         raise HTTPException(status_code=400, detail="You cannot demote your own account")
+    if new_role != UserRole.ADMIN and _is_last_admin(db, user):
+        raise HTTPException(status_code=400, detail="Cannot remove the last remaining admin account")
     user.role = new_role
     db.flush()
     auth_service.revoke_user_sessions(db, user.id, "role_changed")
@@ -301,6 +319,17 @@ def update_setting(
 ):
     if "value" not in payload:
         raise HTTPException(status_code=422, detail='Body must be {"value": ...}')
+    if (
+        key == "security.require_mfa_staff"
+        and str(payload["value"]).lower() in ("true", "1")
+        and current_user.role in STAFF_ROLES
+        and not current_user.mfa_enabled
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Enable MFA on your own account first (Settings → Two-factor authentication) - "
+                   "otherwise you would be locked out as soon as this takes effect.",
+        )
     try:
         row = runtime_settings.set_value(db, key, payload["value"], current_user.id)
     except ValueError as exc:
