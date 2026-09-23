@@ -20,12 +20,11 @@ from app.core.security import (
 )
 from app.core.timeutil import aware, utcnow
 from app.models.platform import Device, LoginAttempt, UserSession
-from app.models.user import User, UserRole
+from app.models.user import STAFF_ROLES, User, UserRole  # noqa: F401  (STAFF_ROLES re-exported)
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.notifications import notify
 
-STAFF_ROLES = {UserRole.OFFICER, UserRole.TOLL_OPERATOR, UserRole.ADMIN}
 MFA_CHALLENGE_MINUTES = 5
 RECOVERY_CODE_COUNT = 8
 

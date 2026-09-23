@@ -29,16 +29,33 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
 * **MFA (TOTP)**: `/api/auth/mfa/setup` → `/enable` (returns 8 one-time recovery codes) → login becomes two-step
   (`mfa_required` + `mfa_token`, then `/api/auth/mfa/verify`). Secrets are Fernet-encrypted at rest.
   An admin can clear a user's MFA if they lose their device.
+  **Hard enforcement for staff**: turn on `security.require_mfa_staff` and every officer/toll-operator/admin
+  account without MFA enabled is blocked from every endpoint except `GET /api/auth/me`, `/mfa/setup`, `/mfa/enable`,
+  `/logout` and `/change-password` (enforced centrally in `get_current_user`, `app/core/security.py`) until they
+  enrol. Citizens are unaffected. The web app shows a dedicated full-screen "Two-factor authentication required"
+  gate for this instead of a bare 403 (`renderMfaGate()` in `app/static/app.js`). Since admin is itself a staff
+  role, flipping the setting on is refused (`PATCH /api/admin/settings/security.require_mfa_staff`, 400) unless the
+  *acting* admin already has MFA enabled on their own account - otherwise they'd lock themselves out of Settings
+  the moment it takes effect.
+* **CAPTCHA**: off by default (`security.captcha_enabled`). When on, `POST /api/auth/login` and `/register` need a
+  solved challenge. `GET /api/auth/captcha` returns either a built-in sandbox challenge (a signed, stateless
+  arithmetic question - no external service, but also not real bot resistance, same honest caveat as the National
+  ID sandbox below) or, once `CAPTCHA_PROVIDER`/`CAPTCHA_SITE_KEY`/`CAPTCHA_SECRET_KEY` are set, the site key of a
+  real provider (reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile) for the frontend to render. The web login form
+  only fetches a challenge after a first attempt is rejected, so there's no extra round trip while it's off; it
+  only actually renders the sandbox widget - wiring a real provider's JS + CSP allowance into the page is a
+  deployment step, not code (`app/services/captcha.py`).
 * **Sessions**: every JWT carries a session id (`sid`) checked against `user_sessions` on each request –
   logout, idle timeout (default 30 min), password change, role change, deactivation and admin revoke all take effect immediately.
 * **Devices**: fingerprint = hash(user-agent, language, `X-Device-Id`). New devices raise a `new_device_login` notification;
   users can trust/block devices (a blocked device can't sign in).
 * **Transport/headers**: `FORCE_HTTPS` redirects http→https (behind a proxy, via `X-Forwarded-Proto`); HSTS in production;
   nosniff, frame-deny, referrer policy, CSP on the SPA. `Cache-Control: no-store` on `/api`.
-* **RBAC**: 13 permissions × 4 roles, editable in *Settings & access*; `admin` always holds all.
-* **Not done**: hard enforcement of MFA for staff (`security.require_mfa_staff` only flags `mfa_setup_required`);
-  CAPTCHA; per-field DB encryption beyond MFA secrets and gateway payloads (database-level encryption at rest is the
-  hosting provider's – Neon encrypts storage).
+* **RBAC**: 13 permissions × 4 roles, editable in *Settings & access*; `admin` always holds all. The last active
+  admin account can't be demoted or deactivated by anyone else, even with `roles:manage`/`users:manage` remapped
+  onto another role (`_is_last_admin`, `app/api/admin.py`) - it can only happen by promoting a replacement first.
+* **Not done**: per-field DB encryption beyond MFA secrets and gateway payloads (database-level encryption at rest
+  is the hosting provider's – Neon encrypts storage).
 
 ## Payments & revenue
 
@@ -74,7 +91,18 @@ per-minute rate limit. Every call is logged to `integration_logs` (status, laten
 | National ID | outbound `GET /national-id/verify?nrc=` (staff); inbound `GET /national-id/lookup?nrc=` |
 
 The national-ID adapter is a **sandbox** (format check only, and it says so in the response) until
-`NATIONAL_ID_API_URL` points at a real registry.
+`NATIONAL_ID_API_URL` points at a real registry. That's the only thing missing - the code side is ready to go:
+
+* **Contract**: `GET {NATIONAL_ID_API_URL}?nrc=<nrc>` with `Authorization: Bearer {NATIONAL_ID_API_TOKEN}`, expecting
+  a JSON body `{"verified": bool, "full_name"?: str}`.
+* **Resilience**: an 8 s timeout; a transient failure (connection error, timeout, 5xx) is retried up to twice with a
+  short backoff before giving up, since this is usually on a staff member's critical path (issuing a licence,
+  registering a vehicle); anything else (bad JSON, wrong shape, 4xx) fails clean with a 502 rather than a 500.
+* **Guardrails**: refuses to even attempt a call if the token is empty while a URL is set (a common misconfiguration
+  - fails with a clear 500 instead of an opaque 401 from the registry), and if `NATIONAL_ID_API_URL` isn't `https://`
+  once `ENVIRONMENT=production` (NRC numbers are PII).
+* **To go live**: get a URL + bearer token from the registry that match the contract above, set them via env vars,
+  redeploy. No code changes needed (`app/services/integration.py::verify_national_id`).
 
 ## Performance
 

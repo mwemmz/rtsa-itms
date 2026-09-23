@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     LOCKOUT_MINUTES: int = 15
     PASSWORD_MIN_LENGTH: int = 8
     REQUIRE_MFA_FOR_STAFF: bool = False
+    # CAPTCHA on login/registration. Empty CAPTCHA_SECRET_KEY = built-in sandbox
+    # challenge (no external service needed). Set all three to use a real
+    # provider: "recaptcha" | "hcaptcha" | "turnstile".
+    CAPTCHA_PROVIDER: str = ""
+    CAPTCHA_SITE_KEY: str = ""
+    CAPTCHA_SECRET_KEY: str = ""
 
     # --- Notifications ------------------------------------------------
     SMTP_HOST: str = ""

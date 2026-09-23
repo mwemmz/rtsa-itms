@@ -25,6 +25,7 @@ from app.schemas.user import (
     UserResponse,
 )
 from app.services import auth as auth_service
+from app.services import captcha as captcha_service
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 
@@ -44,27 +45,49 @@ _FORM_SCHEMA = {
 }
 
 
-async def _credentials(request: Request) -> tuple[str | None, str | None]:
+async def _login_fields(request: Request) -> dict:
+    """Pull email/password plus optional CAPTCHA fields from JSON or OAuth2 form data."""
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
             body = await request.json()
         except Exception:
-            return None, None
-        email = body.get("email")
-        password = body.get("password")
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
     else:
         form = await request.form()
-        email = form.get("email") or form.get("username")
-        password = form.get("password")
-    return (email if isinstance(email, str) else None), (
-        password if isinstance(password, str) else None
-    )
+        body = {
+            "email": form.get("email") or form.get("username"),
+            "password": form.get("password"),
+            "captcha_id": form.get("captcha_id"),
+            "captcha_answer": form.get("captcha_answer"),
+            "captcha_token": form.get("captcha_token"),
+        }
+    return {
+        "email": body.get("email") if isinstance(body.get("email"), str) else None,
+        "password": body.get("password") if isinstance(body.get("password"), str) else None,
+        "captcha_id": body.get("captcha_id"),
+        "captcha_answer": body.get("captcha_answer"),
+        "captcha_token": body.get("captcha_token"),
+    }
+
+
+@router.get("/captcha")
+def get_captcha():
+    """Public: fetch a CAPTCHA challenge to solve before registering or logging in.
+
+    Returns a sandbox math challenge, or (when CAPTCHA_PROVIDER/keys are configured)
+    the site key of the real provider the frontend should render its widget with.
+    """
+    return captcha_service.new_challenge()
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     """Public self-registration. Always creates a *citizen* account."""
+    if runtime_settings.get(db, "security.captcha_enabled") and not captcha_service.verify(payload.model_dump()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CAPTCHA verification failed")
     if payload.role != UserRole.CITIZEN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -111,12 +134,15 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
     },
 )
 async def login(request: Request, db: Session = Depends(get_db)):
-    email, password = await _credentials(request)
+    fields = await _login_fields(request)
+    email, password = fields["email"], fields["password"]
     if not email or not password:
         raise HTTPException(
             status_code=422,
             detail="Provide email and password as JSON body or OAuth2 form data",
         )
+    if runtime_settings.get(db, "security.captcha_enabled") and not captcha_service.verify(fields):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CAPTCHA verification failed")
     return auth_service.authenticate(db, request, email, password)
 
 
