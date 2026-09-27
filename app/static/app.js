@@ -357,21 +357,51 @@ var LIVE_VIEWS = {
 var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1 };
 var LIVE_ES = null;
 var LIVE_RELOAD_TIMER = null;
+var LIVE_RETRY_TIMER = null;
+var LIVE_RETRY_MS = 1000;
+var LIVE_GEN = 0; // bumped on every open/close so a stale async open can bail out
 
-function openLiveStream() {
+// EventSource can't send an Authorization header, so the stream is opened with a
+// single-use ticket in the URL rather than the access token (URLs end up in
+// server logs). A used ticket can't reopen the stream, so instead of letting
+// EventSource auto-reconnect we close it and come back with a fresh ticket.
+async function openLiveStream() {
   closeLiveStream();
+  var gen = LIVE_GEN;
   if (!getToken()) return;
-  var es = new EventSource("/api/events/stream?token=" + encodeURIComponent(getToken()));
+  var t;
+  try {
+    t = await api("/api/events/ticket", { method: "POST" });
+  } catch (e) {
+    if (gen === LIVE_GEN) scheduleLiveReconnect();
+    return;
+  }
+  if (gen !== LIVE_GEN || !getToken()) return; // signed out or reopened meanwhile
+  var es = new EventSource("/api/events/stream?ticket=" + encodeURIComponent(t.ticket));
   LIVE_ES = es;
+  es.onopen = function () { LIVE_RETRY_MS = 1000; };
   es.onmessage = function (e) {
     try { onLiveEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed */ }
   };
   es.onerror = function () {
-    if (!getToken()) closeLiveStream(); // EventSource reconnects automatically otherwise
+    if (LIVE_ES !== es) return;
+    closeLiveStream();
+    scheduleLiveReconnect();
   };
 }
 
+function scheduleLiveReconnect() {
+  if (!getToken() || LIVE_RETRY_TIMER) return;
+  LIVE_RETRY_TIMER = setTimeout(function () {
+    LIVE_RETRY_TIMER = null;
+    openLiveStream();
+  }, LIVE_RETRY_MS);
+  LIVE_RETRY_MS = Math.min(LIVE_RETRY_MS * 2, 30000);
+}
+
 function closeLiveStream() {
+  LIVE_GEN++;
+  if (LIVE_RETRY_TIMER) { clearTimeout(LIVE_RETRY_TIMER); LIVE_RETRY_TIMER = null; }
   if (LIVE_ES) { try { LIVE_ES.close(); } catch (e) { /* ignore */ } LIVE_ES = null; }
 }
 

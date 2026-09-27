@@ -96,15 +96,19 @@ def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
         )
 
 
-def get_user_from_token(token: str, db: Session) -> User:
-    """Resolve a (still-valid) access token to a live User, or raise 401."""
+def get_user_from_token(token: str, db: Session, typ: str = "access") -> User:
+    """Resolve a (still-valid) token of type `typ` to a live User, or raise 401.
+
+    `typ` is "access" everywhere except the live-events stream, which takes a
+    short-lived "stream" ticket; either way the underlying session must still be live.
+    """
     try:
         payload = decode_token(token)
     except JWTError:
         raise _unauthorized()
     user_id = payload.get("sub")
     session_id = payload.get("sid")
-    if user_id is None or session_id is None or payload.get("typ") != "access":
+    if user_id is None or session_id is None or payload.get("typ") != typ:
         raise _unauthorized()
 
     session = db.get(UserSession, session_id)

@@ -9,6 +9,7 @@ import time
 import uuid
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import PlainTextResponse, RedirectResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -17,6 +18,25 @@ from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger("http")
+
+# Responses that must reach the client frame by frame, uncompressed.
+_NO_GZIP_PATHS = {"/api/events/stream"}
+
+
+class StreamSafeGZipMiddleware(GZipMiddleware):
+    """GZip, except for the live-event stream.
+
+    Compressing server-sent events buffers them inside the gzip encoder, so the
+    browser never sees a frame. Recent Starlette versions skip text/event-stream
+    on their own, but requirements.txt only sets a minimum version and older ones
+    (e.g. 0.27, pulled in by fastapi 0.104) don't - so skip it here regardless.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] in _NO_GZIP_PATHS:
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 
 # The single-page app is same-origin only; Swagger UI (/docs) loads from a CDN
 # so it is exempt from the strict policy.
