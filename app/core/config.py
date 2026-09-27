@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     OSRM_TIMEOUT: float = 6.0
 
     # --- Performance / scalability -----------------------------------
+    # Set when running more than one app instance, so rate limits, single-use
+    # tickets, live updates and metrics are shared (see app/core/shared.py).
+    REDIS_URL: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     SLOW_REQUEST_MS: int = 500

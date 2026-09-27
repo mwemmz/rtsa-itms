@@ -28,6 +28,9 @@ services:
       # Password for the seeded admin account (otherwise the public demo default is used).
       - key: ADMIN_INITIAL_PASSWORD
         sync: false
+      # Only when running more than one instance (see docs/PLATFORM.md, Scalability).
+      - key: REDIS_URL
+        sync: false
 
   - type: worker
     name: rtsa-itms-notification-worker

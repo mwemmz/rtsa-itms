@@ -33,6 +33,7 @@ from app.api import integration, lookup, reports, system
 from app.api.health import router as health_router
 from app.api import incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
+from app.core import metrics
 from app.core.config import settings
 from app.core.middleware import PlatformMiddleware, StreamSafeGZipMiddleware
 from app.services.events import hub
@@ -44,7 +45,12 @@ async def lifespan(_: FastAPI):
     hub.bind(asyncio.get_running_loop())
     if settings.RUN_MIGRATIONS_ON_STARTUP:
         run_startup_tasks()
+    relay = hub.start_relay()  # only with REDIS_URL: live updates across instances
+    metrics_publisher = metrics.start_publisher()  # likewise for merged metrics
     yield
+    for stop in (relay, metrics_publisher):
+        if stop is not None:
+            stop.set()
 
 
 app = FastAPI(

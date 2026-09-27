@@ -1,12 +1,14 @@
-"""Simple in-memory rate limiter for brute-force protection.
+"""Sliding-window rate limiter for brute-force protection (login, sign-up).
 
-The spec calls for brute-force protection on login. In production this would
-be backed by Redis; here an in-process dict with TTL is sufficient for a
-single-instance deploy on Render.
+In memory for a single instance; shared through Redis when ``REDIS_URL`` is set,
+so every instance behind a load balancer sees the same attempt counts
+(see ``app/core/shared.py``).
 """
 
 import time
 import threading
+
+from app.core import shared
 
 _lock = threading.Lock()
 _attempts: dict[str, list[float]] = {}
@@ -24,6 +26,11 @@ def _prune(now: float) -> None:
 
 def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
     """Return True if the request is allowed, False if rate-limited."""
+    if shared.enabled():
+        try:
+            return shared.window_count(_redis_key(key), WINDOW_SECONDS) < max_attempts
+        except Exception as exc:  # noqa: BLE001
+            shared.degraded("rate limiting", exc)
     now = time.time()
     with _lock:
         _prune(now)
@@ -36,12 +43,28 @@ def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
         return True
 
 
+def _redis_key(key: str) -> str:
+    return f"rtsa:ratelimit:{key}"
+
+
 def record_failure(key: str) -> None:
+    if shared.enabled():
+        try:
+            shared.window_add(_redis_key(key), WINDOW_SECONDS)
+            return
+        except Exception as exc:  # noqa: BLE001
+            shared.degraded("rate limiting", exc)
     now = time.time()
     with _lock:
         _attempts.setdefault(key, []).append(now)
 
 
 def reset(key: str) -> None:
+    if shared.enabled():
+        try:
+            shared.window_clear(_redis_key(key))
+            return
+        except Exception as exc:  # noqa: BLE001
+            shared.degraded("rate limiting", exc)
     with _lock:
         _attempts.pop(key, None)
