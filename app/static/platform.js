@@ -422,7 +422,8 @@ VIEWS.system = async function () {
   async function loadBackups() {
     try {
       var b = await api("/api/system/backups");
-      $("#bk-list").innerHTML = '<p class="small muted">Directory <code>' + esc(b.directory) + "</code> · keeping the last " + b.retention + "</p>" +
+      $("#bk-list").innerHTML = '<p class="small">' + offsiteLine(b.offsite) + "</p>" +
+        '<p class="small muted">Directory <code>' + esc(b.directory) + "</code> · keeping the last " + b.retention + "</p>" +
         tbl(["File", "Size", "Created"], b.backups.map(function (x) { return ['<span class="mono">' + esc(x.file) + "</span>", (x.size_bytes / 1024).toFixed(1) + " KB", dt(x.created_at)]; }));
     } catch (e) { fail("#bk-list", e); }
   }
@@ -436,7 +437,20 @@ VIEWS.system = async function () {
       $("#sy-notif").innerHTML = tbl(["Channel", "Sent", "Queued", "Failed"], rows);
     } catch (e) { fail("#sy-notif", e); }
   }
-  $("#bk-now").addEventListener("click", function () { mutate("/api/system/backups", "POST", null, "Backup created and verified", loadBackups); });
+  function offsiteLine(o) {
+    if (!o || !o.configured) {
+      return pill("no off-site copy", "amber") + " Backups on this server are lost when it's redeployed. Set " +
+        "<code>BACKUP_S3_BUCKET</code> (see docs/DISASTER_RECOVERY.md).";
+    }
+    if (o.error) return pill("off-site unreachable", "red") + " " + esc(o.error);
+    return pill("off-site copies on", "green") + " " + esc(o.bucket) + " · " + o.count + " stored" +
+      (o.latest ? ", latest <span class=\"mono\">" + esc(o.latest.key.split("/").pop()) + "</span>" : "") + " · " +
+      (o.encrypted ? "encrypted" : pill("not encrypted", "amber"));
+  }
+  $("#bk-now").addEventListener("click", async function () {
+    var r = await mutate("/api/system/backups", "POST", null, "Backup created and verified", loadBackups);
+    if (r && r.offsite && !r.offsite.ok) toast("Off-site copy failed: " + r.offsite.error, "err");
+  });
   $("#sy-scan").addEventListener("click", function () { mutate("/api/system/expiry-scan", "POST", null, "Expiry scan complete", loadNotif); });
   $("#sy-disp").addEventListener("click", function () { mutate("/api/system/dispatch-notifications", "POST", null, "Queue processed", loadNotif); });
   loadBackups(); loadNotif();

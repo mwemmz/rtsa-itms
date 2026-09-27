@@ -28,6 +28,19 @@ services:
       # Password for the seeded admin account (otherwise the public demo default is used).
       - key: ADMIN_INITIAL_PASSWORD
         sync: false
+      # Off-site backup copies (see docs/DISASTER_RECOVERY.md). Leave unset to disable.
+      - key: BACKUP_S3_ENDPOINT
+        sync: false
+      - key: BACKUP_S3_REGION
+        sync: false
+      - key: BACKUP_S3_BUCKET
+        sync: false
+      - key: BACKUP_S3_ACCESS_KEY_ID
+        sync: false
+      - key: BACKUP_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: BACKUP_ENCRYPTION_KEY
+        sync: false
 
   - type: worker
     name: rtsa-itms-notification-worker
@@ -55,4 +68,17 @@ services:
       - key: SMS_WEBHOOK_URL
         sync: false
       - key: SMS_WEBHOOK_TOKEN
+        sync: false
+      # Off-site backup copies (see docs/DISASTER_RECOVERY.md). Leave unset to disable.
+      - key: BACKUP_S3_ENDPOINT
+        sync: false
+      - key: BACKUP_S3_REGION
+        sync: false
+      - key: BACKUP_S3_BUCKET
+        sync: false
+      - key: BACKUP_S3_ACCESS_KEY_ID
+        sync: false
+      - key: BACKUP_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: BACKUP_ENCRYPTION_KEY
         sync: false
