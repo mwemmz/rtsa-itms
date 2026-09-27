@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from fastapi import HTTPException, Request, status
 from jose import JWTError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import totp
@@ -125,7 +126,11 @@ def authenticate(db: Session, request: Request, email: str, password: str) -> di
     if not check_rate_limit(ip_key):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many login attempts. Try again later.")
 
+    email = email.strip()
     user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        # Self-registration stores emails lowercased; accept "Jane@Example.com" at sign-in too.
+        user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
     now = utcnow()
 
     if user is not None and user.locked_until and aware(user.locked_until) > now:

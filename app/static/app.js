@@ -235,24 +235,28 @@ function resetLoginForm() {
   $("#login-btn").textContent = "Sign in";
 }
 
-// Only called after a login attempt is rejected for a missing/wrong CAPTCHA -
-// most deployments run with it off, so we don't pay this round trip up front.
-async function ensureCaptcha() {
+// Only called after an attempt is rejected for a missing/wrong CAPTCHA - most
+// deployments run with it off, so we don't pay this round trip up front.
+// `prefix` picks the form: "" for sign-in, "su-" for sign-up.
+async function loadCaptcha(prefix) {
   try {
     var c = await api("/api/auth/captcha");
-    if (c.provider === "sandbox") {
-      CAPTCHA = { captcha_id: c.captcha_id };
-      $("#captcha-question").textContent = c.question;
-      $("#captcha-answer").value = "";
-      $("#captcha-field").classList.remove("hidden");
-      $("#captcha-answer").focus();
-    } else {
-      // A real provider (reCAPTCHA/hCaptcha/Turnstile) is configured server-side;
-      // rendering its widget needs that provider's script + a CSP allowance, which
-      // this minimal shell doesn't wire up. See docs/PLATFORM.md.
-      CAPTCHA = null;
-    }
-  } catch (e) { /* the login attempt itself will surface an error */ }
+    // A real provider (reCAPTCHA/hCaptcha/Turnstile) configured server-side needs
+    // that provider's script + a CSP allowance, which this shell doesn't wire up.
+    // See docs/PLATFORM.md.
+    if (c.provider !== "sandbox") return null;
+    $("#" + prefix + "captcha-question").textContent = c.question;
+    $("#" + prefix + "captcha-answer").value = "";
+    $("#" + prefix + "captcha-field").classList.remove("hidden");
+    $("#" + prefix + "captcha-answer").focus();
+    return { captcha_id: c.captcha_id };
+  } catch (e) {
+    return null; // the attempt itself already surfaced an error
+  }
+}
+
+async function ensureCaptcha() {
+  CAPTCHA = await loadCaptcha("");
 }
 
 async function doLogin(email, password, msgEl, btn) {
@@ -298,6 +302,103 @@ async function doLogin(email, password, msgEl, btn) {
   }
 }
 
+/* ---------------- citizen sign-up ---------------- */
+
+var SIGNUP_CAPTCHA = null;
+var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+var PHONE_RE = /^\+?[0-9][0-9 ]{6,19}$/;
+
+function showAuthView(view) {
+  var signup = view === "signup";
+  $("#login-form").classList.toggle("hidden", signup);
+  $("#signup-form").classList.toggle("hidden", !signup);
+  $("#demo-hint").classList.toggle("hidden", signup);
+  $("#login-msg").textContent = "";
+  $("#signup-msg").textContent = "";
+  try { history.replaceState(null, "", signup ? "#/signup" : location.pathname); } catch (e) { /* ignore */ }
+  (signup ? $("#su-name") : $("#email")).focus();
+}
+
+function markInvalid(input, msgEl, message) {
+  input.setAttribute("aria-invalid", "true");
+  input.focus();
+  msgEl.className = "login-msg err";
+  msgEl.textContent = message;
+}
+
+// Mirrors the server's checks for instant feedback; the server stays authoritative.
+function signupProblem(body) {
+  if (!body.full_name) return ["#su-name", "Enter your full name."];
+  if (!EMAIL_RE.test(body.email)) return ["#su-email", "Enter a valid email address."];
+  if (body.phone_number && !PHONE_RE.test(body.phone_number)) {
+    return ["#su-phone", "Enter a valid mobile number, e.g. +260971234567."];
+  }
+  if (body.password.length < 8 || !/[a-z]/i.test(body.password) || !/[0-9]/.test(body.password)) {
+    return ["#su-password", "Use at least 8 characters, with letters and numbers."];
+  }
+  if (body.password !== $("#su-confirm").value) return ["#su-confirm", "Passwords don't match."];
+  return null;
+}
+
+// Which input a server-side rejection is about, so we can point at it.
+function signupFieldFor(message) {
+  if (/email/i.test(message)) return "#su-email";
+  if (/password/i.test(message)) return "#su-password";
+  if (/mobile|phone/i.test(message)) return "#su-phone";
+  if (/name/i.test(message)) return "#su-name";
+  return null;
+}
+
+async function doSignup() {
+  var msgEl = $("#signup-msg");
+  var btn = $("#signup-btn");
+  $$("#signup-form [aria-invalid]").forEach(function (el) { el.removeAttribute("aria-invalid"); });
+  var body = {
+    full_name: $("#su-name").value.trim(),
+    email: $("#su-email").value.trim(),
+    password: $("#su-password").value
+  };
+  var phone = $("#su-phone").value.trim();
+  if (phone) body.phone_number = phone;
+  var problem = signupProblem(body);
+  if (problem) { markInvalid($(problem[0]), msgEl, problem[1]); return; }
+  if (SIGNUP_CAPTCHA) {
+    body.captcha_id = SIGNUP_CAPTCHA.captcha_id;
+    body.captcha_answer = $("#su-captcha-answer").value.trim();
+  }
+
+  msgEl.className = "login-msg";
+  msgEl.textContent = "Creating your account…";
+  btn.disabled = true;
+  btn.classList.add("loading");
+  try {
+    await api("/api/auth/register", { method: "POST", body: JSON.stringify(body) });
+  } catch (e) {
+    var field = signupFieldFor(e.message);
+    if (field) markInvalid($(field), msgEl, e.message);
+    else { msgEl.className = "login-msg err"; msgEl.textContent = e.message; }
+    if (/captcha/i.test(e.message)) SIGNUP_CAPTCHA = await loadCaptcha("su-");
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("loading");
+  }
+
+  // Created - sign straight in with the same credentials.
+  $("#signup-form").reset();
+  $("#su-captcha-field").classList.add("hidden");
+  SIGNUP_CAPTCHA = null;
+  showAuthView("signin");
+  $("#email").value = body.email;
+  $("#password").value = body.password;
+  await doLogin(body.email, body.password, $("#login-msg"), $("#login-btn"));
+  if (!USER && /captcha/i.test($("#login-msg").textContent)) {
+    // Sign-in also wants a CAPTCHA: the account exists, so say that rather than "failed".
+    $("#login-msg").className = "login-msg ok";
+    $("#login-msg").textContent = "Account created. Answer the question below to sign in.";
+  }
+}
+
 function logout() {
   var t = getToken();
   if (t) {
@@ -310,6 +411,7 @@ function logout() {
   $("#shell").classList.add("hidden");
   $("#mfa-gate").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");
+  document.title = "RTSA ITMS — Web App";
   location.hash = "";
   refreshBell();
 }
@@ -1357,6 +1459,15 @@ function wire() {
     e.preventDefault();
     doLogin($("#email").value.trim(), $("#password").value, $("#login-msg"), $("#login-btn"));
   });
+  $("#signup-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    doSignup();
+  });
+  $("#to-signup").addEventListener("click", function (e) { e.preventDefault(); showAuthView("signup"); });
+  $("#to-signin").addEventListener("click", function (e) { e.preventDefault(); showAuthView("signin"); });
+  $$("#signup-form input").forEach(function (input) {
+    input.addEventListener("input", function () { input.removeAttribute("aria-invalid"); });
+  });
   $("#logout-btn").addEventListener("click", logout);
   $("#mfa-gate-signout").addEventListener("click", function (e) { e.preventDefault(); logout(); });
   $("#bell").addEventListener("click", openNotifs);
@@ -1373,6 +1484,7 @@ function wire() {
   window.addEventListener("hashchange", function () {
     closeMenu();
     if (USER) loadRouter();
+    else if (!getToken()) showAuthView(location.hash === "#/signup" ? "signup" : "signin");
   });
 }
 
@@ -1385,5 +1497,6 @@ window.addEventListener("DOMContentLoaded", function () {
     });
   } else {
     $("#login-screen").classList.remove("hidden");
+    if (location.hash === "#/signup") showAuthView("signup"); // deep link from /about
   }
 });

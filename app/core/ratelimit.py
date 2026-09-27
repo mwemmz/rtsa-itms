@@ -22,7 +22,7 @@ def _prune(now: float) -> None:
         del _attempts[k]
 
 
-def check_rate_limit(key: str) -> bool:
+def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS) -> bool:
     """Return True if the request is allowed, False if rate-limited."""
     now = time.time()
     with _lock:
@@ -30,7 +30,7 @@ def check_rate_limit(key: str) -> bool:
         stamps = _attempts.get(key, [])
         # If there's a recent failed attempt beyond the window, we just push.
         stamps = [s for s in stamps if (now - s) < WINDOW_SECONDS]
-        if len(stamps) >= MAX_ATTEMPTS:
+        if len(stamps) >= max_attempts:
             return False
         _attempts[key] = stamps
         return True
