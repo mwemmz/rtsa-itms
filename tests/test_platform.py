@@ -145,6 +145,43 @@ def test_public_registration_cannot_create_staff():
     assert r.status_code == 201 and r.json()["role"] == "citizen"
 
 
+def test_register_normalises_and_validates_input():
+    tag = uuid4().hex[:6]
+    r = client.post("/api/auth/register", json={"email": f"  Jane.{tag}@Example.COM ", "password": PW,
+                                                "full_name": "  Jane   Banda ", "phone_number": " +260 971 234567 "})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] == f"jane.{tag}@example.com"
+    assert r.json()["full_name"] == "Jane Banda"
+    assert r.json()["phone_number"] == "+260 971 234567"
+    # same address in different case is a duplicate
+    dup = client.post("/api/auth/register", json={"email": f"JANE.{tag}@example.com", "password": PW,
+                                                  "full_name": "Someone"})
+    assert dup.status_code == 400 and "already registered" in dup.json()["detail"]
+    # sign-in accepts any casing of the address
+    assert _login(f"Jane.{tag}@EXAMPLE.com").status_code == 200
+
+    base = {"password": PW, "full_name": "Ok"}
+    assert client.post("/api/auth/register", json=dict(base, email="not-an-email")).status_code == 400
+    assert client.post("/api/auth/register", json=dict(base, email=f"n{tag}@t.com", full_name="   ")).status_code == 400
+    assert client.post("/api/auth/register", json=dict(base, email=f"p{tag}@t.com",
+                                                       phone_number="call me")).status_code == 400
+
+
+def test_register_is_throttled_per_ip():
+    ip = {"X-Forwarded-For": f"10.9.{uuid4().int % 250}.1"}
+    for i in range(10):
+        r = client.post("/api/auth/register", json={"email": f"t{i}{uuid4().hex[:6]}@t.com", "password": PW,
+                                                    "full_name": "Flood"}, headers=ip)
+        assert r.status_code == 201
+    r = client.post("/api/auth/register", json={"email": f"t{uuid4().hex[:6]}@t.com", "password": PW,
+                                                "full_name": "Flood"}, headers=ip)
+    assert r.status_code == 429
+    # a different network is unaffected
+    other = client.post("/api/auth/register", json={"email": f"o{uuid4().hex[:6]}@t.com", "password": PW,
+                                                    "full_name": "Other"}, headers={"X-Forwarded-For": "10.8.0.1"})
+    assert other.status_code == 201
+
+
 def test_password_policy_on_register():
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": "short1",
                                                 "full_name": "A"})

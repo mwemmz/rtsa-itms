@@ -23,6 +23,10 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
 ## Security
 
 * **Registration** only creates citizens. Staff are created by an admin (`POST /api/admin/users`).
+  Citizens sign up from the web app ("Create a citizen account" on the sign-in card, or deep link `/#/signup`,
+  linked from `/about`) and are signed straight in afterwards. `POST /api/auth/register` stores the email trimmed and
+  lowercased, rejects case-insensitive duplicates, validates name and optional mobile number, and allows 10 sign-ups
+  per IP per 5 minutes. Sign-in matches the email case-insensitively.
 * **Passwords**: bcrypt; policy = min length (setting) + letters and numbers.
 * **Lockout**: N failed logins (setting, default 5) lock the *account* for M minutes
   (default 15), on top of the per-IP throttle. Admins unlock. Every attempt is stored (`login_attempts`).
