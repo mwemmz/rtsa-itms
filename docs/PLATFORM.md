@@ -109,8 +109,25 @@ The national-ID adapter is a **sandbox** (format check only, and it says so in t
 * `X-Process-Time` / `Server-Timing` on every response; requests slower than `SLOW_REQUEST_MS` are logged.
 * `/api/system/metrics`: per-route p50/p95/p99 and the toll-decision p95 against the `toll.compliance_target_ms` setting.
 * Connection pooling with `pool_pre_ping` + recycle; GZip; permission and setting lookups are cached for a few seconds.
-* Measured on SQLite with 600 000 toll rows: dashboard 2.2 s cold / 9 ms cached; JSON report ~0.9 s;
-  CSV export of 50 000 rows ~2.6 s; Excel ~8–10 s; PDF (2 000 rows) ~4 s. Postgres with the new indexes should do better but has not been measured.
+* **Measured on PostgreSQL 18** (local, Windows; app in-process so no network) with 600 000 toll transactions,
+  50 000 violations/fines, 30 000 payments, 20 000 vehicles and 2 000 users spread over the reports' 90-day window,
+  using the production migrations and indexes. Reproduce with `scripts/benchmark.py` against a scratch database
+  (it refuses any database whose name doesn't contain "bench"):
+
+  | Operation | Time |
+  |---|---|
+  | Toll-gate decision (200 requests) | p50 18 ms, p95 26 ms, max 38 ms - target `toll.compliance_target_ms` 500 ms |
+  | Analytics dashboard, cold / cached | 1.6 s / 6 ms |
+  | Toll report, JSON (500 rows) | 0.39 s |
+  | Other reports, JSON (500 rows) | 9-85 ms |
+  | Challans list (100) | 20 ms |
+  | Toll export, CSV 50 000 rows | 2.4 s |
+  | Toll export, Excel 50 000 rows | 8.0 s |
+  | Toll export, PDF 2 000 rows | 3.5 s |
+
+  Earlier SQLite figures for comparison: dashboard 2.2 s cold, JSON report ~0.9 s, CSV ~2.6 s, Excel 8-10 s, PDF ~4 s.
+  Exports barely change between databases: their time is spent building the file in Python (openpyxl, reportlab),
+  not in the query. If Excel/PDF exports of large ranges become common, move them to the worker and hand back a download.
 
 ## Availability & disaster recovery
 

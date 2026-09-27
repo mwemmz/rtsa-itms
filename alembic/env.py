@@ -7,7 +7,9 @@ from app.core.config import settings
 from app.core.database import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Alembic stores this in a ConfigParser, where "%" starts an interpolation - so a
+# URL-encoded password (e.g. "%21" for "!") would crash every migration. Escape it.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
