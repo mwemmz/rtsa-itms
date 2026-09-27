@@ -96,11 +96,12 @@ def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
         )
 
 
-def get_user_from_token(token: str, db: Session, typ: str = "access") -> User:
+def get_user_from_token(token: str, db: Session, typ: str = "access", touch: bool = True) -> User:
     """Resolve a (still-valid) token of type `typ` to a live User, or raise 401.
 
     `typ` is "access" everywhere except the live-events stream, which takes a
     short-lived "stream" ticket; either way the underlying session must still be live.
+    `touch=False` checks the session without counting the request as user activity.
     """
     try:
         payload = decode_token(token)
@@ -135,7 +136,7 @@ def get_user_from_token(token: str, db: Session, typ: str = "access") -> User:
         if device is not None and device.is_blocked:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This device has been blocked")
 
-    if (now - aware(session.last_seen_at)).total_seconds() > SESSION_TOUCH_SECONDS:
+    if touch and (now - aware(session.last_seen_at)).total_seconds() > SESSION_TOUCH_SECONDS:
         session.last_seen_at = now
         db.commit()
 
@@ -143,12 +144,21 @@ def get_user_from_token(token: str, db: Session, typ: str = "access") -> User:
     return user
 
 
+# Sent by the web app on requests the user didn't make themselves (a live update
+# reloading the page's data, the notification bell, reconnecting the stream).
+# Those must not count as activity, or a screen left open on a busy page would
+# never reach the idle sign-out. Setting it can only ever make a session expire
+# sooner, so there's nothing to gain by abusing it.
+BACKGROUND_HEADER = "x-background-refresh"
+
+
 def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    user = get_user_from_token(token, db)
+    background = request.headers.get(BACKGROUND_HEADER) == "1"
+    user = get_user_from_token(token, db, touch=not background)
     enforce_staff_mfa(user, request.url.path, db)
     return user
 

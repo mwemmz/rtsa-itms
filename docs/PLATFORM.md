@@ -47,6 +47,11 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   deployment step, not code (`app/services/captcha.py`).
 * **Sessions**: every JWT carries a session id (`sid`) checked against `user_sessions` on each request –
   logout, idle timeout (default 30 min), password change, role change, deactivation and admin revoke all take effect immediately.
+  Only requests the user makes count as activity: the web app sends `X-Background-Refresh: 1` on requests it makes by
+  itself (live-update reloads, the notification bell, stream reconnects), and those don't push back the idle timeout -
+  otherwise a screen left open on a busy page would never sign out. They're still refused once the session has idled out.
+  The page and its scripts/styles are served with `Cache-Control: no-cache` (revalidated via ETag), so browsers pick up
+  a deploy straight away instead of running a cached `app.js` against a newer API.
 * **Live-updates stream**: access tokens never go in a URL (URLs end up in uvicorn/Render/proxy access logs).
   The browser's `EventSource` can't send an `Authorization` header, so the web app calls `POST /api/events/ticket`
   first and opens `/api/events/stream?ticket=...` with a ticket that only opens the stream, expires after 30 s and

@@ -90,6 +90,11 @@ class PlatformMiddleware:
                 h["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
                 if path.startswith("/api/"):
                     h["Cache-Control"] = "no-store"
+                elif path in _CSP_PATHS or (path.startswith("/static/") and not path.startswith("/static/fonts/")):
+                    # The SPA and its scripts/styles: always revalidate (a cheap 304 via
+                    # ETag) so a deploy reaches browsers at once - otherwise they may run
+                    # a cached app.js for hours against a newer API.
+                    h.setdefault("Cache-Control", "no-cache")
                 if path in _CSP_PATHS:
                     h["Content-Security-Policy"] = _CSP
                 if settings.ENVIRONMENT == "production" or settings.FORCE_HTTPS:

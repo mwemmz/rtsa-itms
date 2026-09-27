@@ -92,6 +92,20 @@ async function syncOfflineTollEvents() {
 }
 function setToken(t) { t ? localStorage.setItem("rtsa_token", t) : localStorage.removeItem("rtsa_token"); }
 
+// Requests made while this is > 0 weren't started by the user (live-update
+// reloads, the bell, stream reconnects). They're tagged so the server doesn't
+// count them as activity - otherwise an open page never reaches the idle sign-out.
+var BACKGROUND = 0;
+
+async function inBackground(fn) {
+  BACKGROUND++;
+  try {
+    return await fn();
+  } finally {
+    BACKGROUND--;
+  }
+}
+
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = opts.headers || {};
@@ -101,6 +115,7 @@ async function api(path, opts) {
   var t = getToken();
   if (t) opts.headers["Authorization"] = "Bearer " + t;
   opts.headers["X-Device-Id"] = deviceId();
+  if (BACKGROUND > 0) opts.headers["X-Background-Refresh"] = "1";
   var res;
   try {
     res = await fetch(path, opts);
@@ -371,7 +386,7 @@ async function openLiveStream() {
   if (!getToken()) return;
   var t;
   try {
-    t = await api("/api/events/ticket", { method: "POST" });
+    t = await inBackground(function () { return api("/api/events/ticket", { method: "POST" }); });
   } catch (e) {
     if (gen === LIVE_GEN) scheduleLiveReconnect();
     return;
@@ -407,16 +422,16 @@ function closeLiveStream() {
 
 function onLiveEvent(ev) {
   if (!ev || !ev.entity) return;
-  if (ev.entity === "notification") { refreshBell(); return; }
+  if (ev.entity === "notification") { inBackground(refreshBell); return; }
   var targets = LIVE_VIEWS[ev.entity] || [];
-  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") refreshBell();
+  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") inBackground(refreshBell);
   if (VIEW.id && targets.indexOf(VIEW.id) !== -1) {
     if (LIVE_FORM_VIEWS[VIEW.id]) { toast("Live update: " + (ev.action || "data") + " — refresh to see changes"); return; }
     if (LIVE_RELOAD_TIMER) clearTimeout(LIVE_RELOAD_TIMER);
     LIVE_RELOAD_TIMER = setTimeout(function () {
       LIVE_RELOAD_TIMER = null;
       if (!getToken()) return;
-      go(VIEW.id).catch(function () { /* ignore */ });
+      inBackground(function () { return go(VIEW.id); }).catch(function () { /* ignore */ });
     }, 700);
   }
 }
