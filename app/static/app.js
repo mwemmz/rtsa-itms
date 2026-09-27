@@ -108,7 +108,12 @@ async function api(path, opts) {
     throw new Error("Network error — is the server reachable?");
   }
   var ct = res.headers.get("content-type") || "";
-  var data = ct.indexOf("application/json") !== -1 ? await res.json() : null;
+  var data = null;
+  // 204 No Content still carries a JSON content-type here, so only parse a body that exists.
+  if (ct.indexOf("application/json") !== -1 && res.status !== 204) {
+    var text = await res.text();
+    data = text ? JSON.parse(text) : null;
+  }
   if (res.status === 401 && !/\/api\/auth\/(login|mfa)/.test(path)) {
     logout();
     throw new Error((data && data.detail) || "Session expired. Please sign in again.");
@@ -297,6 +302,7 @@ async function doLogin(email, password, msgEl, btn) {
     msgEl.className = "login-msg err";
     msgEl.textContent = e.message;
     if (!MFA_TOKEN && /captcha/i.test(e.message)) ensureCaptcha();
+    $("#login-resend").classList.toggle("hidden", !/confirm your email/i.test(e.message));
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove("loading"); }
   }
@@ -308,15 +314,29 @@ var SIGNUP_CAPTCHA = null;
 var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 var PHONE_RE = /^\+?[0-9][0-9 ]{6,19}$/;
 
+// The sign-in card holds four forms; exactly one is shown.
+var AUTH_VIEWS = {
+  signin: { form: "#login-form", focus: "#email", hash: "" },
+  signup: { form: "#signup-form", focus: "#su-name", hash: "#/signup" },
+  forgot: { form: "#forgot-form", focus: "#fg-email", hash: "#/forgot" },
+  reset: { form: "#reset-form", focus: "#rs-password", hash: "" } // never put the token back in the URL
+};
+
 function showAuthView(view) {
-  var signup = view === "signup";
-  $("#login-form").classList.toggle("hidden", signup);
-  $("#signup-form").classList.toggle("hidden", !signup);
-  $("#demo-hint").classList.toggle("hidden", signup);
-  $("#login-msg").textContent = "";
-  $("#signup-msg").textContent = "";
-  try { history.replaceState(null, "", signup ? "#/signup" : location.pathname); } catch (e) { /* ignore */ }
-  (signup ? $("#su-name") : $("#email")).focus();
+  Object.keys(AUTH_VIEWS).forEach(function (name) {
+    $(AUTH_VIEWS[name].form).classList.toggle("hidden", name !== view);
+  });
+  $("#demo-hint").classList.toggle("hidden", view !== "signin");
+  $$("#login-screen .login-msg").forEach(function (el) { el.textContent = ""; el.className = "login-msg"; });
+  $("#login-resend").classList.add("hidden");
+  var hash = AUTH_VIEWS[view].hash;
+  try { history.replaceState(null, "", hash || location.pathname); } catch (e) { /* ignore */ }
+  $(AUTH_VIEWS[view].focus).focus();
+}
+
+function authMessage(el, text, ok) {
+  el.className = "login-msg " + (ok ? "ok" : "err");
+  el.textContent = text;
 }
 
 function markInvalid(input, msgEl, message) {
@@ -399,6 +419,111 @@ async function doSignup() {
   }
 }
 
+/* ---------------- forgotten password & email confirmation ---------------- */
+
+// Emailed links look like /#/reset?token=... - the token sits after "#" so the
+// browser never sends it to the server (no access logs). Read it, then drop it
+// from the address bar and history straight away.
+var RESET_TOKEN = null;
+
+function takeLinkToken() {
+  var m = /^#\/(reset|verify)\?token=([^&]+)/.exec(location.hash || "");
+  if (!m) return null;
+  try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ }
+  return { kind: m[1], token: decodeURIComponent(m[2]) };
+}
+
+async function withButton(btn, fn) {
+  btn.disabled = true;
+  btn.classList.add("loading");
+  try { return await fn(); } finally { btn.disabled = false; btn.classList.remove("loading"); }
+}
+
+async function doForgot() {
+  var msgEl = $("#forgot-msg");
+  var input = $("#fg-email");
+  input.removeAttribute("aria-invalid");
+  var email = input.value.trim();
+  if (!EMAIL_RE.test(email)) { markInvalid(input, msgEl, "Enter the email address you sign in with."); return; }
+  await withButton($("#forgot-btn"), async function () {
+    try {
+      var r = await api("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email: email }) });
+      authMessage(msgEl, r.detail + " Check your inbox (and spam folder); the link works for 30 minutes.", true);
+    } catch (e) { authMessage(msgEl, e.message); }
+  });
+}
+
+async function doReset() {
+  var msgEl = $("#reset-msg");
+  var pw = $("#rs-password"), confirm = $("#rs-confirm");
+  [pw, confirm].forEach(function (el) { el.removeAttribute("aria-invalid"); });
+  if (pw.value.length < 8 || !/[a-z]/i.test(pw.value) || !/[0-9]/.test(pw.value)) {
+    markInvalid(pw, msgEl, "Use at least 8 characters, with letters and numbers."); return;
+  }
+  if (pw.value !== confirm.value) { markInvalid(confirm, msgEl, "Passwords don't match."); return; }
+  await withButton($("#reset-btn"), async function () {
+    try {
+      await api("/api/auth/password-reset/confirm", {
+        method: "POST", body: JSON.stringify({ token: RESET_TOKEN, new_password: pw.value })
+      });
+    } catch (e) {
+      if (/password/i.test(e.message) && !/link/i.test(e.message)) { markInvalid(pw, msgEl, e.message); return; }
+      authMessage(msgEl, e.message); // expired/used link: the form below lets them ask for a new one
+      return;
+    }
+    RESET_TOKEN = null;
+    $("#reset-form").reset();
+    showAuthView("signin");
+    authMessage($("#login-msg"), "Password changed. Sign in with your new password.", true);
+  });
+}
+
+async function confirmEmail(token) {
+  try {
+    var r = await api("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: token }) });
+    if (USER) {
+      toast("Email address confirmed", "ok");
+      USER.email_verified = true;
+      renderVerifyBanner();
+    } else {
+      showAuthView("signin");
+      $("#email").value = r.email;
+      authMessage($("#login-msg"), "Email address confirmed. Sign in to continue.", true);
+    }
+  } catch (e) {
+    if (USER) toast(e.message, "err");
+    else { showAuthView("signin"); authMessage($("#login-msg"), e.message); }
+  }
+}
+
+async function resendConfirmation(email) {
+  var r = await api("/api/auth/verify-email/resend", { method: "POST", body: JSON.stringify({ email: email }) });
+  return r.detail;
+}
+
+function renderVerifyBanner() {
+  var show = !!USER && USER.email_verified === false;
+  $("#verify-banner").classList.toggle("hidden", !show);
+  if (show) $("#verify-email").textContent = USER.email;
+}
+
+// Deep links into the signed-out card: #/signup, #/forgot, and emailed #/reset / #/verify links.
+function routeAuthHash() {
+  var link = takeLinkToken();
+  if (link && link.kind === "reset") {
+    RESET_TOKEN = link.token;
+    showAuthView("reset");
+  } else if (link && link.kind === "verify") {
+    confirmEmail(link.token);
+  } else if (location.hash === "#/signup") {
+    showAuthView("signup");
+  } else if (location.hash === "#/forgot") {
+    showAuthView("forgot");
+  } else {
+    showAuthView("signin");
+  }
+}
+
 function logout() {
   var t = getToken();
   if (t) {
@@ -408,6 +533,7 @@ function logout() {
   closeLiveStream();
   resetLoginForm();
   USER = null;
+  renderVerifyBanner();
   $("#shell").classList.add("hidden");
   $("#mfa-gate").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");
@@ -418,6 +544,7 @@ function logout() {
 
 async function bootstrapApp() {
   USER = await api("/api/auth/me");
+  renderVerifyBanner();
   $("#login-screen").classList.add("hidden");
   if (USER.mfa_setup_required) {
     $("#shell").classList.add("hidden");
@@ -1464,7 +1591,25 @@ function wire() {
     doSignup();
   });
   $("#to-signup").addEventListener("click", function (e) { e.preventDefault(); showAuthView("signup"); });
-  $("#to-signin").addEventListener("click", function (e) { e.preventDefault(); showAuthView("signin"); });
+  $$("#to-signin, .to-signin").forEach(function (a) {
+    a.addEventListener("click", function (e) { e.preventDefault(); showAuthView("signin"); });
+  });
+  $("#to-forgot").addEventListener("click", function (e) {
+    e.preventDefault();
+    var typed = $("#email").value.trim();
+    showAuthView("forgot");
+    if (typed) $("#fg-email").value = typed;
+  });
+  $("#forgot-form").addEventListener("submit", function (e) { e.preventDefault(); doForgot(); });
+  $("#reset-form").addEventListener("submit", function (e) { e.preventDefault(); doReset(); });
+  $("#resend-from-login").addEventListener("click", async function (e) {
+    e.preventDefault();
+    try { authMessage($("#login-msg"), await resendConfirmation($("#email").value.trim()), true); }
+    catch (err) { authMessage($("#login-msg"), err.message); }
+  });
+  $("#verify-resend").addEventListener("click", async function () {
+    try { toast(await resendConfirmation(USER.email), "ok"); } catch (err) { toast(err.message, "err"); }
+  });
   $$("#signup-form input").forEach(function (input) {
     input.addEventListener("input", function () { input.removeAttribute("aria-invalid"); });
   });
@@ -1483,20 +1628,31 @@ function wire() {
   });
   window.addEventListener("hashchange", function () {
     closeMenu();
-    if (USER) loadRouter();
-    else if (!getToken()) showAuthView(location.hash === "#/signup" ? "signup" : "signin");
+    if (USER && /^#\/verify\?token=/.test(location.hash)) confirmEmail(takeLinkToken().token);
+    else if (USER) loadRouter();
+    else if (!getToken()) routeAuthHash();
   });
 }
 
 window.addEventListener("DOMContentLoaded", function () {
   wire();
   if (getToken()) {
+    var link = takeLinkToken();
+    if (link && link.kind === "reset") {
+      // They asked to reset the password, so drop this browser's session and show the form.
+      logout();
+      RESET_TOKEN = link.token;
+      showAuthView("reset");
+      return;
+    }
     $("#login-screen").classList.add("hidden");
-    bootstrapApp().catch(function () {
+    bootstrapApp().then(function () {
+      if (link) confirmEmail(link.token);
+    }).catch(function () {
       logout();
     });
   } else {
     $("#login-screen").classList.remove("hidden");
-    if (location.hash === "#/signup") showAuthView("signup"); // deep link from /about
+    routeAuthHash(); // deep links: #/signup (from /about), #/forgot, emailed #/reset and #/verify
   }
 });

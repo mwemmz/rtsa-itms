@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "no-reply@rtsa.gov.zm"
+    # Public address of the web app, used in emailed links (password reset, email
+    # confirmation), e.g. https://rtsa-itms-api.onrender.com. Empty = worked out
+    # from the incoming request.
+    PUBLIC_BASE_URL: str = ""
     SMS_WEBHOOK_URL: str = ""  # HTTP SMS gateway; empty = log only (sandbox)
     SMS_WEBHOOK_TOKEN: str = ""
 

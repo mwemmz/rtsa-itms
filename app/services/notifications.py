@@ -102,6 +102,8 @@ def _create_for_users(
                 continue
             if channel_name == "sms" and not user.phone_number:
                 continue  # nowhere to send it
+            if channel_name == "email" and user.email_verified_at is None:
+                continue  # address not confirmed yet - it may not be theirs (in-app still delivered)
             is_in_app = channel_name == "in_app"
             note = Notification(
                 user_id=user.id,

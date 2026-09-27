@@ -19,6 +19,7 @@ def pytest_configure(config):
 
 def create_user(role: str = "citizen", password: str = "password123", **extra):
     """Insert a user directly (public registration only ever creates citizens)."""
+    from datetime import datetime, timezone
     from uuid import uuid4
 
     from app.core.database import SessionLocal
@@ -32,6 +33,8 @@ def create_user(role: str = "citizen", password: str = "password123", **extra):
             hashed_password=hash_password(password),
             full_name=extra.pop("full_name", "Test User"),
             role=UserRole(role),
+            # like existing accounts: confirmed, unless a test says otherwise
+            email_verified_at=extra.pop("email_verified_at", datetime.now(timezone.utc)),
             **extra,
         )
         db.add(user)

@@ -46,4 +46,9 @@ class User(Base):
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the owner proved they receive mail at `email`. Accounts an admin or the
+    # seed script creates are marked confirmed when created; self-registration
+    # leaves it None until the confirmation link is used. Email notifications skip
+    # unconfirmed addresses, so a mistyped or someone-else's address gets no mail.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mfa_recovery_hashes: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -28,6 +28,20 @@ services:
       # Password for the seeded admin account (otherwise the public demo default is used).
       - key: ADMIN_INITIAL_PASSWORD
         sync: false
+      # The web service sends password-reset and email-confirmation mail itself, so it
+      # needs SMTP too (without it, mail is only logged). Links point at PUBLIC_BASE_URL.
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
 
   - type: worker
     name: rtsa-itms-notification-worker
