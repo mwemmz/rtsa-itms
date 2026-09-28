@@ -40,6 +40,9 @@ DEFINITIONS: list[SettingDef] = [
                "Require staff accounts (officer, toll operator, admin) to enrol in MFA before using the app"),
     SettingDef("security.captcha_enabled", "false", "bool", "security",
                "Require a solved CAPTCHA on login and registration"),
+    SettingDef("security.require_email_verification", "false", "bool", "security",
+               "Self-registered citizens must confirm their email before they can sign in "
+               "(unconfirmed accounts never get email notifications either way)"),
     SettingDef("notifications.expiry_reminder_days", "30,14,7,1", "intlist", "notifications",
                "Days before expiry at which reminders are sent (licence, insurance, fitness, permits)"),
     SettingDef("payments.max_amount", "100000000", "int", "payments",

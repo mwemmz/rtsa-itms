@@ -47,8 +47,22 @@ class UserResponse(BaseModel):
     mfa_enabled: bool = False
     last_login_at: datetime | None = None
     locked_until: datetime | None = None
+    email_verified_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class EmailRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class TokenRequest(BaseModel):
+    token: str
 
 
 class Token(BaseModel):

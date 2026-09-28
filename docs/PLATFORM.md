@@ -27,6 +27,24 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   linked from `/about`) and are signed straight in afterwards. `POST /api/auth/register` stores the email trimmed and
   lowercased, rejects case-insensitive duplicates, validates name and optional mobile number, and allows 10 sign-ups
   per IP per 5 minutes. Sign-in matches the email case-insensitively.
+* **Email confirmation**: self-registered citizens get a confirmation link (valid 48 h) and start unconfirmed; accounts
+  created by an admin or the seed script, and every account that existed before this feature, count as confirmed.
+  Until confirmed, a user gets **no email notifications** (in-app ones still arrive), so a mistyped or someone-else's
+  address never receives fines or licence mail. The app shows a banner with *Send a new link*. Setting
+  `security.require_email_verification` (off by default) also blocks sign-in until confirmed; that check runs after the
+  password, so it can't be used to probe which addresses are registered.
+* **Forgotten password**: *Forgot password?* emails a reset link (valid 30 min). The request always gets the same answer
+  and the email is sent after the response, so it can't reveal who has an account; requests are limited to 5 per IP and
+  3 per address per 5 minutes. The link is tied to the current password hash, so it works once and dies if any newer
+  link is used or the password changes. Resetting signs the account out everywhere, clears any lockout, confirms the
+  email (they proved they read that inbox), keeps MFA in force, and emails a "your password was changed" notice.
+  If someone registered another person's address, the real owner reclaims it this way: sign-up tells them it's taken
+  and to use *Forgot password*, and the reset link only reaches their inbox.
+* Both links are short-lived signed tokens (`app/services/account_links.py`, no table) that sit after `#` in the URL
+  (`/#/reset?token=...`, `/#/verify?token=...`): browsers never send that part to the server, so tokens stay out of
+  access logs, and the page removes them from the address bar straight away. Links use `PUBLIC_BASE_URL` (falls back to
+  the request's address). The web service sends these emails itself, so it needs the `SMTP_*` settings too; without
+  SMTP, non-production servers log the link so the flow can be tested locally.
 * **Passwords**: bcrypt; policy = min length (setting) + letters and numbers.
 * **Lockout**: N failed logins (setting, default 5) lock the *account* for M minutes
   (default 15), on top of the per-IP throttle. Admins unlock. Every attempt is stored (`login_attempts`).
