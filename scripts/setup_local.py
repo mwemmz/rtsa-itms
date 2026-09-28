@@ -11,6 +11,7 @@ what to do.
 
 import argparse
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -57,7 +58,9 @@ def check_packages() -> None:
 
 def check_env() -> str:
     env, example = ROOT / ".env", ROOT / ".env.example"
-    if not env.exists():
+    # Settings may come from real environment variables instead (Render, CI, a shell
+    # export); a .env file is only needed when DATABASE_URL isn't set that way.
+    if not env.exists() and not os.environ.get("DATABASE_URL"):
         env.write_text(example.read_text())
         fail(".env did not exist - created it from .env.example",
              "open .env, set DATABASE_URL to your database (and SECRET_KEY), then run this again")
@@ -65,7 +68,7 @@ def check_env() -> str:
 
     url = settings.DATABASE_URL
     if any(p in url for p in ("user:password@", "<user>", "<password>", "ep-xxx")):
-        fail("DATABASE_URL in .env still has the example placeholders",
+        fail("DATABASE_URL still has the example placeholders (check .env or your environment)",
              "put your real Postgres user and password in DATABASE_URL, e.g. "
              "postgresql://postgres:YOURPASSWORD@localhost:3330/rtsa_itms  (no < > brackets)")
     if settings.SECRET_KEY in ("", "change-me-in-production", "your-secret-key-change-in-production"):
