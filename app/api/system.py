@@ -72,11 +72,12 @@ def capacity(
 
 @router.get("/backups")
 def backups(current_user: User = Depends(require_permission("system:monitor"))):
+    from scripts import offsite
     from scripts.backup import list_backups
 
     items = list_backups()
     return {"directory": settings.BACKUP_DIR, "retention": settings.BACKUP_RETENTION, "count": len(items),
-            "latest": items[0] if items else None, "backups": items}
+            "latest": items[0] if items else None, "backups": items, "offsite": offsite.status()}
 
 
 @router.post("/backups")
@@ -84,16 +85,20 @@ def create_backup(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("system:monitor")),
 ):
-    from scripts.backup import run_backup, verify_backup
+    from scripts.backup import backup_and_ship
 
     try:
-        path = run_backup()
+        result = backup_and_ship()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Backup failed: {exc}")
-    result = verify_backup(Path(path))
-    log_action(db, "backup", "system", path.name, f"verified={result.get('ok')}", current_user.id)
+    path = Path(result["path"])
+    offsite = result["offsite"]
+    offsite_note = "not configured" if offsite is None else ("ok" if offsite["ok"] else "FAILED")
+    log_action(db, "backup", "system", path.name,
+               f"verified={result['verification'].get('ok')} offsite={offsite_note}", current_user.id)
     db.commit()
-    return {"file": path.name, "size_bytes": path.stat().st_size, "verification": result}
+    return {"file": path.name, "size_bytes": path.stat().st_size, "verification": result["verification"],
+            "offsite": offsite}
 
 
 @router.post("/expiry-scan")

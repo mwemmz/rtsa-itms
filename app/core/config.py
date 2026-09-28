@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     # --- Backups / DR -------------------------------------------------
     BACKUP_DIR: str = "backups"
     BACKUP_RETENTION: int = 14
+    # Off-site copies in S3-compatible storage (Amazon S3, Cloudflare R2, Backblaze
+    # B2, MinIO). Empty BACKUP_S3_BUCKET = off-site copies disabled.
+    BACKUP_S3_ENDPOINT: str = ""  # e.g. https://s3.eu-central-1.amazonaws.com, https://<acct>.r2.cloudflarestorage.com
+    BACKUP_S3_REGION: str = "us-east-1"  # R2 uses "auto"
+    BACKUP_S3_BUCKET: str = ""
+    BACKUP_S3_ACCESS_KEY_ID: str = ""
+    BACKUP_S3_SECRET_ACCESS_KEY: str = ""
+    BACKUP_S3_PREFIX: str = "rtsa-itms/"
+    BACKUP_S3_RETENTION: int = 30
+    # Fernet key used to encrypt backups before they leave the server. Keep a copy
+    # somewhere other than this deployment - without it the backups can't be read.
+    BACKUP_ENCRYPTION_KEY: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
