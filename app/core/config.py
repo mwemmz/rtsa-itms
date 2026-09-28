@@ -1,9 +1,22 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # Shared team Postgres. Locally: postgresql://<user>:<password>@localhost:3330/rtsa_itms
     DATABASE_URL: str = "postgresql://localhost:3330/rtsa_itms"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _use_installed_postgres_driver(cls, url: str) -> str:
+        # SQLAlchemy 2.1 made psycopg 3 the default driver for postgresql:// URLs, but
+        # requirements.txt installs psycopg2. Without naming the driver, a fresh install
+        # (every Render deploy) cannot connect at all. Also accepts the postgres://
+        # scheme some hosts hand out, which SQLAlchemy rejects outright.
+        for scheme in ("postgresql://", "postgres://"):
+            if url.startswith(scheme):
+                return "postgresql+psycopg2://" + url[len(scheme):]
+        return url
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ENVIRONMENT: str = "development"

@@ -320,3 +320,17 @@ def test_repair_migration_heals_a_database_stamped_past_the_platform_migration(t
     monkeypatch.setattr(settings, "DATABASE_URL", fresh)
     command.upgrade(cfg, "heads")
     assert "notification_preferences" in sa.inspect(sa.create_engine(fresh)).get_table_names()
+
+
+@pytest.mark.parametrize("given,expected", [
+    ("postgresql://u:p@db.neon.tech/rtsa?sslmode=require", "postgresql+psycopg2://u:p@db.neon.tech/rtsa?sslmode=require"),
+    ("postgres://u:p@host:5432/rtsa", "postgresql+psycopg2://u:p@host:5432/rtsa"),
+    ("postgresql+psycopg2://u:p@host/rtsa", "postgresql+psycopg2://u:p@host/rtsa"),
+    ("sqlite:///./test.db", "sqlite:///./test.db"),
+])
+def test_database_url_uses_the_installed_postgres_driver(given, expected):
+    """SQLAlchemy 2.1 defaults postgresql:// to psycopg 3, which isn't installed: without
+    naming psycopg2 a fresh install (and every new Render deploy) can't reach the database."""
+    from app.core.config import Settings
+
+    assert Settings(DATABASE_URL=given).DATABASE_URL == expected
