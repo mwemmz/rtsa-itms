@@ -8,7 +8,7 @@ import io
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -243,6 +243,50 @@ def test_idle_session_times_out():
     finally:
         db.close()
     r = client.get("/api/auth/me", headers=h)
+    assert r.status_code == 401 and "inactivity" in r.json()["detail"]
+
+
+def test_app_shell_is_always_revalidated():
+    for path in ("/", "/static/app.js", "/static/app.css"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
+    # an unchanged script costs a 304, not a re-download
+    etag = client.get("/static/app.js").headers["etag"]
+    assert client.get("/static/app.js", headers={"If-None-Match": etag}).status_code == 304
+    # fonts never change, so they keep normal caching
+    assert "cache-control" not in client.get("/static/fonts/inter-latin-400-normal.woff2").headers
+
+
+def test_background_refreshes_do_not_count_as_activity():
+    from app.core.security import decode_token
+    from app.models.platform import UserSession
+
+    h, _, _ = _auth_headers("citizen")
+    sid = decode_token(h["Authorization"].split()[1])["sid"]
+    bg = dict(h, **{"X-Background-Refresh": "1"})
+
+    def last_seen(set_minutes_ago=None):
+        db = _db()
+        try:
+            s = db.get(UserSession, UUID(sid))
+            if set_minutes_ago is not None:
+                s.last_seen_at = datetime.utcnow() - timedelta(minutes=set_minutes_ago)
+                db.commit()
+            return s.last_seen_at
+        finally:
+            db.close()
+
+    before = last_seen(set_minutes_ago=10)
+    # a live-update reload is served normally but leaves the idle clock alone...
+    assert client.get("/api/auth/me", headers=bg).status_code == 200
+    assert last_seen() == before
+    # ...while a request the user made does reset it
+    assert client.get("/api/auth/me", headers=h).status_code == 200
+    assert last_seen() > before
+
+    # background requests are still subject to the idle sign-out itself
+    last_seen(set_minutes_ago=180)
+    r = client.get("/api/auth/me", headers=bg)
     assert r.status_code == 401 and "inactivity" in r.json()["detail"]
 
 
