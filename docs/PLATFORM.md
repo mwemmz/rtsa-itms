@@ -75,6 +75,14 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   works once (`app/api/events.py`). After a drop it reconnects itself with a fresh ticket, backing off 1 s → 30 s.
   Scripts can still use `Authorization: Bearer <access token>`. The stream is excluded from gzip
   (`StreamSafeGZipMiddleware`, `app/core/middleware.py`) - older Starlette versions otherwise buffer every frame.
+  **Each viewer only receives what they may see** (`app/services/event_visibility.py`): road incidents and broadcasts
+  go to everyone; changes about a user's own account, sessions, devices, vehicles, fines, payments or licence
+  applications go to that user; operational records go to staff; accounts, sessions, devices, settings, roles, agencies
+  and notification rules only to holders of the matching permission; anything unclassified only to `audit:read`
+  holders. Who made the change is only included for `audit:read` holders. The owners of a record are looked up once
+  when the change is published. An open stream re-reads its session and permissions every 30 s and closes if the user
+  was signed out, deactivated, blocked or went idle; a demotion or permission change applies without reconnecting.
+  When adding a new entity type to `log_action`, classify it in `event_visibility.py` (until then only admins see it).
 * **Devices**: fingerprint = hash(user-agent, language, `X-Device-Id`). New devices raise a `new_device_login` notification;
   users can trust/block devices (a blocked device can't sign in).
 * **Transport/headers**: `FORCE_HTTPS` redirects http→https (behind a proxy, via `X-Forwarded-Proto`); HSTS in production;
