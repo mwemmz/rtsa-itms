@@ -167,9 +167,13 @@ def test_endpoint_streams_via_asgi(client):
 
     event_id = str(uuid4())
 
+    stop = threading.Event()
+
     def publish():
-        time.sleep(1.0)
-        hub.publish({"entity": "road_incident", "action": "report_incident", "entity_id": event_id})
+        # Keep publishing until the reader has it: one publish can land before the
+        # stream subscribes (slow machine), and would then be lost for good.
+        while not stop.wait(0.5):
+            hub.publish({"entity": "road_incident", "action": "report_incident", "entity_id": event_id})
 
     th = threading.Thread(target=publish, daemon=True)
     th.start()
@@ -188,6 +192,7 @@ def test_endpoint_streams_via_asgi(client):
                         received = payload
                         break
     finally:
+        stop.set()
         server.should_exit = True
         thread.join(timeout=10)
 
