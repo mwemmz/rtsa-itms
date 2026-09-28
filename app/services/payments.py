@@ -37,6 +37,7 @@ from app.models.vehicle import Vehicle
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.notifications import notify
+from app.services.ownership import owner_user_id
 
 GATEWAYS = {"sandbox", "sandbox_decline", "mobile_money"}
 ASYNC_GATEWAYS = {"mobile_money"}
@@ -79,8 +80,8 @@ def _owns_vehicle(db: Session, user: User, vehicle_id) -> bool:
         return True
     if vehicle_id is None:
         return False
-    vehicle = db.get(Vehicle, vehicle_id)
-    return vehicle is not None and vehicle.user_id == user.id
+    # same ownership rule as the portal and citizen views (direct link or national ID)
+    return owner_user_id(db, db.get(Vehicle, vehicle_id)) == user.id
 
 
 def resolve_payable(db: Session, user: User, payment_type: PaymentType,

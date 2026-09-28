@@ -29,7 +29,10 @@ def upgrade_database() -> None:
     # Render startup logs need the failing PostgreSQL statement when a Neon
     # migration cannot complete. This is enabled only for the migration run.
     cfg.set_main_option("sqlalchemy.echo", "true")
-    command.upgrade(cfg, "head")
+    # "heads", not "head": when two feature branches each add a migration on the same
+    # parent, "head" refuses to choose and the app would fail to start. "heads" applies
+    # every branch and is identical when there is only one.
+    command.upgrade(cfg, "heads")
     logger.info("Alembic upgrade completed")
 
 

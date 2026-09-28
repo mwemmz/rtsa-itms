@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.driver import LicenceClass
 from app.models.licence import LicenceApplicationStatus
@@ -16,11 +16,11 @@ class LicenceApplicationCreate(BaseModel):
 
 
 class TheoryTestUpdate(BaseModel):
-    theory_score: int
+    theory_score: int = Field(ge=0, le=100)
 
 
 class PracticalTestUpdate(BaseModel):
-    practical_score: int
+    practical_score: int = Field(ge=0, le=100)
 
 
 class LicenceApplicationResponse(BaseModel):

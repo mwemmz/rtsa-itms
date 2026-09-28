@@ -17,8 +17,17 @@ from app.schemas.licence import (
     TheoryTestUpdate,
 )
 from app.services.audit import log_action
+from app.services.notifications import notify
 
 router = APIRouter(prefix="/api/licence-applications", tags=["Licence Applications"])
+
+
+def _years_from_now(years: int) -> datetime:
+    now = datetime.utcnow()
+    try:
+        return now.replace(year=now.year + years)
+    except ValueError:  # 29 February -> 28 February in a non-leap target year
+        return now.replace(year=now.year + years, day=28)
 
 
 @router.post("/", response_model=LicenceApplicationResponse, status_code=status.HTTP_201_CREATED)
@@ -88,6 +97,12 @@ def record_theory_test(
     app = db.query(LicenceApplication).filter(LicenceApplication.id == application_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+    if app.status in (
+        LicenceApplicationStatus.ISSUED,
+        LicenceApplicationStatus.REJECTED,
+        LicenceApplicationStatus.PRACTICAL_TEST_PASSED,
+    ):
+        raise HTTPException(status_code=400, detail=f"Application is already {app.status.value.replace('_', ' ')}")
 
     app.theory_score = payload.theory_score
     if payload.theory_score >= 70:
@@ -112,6 +127,13 @@ def record_practical_test(
     app = db.query(LicenceApplication).filter(LicenceApplication.id == application_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    if app.status not in (
+        LicenceApplicationStatus.THEORY_TEST_PASSED,
+        LicenceApplicationStatus.PRACTICAL_TEST_SCHEDULED,
+        LicenceApplicationStatus.PRACTICAL_TEST_FAILED,
+    ):
+        raise HTTPException(status_code=400, detail="The applicant must pass the theory test before the practical test")
 
     app.practical_score = payload.practical_score
     if payload.practical_score >= 70:
@@ -149,7 +171,9 @@ def issue_licence(
         date_of_birth=app.date_of_birth,
         licence_class=app.requested_class,
         licence_issue_date=datetime.utcnow(),
-        licence_expiry_date=datetime.utcnow().replace(year=datetime.utcnow().year + 5),
+        licence_expiry_date=_years_from_now(5),
+        # link the licence to the applicant's account so it shows in their portal
+        user_id=app.applicant_id,
     )
     db.add(driver)
     app.issued_licence_number = licence_number
@@ -157,6 +181,11 @@ def issue_licence(
 
     db.flush()
     log_action(db, "issue_licence", "licence_application", str(app.id), f"Issued {licence_number}", current_user.id)
+    notify(db, app.applicant_id, "licence_issued", {
+        "licence_number": licence_number,
+        "licence_class": app.requested_class.value,
+        "expiry_date": driver.licence_expiry_date.strftime("%Y-%m-%d"),
+    })
     db.commit()
     db.refresh(app)
     return app

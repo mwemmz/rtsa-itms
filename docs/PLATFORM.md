@@ -54,6 +54,14 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
 * **RBAC**: 13 permissions × 4 roles, editable in *Settings & access*; `admin` always holds all. The last active
   admin account can't be demoted or deactivated by anyone else, even with `roles:manage`/`users:manage` remapped
   onto another role (`_is_last_admin`, `app/api/admin.py`) - it can only happen by promoting a replacement first.
+* **Operational endpoints** (vehicles, drivers, enforcement, inspections, insurance, ANPR, toll, PSV, accidents,
+  road-network writes) use two role groups from `app/core/security.py`: `OFFICERS` (officer, admin) for registry
+  writes, enforcement and accidents; `FIELD_STAFF` (officer, toll operator, admin) for gate/camera capture and the
+  read-only lookups a gate needs. Citizens never reach these registries - they see their own records through
+  `/api/citizen` and `/api/portal`. Guard new endpoints the same way; `tests/test_audit_fixes.py` pins the policy.
+* **Vehicle ownership** is resolved in one place, `app/services/ownership.py`: a vehicle belongs to an account via
+  `Vehicle.user_id` or the owner's national ID matching that account's driver record. Use `owner_user_id()` to
+  decide who to notify; never match owners by name.
 * **Not done**: per-field DB encryption beyond MFA secrets and gateway payloads (database-level encryption at rest
   is the hosting provider's – Neon encrypts storage).
 

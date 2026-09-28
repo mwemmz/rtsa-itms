@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -14,6 +14,18 @@ if not settings.DATABASE_URL.startswith("sqlite"):
     )
 
 engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
+
+if engine.dialect.name == "postgresql":
+    # The app keeps every time in UTC. A Postgres server installed with a local
+    # zone (e.g. Africa/Lusaka) would otherwise read naive UTC values as local
+    # time: report windows drop the last hours and times stored in naive columns
+    # shift. Neon and Render default to UTC; this makes every host behave alike.
+    @event.listens_for(engine, "connect")
+    def _session_in_utc(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("SET TIME ZONE 'UTC'")
+        cursor.close()
+        dbapi_connection.commit()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

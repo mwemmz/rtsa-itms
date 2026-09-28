@@ -65,10 +65,10 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
 3. **Run migrations**
 
    ```bash
-   alembic upgrade head
+   alembic upgrade heads
    ```
 
-   (On Windows with the venv active, use `python -m alembic upgrade head`.)
+   (On Windows with the venv active, use `python -m alembic upgrade heads`.)
 
 4. **Start the API**
 
@@ -246,7 +246,7 @@ Blueprints key).
 > **Free-tier note:** Render's free plan supports neither `preDeployCommand` nor
 > a `releaseCommand`. Instead, the web service enables
 > `RUN_MIGRATIONS_ON_STARTUP=true` and applies
-> `alembic upgrade head` + `python -m scripts.seed` **at app startup**
+> `alembic upgrade heads` + `python -m scripts.seed` **at app startup**
 > (`app/core/bootstrap.py`), before it starts serving traffic. Both steps are
 > idempotent, so redeploys and wake-ups are safe no-ops.
 

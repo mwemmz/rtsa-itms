@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import FIELD_STAFF, OFFICERS, require_role
 from app.models.insurance import Insurance
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/insurance", tags=["Insurance"])
 def add_insurance(
     payload: InsuranceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     vehicle = db.query(Vehicle).filter(Vehicle.id == payload.vehicle_id).first()
     if not vehicle:
@@ -51,7 +51,7 @@ def add_insurance(
 def list_insurance_for_vehicle(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     return (
         db.query(Insurance)
@@ -65,7 +65,7 @@ def list_insurance_for_vehicle(
 def get_active_insurance(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     insurance = (
         db.query(Insurance)

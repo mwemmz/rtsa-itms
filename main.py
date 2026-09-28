@@ -4,10 +4,9 @@ import mimetypes
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.exc import StatementError
+from sqlalchemy.exc import IntegrityError, StatementError
 
 mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("font/woff", ".woff")
@@ -35,7 +34,7 @@ from app.api.health import router as health_router
 from app.api import incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
 from app.core.config import settings
-from app.core.middleware import PlatformMiddleware
+from app.core.middleware import PlatformMiddleware, StreamSafeGZipMiddleware
 from app.services.events import hub
 from app.ui import landing_page
 
@@ -62,6 +61,14 @@ async def malformed_identifier(_, exc: StatementError):
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     import logging
 
+    if isinstance(exc, IntegrityError):
+        # duplicate unique value or a reference to a row that doesn't exist: the
+        # request conflicts with existing data, it isn't a server fault
+        logging.getLogger("http").warning("Integrity conflict: %s", exc.orig)
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "This conflicts with an existing record (duplicate or invalid reference)"},
+        )
     logging.getLogger("http").error("Database error: %s", exc, exc_info=exc)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
@@ -94,7 +101,7 @@ app.include_router(events.router)
 
 # Middleware runs bottom-up: gzip is innermost, the platform middleware
 # (HTTPS redirect, security headers, timing, metrics) is outermost.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(StreamSafeGZipMiddleware, minimum_size=1024)
 if settings.CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,

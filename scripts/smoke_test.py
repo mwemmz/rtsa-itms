@@ -4,7 +4,7 @@ Use it to prove a real PostgreSQL (or Neon) database works with the platform
 modules - the pytest suite is SQLite-only because it drops and recreates tables,
 which you must never do to a shared database.
 
-    alembic upgrade head
+    alembic upgrade heads
     python -m scripts.smoke_test
 
 It creates clearly named ``smoke-*`` records (and one deactivated admin), never

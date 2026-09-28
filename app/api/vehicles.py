@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import FIELD_STAFF, OFFICERS, require_role
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, VehicleStatus
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/vehicles", tags=["Vehicles"])
 def register_vehicle(
     payload: VehicleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     existing = db.query(Vehicle).filter(
         Vehicle.registration_number == payload.registration_number
@@ -41,7 +41,7 @@ def list_vehicles(
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     query = db.query(Vehicle)
     if search:
@@ -58,7 +58,7 @@ def list_vehicles(
 def get_vehicle(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
@@ -70,7 +70,7 @@ def get_vehicle(
 def get_vehicle_by_registration(
     registration_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     vehicle = db.query(Vehicle).filter(
         Vehicle.registration_number == registration_number
@@ -85,7 +85,7 @@ def update_vehicle(
     vehicle_id: str,
     payload: VehicleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:

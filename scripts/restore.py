@@ -9,7 +9,7 @@ refuses to run without ``--yes`` and refuses a non-empty target unless
 ``--wipe`` is also given. Point ``DATABASE_URL`` at the database to restore
 into (for a rehearsal use a scratch database, never production).
 
-JSON snapshots need the schema to exist first (``alembic upgrade head``);
+JSON snapshots need the schema to exist first (``alembic upgrade heads``);
 ``.dump`` files are restored with ``pg_restore --clean --if-exists``.
 """
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import FIELD_STAFF, OFFICERS, require_role
 from app.models.inspection import FitnessCertificate, Inspection, InspectionResult
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/inspections", tags=["Inspections"])
 def schedule_inspection(
     payload: InspectionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     vehicle = db.query(Vehicle).filter(Vehicle.id == payload.vehicle_id).first()
     if not vehicle:
@@ -51,7 +51,7 @@ def schedule_inspection(
 def list_inspections_for_vehicle(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     return db.query(Inspection).filter(Inspection.vehicle_id == vehicle_id).order_by(Inspection.scheduled_date.desc()).all()
 
@@ -100,7 +100,7 @@ def update_inspection_result(
 def get_fitness_certificate(
     inspection_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     cert = db.query(FitnessCertificate).filter(
         FitnessCertificate.inspection_id == inspection_id
@@ -114,7 +114,7 @@ def get_fitness_certificate(
 def get_latest_fitness_certificate(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     cert = (
         db.query(FitnessCertificate)

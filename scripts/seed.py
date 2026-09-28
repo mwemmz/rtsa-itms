@@ -82,6 +82,12 @@ DEFAULT_RULES = [
         "body_template": "Your account was accessed from a new device ({device}, {ip}). If this was not you, sign out other sessions and change your password.",
     },
     {
+        "trigger_event": "licence_issued",
+        "channels": "in_app,email",
+        "title_template": "Your driving licence has been issued",
+        "body_template": "Licence {licence_number} (class {licence_class}) has been issued to you. It is valid until {expiry_date}.",
+    },
+    {
         "trigger_event": "licence_renewed",
         "channels": "in_app,email",
         "title_template": "Licence renewed",

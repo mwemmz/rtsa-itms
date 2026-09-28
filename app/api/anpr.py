@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import FIELD_STAFF, require_role
 from app.models.anpr import ANPREvent
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/anpr", tags=["ANPR"])
 def capture_anpr_event(
     payload: ANPREventCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     vehicle = db.query(Vehicle).filter(
         Vehicle.registration_number == payload.plate_number
@@ -46,7 +46,7 @@ def capture_anpr_event(
 def list_anpr_events(
     plate_number: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     query = db.query(ANPREvent)
     if plate_number:

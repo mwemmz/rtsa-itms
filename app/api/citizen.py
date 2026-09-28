@@ -23,6 +23,7 @@ from app.schemas.payment import PaymentResponse
 from app.schemas.vehicle import VehicleResponse
 from app.services.audit import log_action
 from app.services.compliance import check_vehicle_compliance
+from app.services.ownership import owned_vehicles_query
 
 router = APIRouter(prefix="/api/citizen", tags=["Citizen Portal"])
 
@@ -50,11 +51,7 @@ def my_drivers(db: Session, user: User) -> list[Driver]:
 
 def my_vehicles_query(db: Session, user: User):
     """Vehicles linked to the account directly, or through its driver record's national ID."""
-    ids = [d.id_number for d in my_drivers(db, user)]
-    cond = Vehicle.user_id == user.id
-    if ids:
-        cond = cond | Vehicle.owner_id_number.in_(ids)
-    return db.query(Vehicle).filter(cond)
+    return owned_vehicles_query(db, user)
 
 
 def _my_vehicle_ids(db: Session, user: User) -> list:

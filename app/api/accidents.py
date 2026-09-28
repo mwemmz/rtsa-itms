@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import OFFICERS, require_role
 from app.models.accident import Accident, AccidentSeverity, AccidentStatus, AccidentVehicle
 from app.models.user import User
 from app.schemas.accident import (
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/accidents", tags=["Accidents"])
 def report_accident(
     payload: AccidentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     accident = Accident(
         location=payload.location,
@@ -56,7 +56,7 @@ def report_accident(
 @router.get("/", response_model=list[AccidentResponse])
 def list_accidents(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     return db.query(Accident).order_by(Accident.occurred_at.desc()).limit(100).all()
 
@@ -64,7 +64,7 @@ def list_accidents(
 @router.get("/stats", response_model=AccidentStats)
 def accident_stats(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     total = db.query(Accident).count()
     by_severity = {}
@@ -80,7 +80,7 @@ def accident_stats(
 def get_accident(
     accident_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     accident = db.query(Accident).filter(Accident.id == accident_id).first()
     if not accident:
@@ -92,6 +92,6 @@ def get_accident(
 def get_accident_vehicles(
     accident_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     return db.query(AccidentVehicle).filter(AccidentVehicle.accident_id == accident_id).all()

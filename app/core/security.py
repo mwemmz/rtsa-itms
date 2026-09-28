@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.timeutil import aware, utcnow
 from app.models.platform import Device, UserSession
-from app.models.user import STAFF_ROLES, User
+from app.models.user import STAFF_ROLES, User, UserRole
 from app.services import settings as runtime_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -158,3 +158,9 @@ def require_role(*allowed_roles: str):
             )
         return current_user
     return role_checker
+
+
+# Role groups for operational (Developer 1) endpoints. Citizens reach their own
+# records only through /api/citizen and /api/portal, never these registries.
+OFFICERS = (UserRole.OFFICER, UserRole.ADMIN)
+FIELD_STAFF = (UserRole.OFFICER, UserRole.TOLL_OPERATOR, UserRole.ADMIN)
