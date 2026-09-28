@@ -187,6 +187,22 @@ See [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md).
 * Migration `a7c3d91e5b20` adds indexes for the hot paths (payments by status/date and payer, challans by status/vehicle,
   toll/violation/accident timestamps, audit log by time/entity/actor, expiry dates used by reminders, notifications by status).
 * All list endpoints paginate (`skip`/`limit`, capped); reports aggregate in SQL, not Python.
-* The app is stateless apart from three in-process caches/limiters (login IP throttle, agency rate limit, metrics). With more
-  than one instance, move those to Redis; everything else (sessions, lockout, settings, ledger) is in the database.
+* **Running more than one instance:** set `REDIS_URL` (on Render: add a *Key Value* instance and use its internal URL).
+  Sessions, lockouts, settings and the ledger are already in the database; these five things would otherwise be
+  per-process and go wrong behind a load balancer, so with `REDIS_URL` they're shared through Redis
+  (`app/core/shared.py`):
+
+  | What | Without Redis (one instance) | With `REDIS_URL` |
+  |---|---|---|
+  | Login and sign-up throttles | per-process counts | one sliding window per IP, all instances |
+  | Agency API rate limits | per-process counts | one window per agency, all instances |
+  | Single-use stream tickets | used-once per process | used-once across instances |
+  | Live updates | only this instance's connections | published to a Redis channel; every instance relays to its own viewers, with the same per-viewer filtering |
+  | `/api/system/metrics` | this instance | every live instance merged (each publishes its window every 10 s; `instances` shows how many) |
+
+  Nothing changes when `REDIS_URL` is unset. If Redis becomes unreachable, each of these falls back to its
+  single-instance behaviour and logs it (at most once a minute) rather than failing requests. Short read caches stay per
+  instance: permissions and settings (5 s) and the analytics dashboard (`REPORT_CACHE_SECONDS`) - a change can take
+  that long to show on another instance. These paths are tested against an in-memory stand-in for Redis
+  (`tests/test_shared_state.py`); run one real two-instance check before relying on it.
 * Route heavy work (large exports, notification delivery) to the worker as volume grows; the service functions are already queue-friendly.

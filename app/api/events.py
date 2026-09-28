@@ -28,6 +28,7 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from app.core import shared
 from app.core.database import SessionLocal, get_db
 from app.core.security import (
     create_access_token,
@@ -50,8 +51,8 @@ STREAM_TICKET_SECONDS = 30
 RECHECK_SECONDS = 30  # how often an open stream re-reads its session and permissions
 
 # Ticket ids already used to open a stream, with their expiry. Tickets expire in
-# seconds, so this stays tiny. Per-process, like the hub itself (see
-# app/services/events.py) - fine for Render's single web process.
+# seconds, so this stays tiny. Used for a single instance; with REDIS_URL set the
+# marker lives in Redis instead, so every instance agrees (app/core/shared.py).
 _used_tickets: dict[str, float] = {}
 _used_lock = threading.Lock()
 
@@ -66,6 +67,11 @@ def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
 
 def _claim_ticket(jti: str, expires_at: float) -> bool:
     """Mark a ticket as used. False if it had already been used."""
+    if shared.enabled():  # so a ticket used on one instance is refused on the others
+        try:
+            return shared.claim_once(f"rtsa:stream-ticket:{jti}", int(expires_at - time.time()) + 1)
+        except Exception as exc:  # noqa: BLE001
+            shared.degraded("stream tickets", exc)
     now = time.time()
     with _used_lock:
         for stale in [k for k, exp in _used_tickets.items() if exp < now]:

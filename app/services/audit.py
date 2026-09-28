@@ -42,7 +42,7 @@ def log_action(
     )
     db.add(entry)
     db.flush()
-    if action in _MUTATING_ACTIONS and hub.has_subscribers():
+    if action in _MUTATING_ACTIONS and hub.wants_events():
         hub.publish(
             {
                 "entity": entity_type,

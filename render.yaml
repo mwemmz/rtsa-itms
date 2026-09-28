@@ -55,6 +55,9 @@ services:
         sync: false
       - key: BACKUP_ENCRYPTION_KEY
         sync: false
+      # Only when running more than one instance (see docs/PLATFORM.md, Scalability).
+      - key: REDIS_URL
+        sync: false
 
   - type: worker
     name: rtsa-itms-notification-worker

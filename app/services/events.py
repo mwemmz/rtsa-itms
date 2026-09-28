@@ -1,9 +1,12 @@
-"""In-process live-event hub for the SSE realtime feed.
+"""Live-event hub for the SSE realtime feed.
 
-Render runs the web tier as a single uvicorn process (no --workers), so an
-in-memory pub/sub is sufficient: every mutation the web tier commits calls
-``log_action`` in ``app/services/audit.py``, which publishes a change event
-here. SSE subscribers registered via ``subscribe()`` receive it.
+Every mutation the web tier commits calls ``log_action`` in
+``app/services/audit.py``, which publishes a change event here. SSE subscribers
+registered via ``subscribe()`` receive it. With one instance (Render's current
+setup) that's all in memory. With ``REDIS_URL`` set, ``publish`` goes through a
+Redis channel instead and a relay thread on every instance hands each event to
+its own subscribers - so a change made on one instance reaches connections held
+by the others (see ``app/core/shared.py``).
 
 ``publish`` is safe to call from any thread (sync endpoints run in Starlette's
 threadpool): it hands the payload to the owning event loop with
@@ -18,6 +21,11 @@ It runs at publish time, so events a viewer can't see never enter their queue.
 import asyncio
 import threading
 from typing import Any, Callable
+
+from app.core import shared
+from app.core.logging import get_logger
+
+logger = get_logger("events")
 
 View = Callable[[dict[str, Any]], "dict[str, Any] | None"]
 
@@ -46,7 +54,25 @@ class EventHub:
         with self._lock:
             return bool(self._subscribers)
 
+    def wants_events(self) -> bool:
+        """Whether publishing is worth it: local listeners, or other instances via Redis."""
+        return self.has_subscribers() or shared.enabled()
+
     def publish(self, payload: dict[str, Any]) -> None:
+        if shared.enabled():
+            try:
+                shared.publish_event(payload)  # the relay delivers it here and on every other instance
+                return
+            except Exception as exc:  # noqa: BLE001 - Redis down: still serve this instance's viewers
+                logger.error("Could not publish live event to Redis (%s); delivering locally only", exc)
+        self.deliver(payload)
+
+    def start_relay(self) -> threading.Event | None:
+        """With Redis configured, relay events from all instances to this one's subscribers."""
+        return shared.start_event_listener(self.deliver) if shared.enabled() else None
+
+    def deliver(self, payload: dict[str, Any]) -> None:
+        """Hand an event to this instance's subscribers, each through its own view."""
         loop = self._loop
         if loop is None:
             return
