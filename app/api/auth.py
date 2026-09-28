@@ -1,8 +1,12 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.permissions import permissions_for_role
+from app.core.ratelimit import check_rate_limit, record_failure
 from app.core.security import (
     get_current_user,
     hash_password,
@@ -30,6 +34,10 @@ from app.services import settings as runtime_settings
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ]{6,19}$")
+REGISTRATIONS_PER_IP = 10  # per ratelimit.WINDOW_SECONDS - generous enough for a shared campus/office NAT
 
 _FORM_SCHEMA = {
     "type": "object",
@@ -84,8 +92,12 @@ def get_captcha():
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
+def register(payload: UserCreate, request: Request, db: Session = Depends(get_db)):
     """Public self-registration. Always creates a *citizen* account."""
+    ip_key = f"register:{auth_service.client_ip(request)}"
+    if not check_rate_limit(ip_key, REGISTRATIONS_PER_IP):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many sign-ups from this network. Try again later.")
+    record_failure(ip_key)  # every attempt counts towards the per-IP sign-up budget
     if runtime_settings.get(db, "security.captcha_enabled") and not captcha_service.verify(payload.model_dump()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CAPTCHA verification failed")
     if payload.role != UserRole.CITIZEN:
@@ -93,22 +105,32 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Staff accounts can only be created by an administrator",
         )
+    email = payload.email.strip().lower()
+    if len(email) > 254 or not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter a valid email address")
+    full_name = " ".join(payload.full_name.split())
+    if not full_name or len(full_name) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter your full name (up to 120 characters)")
+    phone = (payload.phone_number or "").strip() or None
+    if phone and not PHONE_PATTERN.match(phone):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Enter a valid mobile number, e.g. +260971234567")
     problem = validate_password_strength(
         payload.password, runtime_settings.get(db, "security.password_min_length")
     )
     if problem:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
-    existing = db.query(User).filter(User.email == payload.email).first()
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
     user = User(
-        email=payload.email,
+        email=email,
         hashed_password=hash_password(payload.password),
-        full_name=payload.full_name,
-        phone_number=payload.phone_number,
+        full_name=full_name,
+        phone_number=phone,
         role=UserRole.CITIZEN,
         password_changed_at=utcnow(),
     )
