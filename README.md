@@ -32,6 +32,19 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
 
 ## Setup
 
+> **Quick start:** install the dependencies (step 1), copy `.env.example` to `.env` and set
+> `DATABASE_URL` to your own Postgres (step 2), then run
+>
+> ```bash
+> python -m scripts.setup_local --yes
+> ```
+>
+> It checks your Python version, packages, `.env` and database connection, explains any
+> problem in plain words (wrong password, database missing, database built by different
+> code...), then creates the database if needed, applies every migration and loads the demo
+> data. **Run it again every time you pull or merge new code.** Steps 3-5 below are what it
+> does for you.
+
 1. **Create a virtual environment and install dependencies**
 
    ```bash
