@@ -8,10 +8,11 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
-# The live-updates stream authenticates with ?token=<access token> because the
-# browser's EventSource cannot send headers. Access logs print the full URL, so
-# without this every open tab would write a working session token to the logs.
-_TOKEN_IN_URL = re.compile(r"([?&](?:token|access_token)=)[^&\s\"]+")
+# Credentials must never reach the logs, and access logs print full URLs. The
+# live-updates stream now opens with a short-lived one-time ?ticket= (the browser's
+# EventSource cannot send headers), and older clients or scripts may still put an
+# access token in the query string: redact all of them.
+_TOKEN_IN_URL = re.compile(r"([?&](?:token|access_token|ticket)=)[^&\s\"]+")
 
 
 class RedactTokens(logging.Filter):

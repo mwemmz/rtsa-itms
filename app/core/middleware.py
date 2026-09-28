@@ -110,7 +110,7 @@ class PlatformMiddleware:
             key = f"{scope['method']} {route_path}"
             # the live-updates stream stays open for as long as a tab is: its duration
             # isn't latency, and counting it would drown the real percentiles
-            long_lived = path.startswith("/api/events/")
+            long_lived = path in _NO_GZIP_PATHS
             if not long_lived:
                 metrics.record(key, elapsed_ms, status_holder["code"], settings.SLOW_REQUEST_MS)
             if elapsed_ms > settings.SLOW_REQUEST_MS and not long_lived:
@@ -136,25 +136,3 @@ def _log_agency_call(agency: dict, endpoint: str, status_code: int, elapsed_ms: 
         logger.error("could not record integration log: %s", exc)
     finally:
         db.close()
-
-
-class StreamSafeGZipMiddleware:
-    """GZip every response except server-sent event streams.
-
-    A gzip compressor buffers small writes, so SSE frames (a few bytes each)
-    would sit in its buffer and never reach the browser. Starlette versions
-    before 0.44 compress text/event-stream too, and the project's dependency
-    range allows those, so the stream is excluded here explicitly.
-    """
-
-    def __init__(self, app: ASGIApp, minimum_size: int = 500) -> None:
-        from starlette.middleware.gzip import GZipMiddleware
-
-        self.app = app
-        self.gzip = GZipMiddleware(app, minimum_size=minimum_size)
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"].startswith("/api/events/"):
-            await self.app(scope, receive, send)
-            return
-        await self.gzip(scope, receive, send)

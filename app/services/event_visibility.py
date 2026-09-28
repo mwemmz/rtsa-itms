@@ -108,10 +108,12 @@ def _uuid(value: Any) -> uuid.UUID | None:
 
 def _vehicle_owner(db: Session, vehicle_id: Any) -> Any:
     from app.models.vehicle import Vehicle
+    from app.services.ownership import owner_user_id
 
+    # Same rule as notifications and the citizen portal (direct link or the owner's
+    # national ID): anyone who is notified about a record also gets its live updates.
     vid = _uuid(vehicle_id)
-    vehicle = db.get(Vehicle, vid) if vid else None
-    return vehicle.user_id if vehicle else None
+    return owner_user_id(db, db.get(Vehicle, vid)) if vid else None
 
 
 def _driver_user(db: Session, driver_id: Any) -> Any:

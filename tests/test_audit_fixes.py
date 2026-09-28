@@ -334,3 +334,35 @@ def test_database_url_uses_the_installed_postgres_driver(given, expected):
     from app.core.config import Settings
 
     assert Settings(DATABASE_URL=given).DATABASE_URL == expected
+
+
+# ============================ cross-branch integration ============================
+
+def test_migrations_have_a_single_head():
+    """Parallel branches each added a migration on the same parent; the merge revision
+    joins them, so plain `alembic upgrade head` works and new migrations have one parent."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    assert len(ScriptDirectory.from_config(Config("alembic.ini")).get_heads()) == 1
+
+
+def test_live_updates_reach_owners_linked_by_national_id():
+    """Live-update filtering uses the same ownership rule as notifications and the portal:
+    whoever is notified about a fine also sees it appear live."""
+    from app.services.event_visibility import audience_for
+
+    officer, _ = _headers("officer")
+    nrc = f"{uuid4().int % 10**6:06d}/66/1"
+    _, owner_id = create_user("citizen")
+    _link_driver(owner_id, nrc)
+    vid, _ = _vehicle(nrc=nrc)  # registered at an office: no direct account link
+    r = client.post("/api/enforcement/violations", headers=officer,
+                    json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "Lumumba Rd"})
+    assert r.status_code == 201, r.text
+    db = SessionLocal()
+    try:
+        challan = db.query(Challan).filter(Challan.vehicle_id == vid).one()
+        assert str(owner_id) in {str(u) for u in audience_for(db, "challan", challan.id, None)}
+    finally:
+        db.close()
