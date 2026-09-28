@@ -69,6 +69,12 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   deployment step, not code (`app/services/captcha.py`).
 * **Sessions**: every JWT carries a session id (`sid`) checked against `user_sessions` on each request –
   logout, idle timeout (default 30 min), password change, role change, deactivation and admin revoke all take effect immediately.
+* **Live-updates stream**: access tokens never go in a URL (URLs end up in uvicorn/Render/proxy access logs).
+  The browser's `EventSource` can't send an `Authorization` header, so the web app calls `POST /api/events/ticket`
+  first and opens `/api/events/stream?ticket=...` with a ticket that only opens the stream, expires after 30 s and
+  works once (`app/api/events.py`). After a drop it reconnects itself with a fresh ticket, backing off 1 s → 30 s.
+  Scripts can still use `Authorization: Bearer <access token>`. The stream is excluded from gzip
+  (`StreamSafeGZipMiddleware`, `app/core/middleware.py`) - older Starlette versions otherwise buffer every frame.
 * **Devices**: fingerprint = hash(user-agent, language, `X-Device-Id`). New devices raise a `new_device_login` notification;
   users can trust/block devices (a blocked device can't sign in).
 * **Transport/headers**: `FORCE_HTTPS` redirects http→https (behind a proxy, via `X-Forwarded-Proto`); HSTS in production;

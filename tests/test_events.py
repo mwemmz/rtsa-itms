@@ -71,6 +71,79 @@ def test_stream_requires_auth(client):
     assert resp.status_code == 401
 
 
+def _ticket(client, token) -> str:
+    resp = client.post("/api/events/ticket", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["expires_in"] == 30
+    return resp.json()["ticket"]
+
+
+def test_access_token_is_no_longer_accepted_in_the_url(client):
+    token = _login(client)
+    # the old ?token= parameter is gone - access tokens must never sit in a URL
+    assert client.get("/api/events/stream", params={"token": token}).status_code == 401
+    # nor does an access token work where a ticket is expected
+    assert client.get("/api/events/stream", params={"ticket": token}).status_code == 401
+
+
+def test_stream_ticket_opens_the_stream_once():
+    from fastapi import HTTPException
+
+    from app.api.events import stream_user
+    from app.core.database import SessionLocal
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        token = _login(c)
+        ticket = _ticket(c, token)
+    db = SessionLocal()
+    try:
+        user = stream_user(db, ticket, None)
+        assert user.role == UserRole.ADMIN
+        with pytest.raises(HTTPException) as again:
+            stream_user(db, ticket, None)
+        assert again.value.status_code == 401 and "already been used" in again.value.detail
+    finally:
+        db.close()
+
+
+def test_stream_ticket_is_useless_anywhere_else(client):
+    token = _login(client)
+    ticket = _ticket(client, token)
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {ticket}"}).status_code == 401
+    # and a ticket can't mint another ticket
+    assert client.post("/api/events/ticket", headers={"Authorization": f"Bearer {ticket}"}).status_code == 401
+
+
+def test_expired_or_signed_out_tickets_are_refused(client):
+    from datetime import timedelta
+
+    from app.core.security import create_access_token, decode_token
+
+    token = _login(client)
+    claims = decode_token(token)
+    expired = create_access_token({"sub": claims["sub"], "sid": claims["sid"], "typ": "stream", "jti": "x1"},
+                                  expires_delta=timedelta(seconds=-5))
+    resp = client.get("/api/events/stream", params={"ticket": expired})
+    assert resp.status_code == 401 and "expired" in resp.json()["detail"]
+
+    ticket = _ticket(client, token)
+    assert client.post("/api/auth/logout", headers={"Authorization": f"Bearer {token}"}).status_code == 204
+    assert client.get("/api/events/stream", params={"ticket": ticket}).status_code == 401
+
+
+def test_bearer_header_still_authenticates_the_stream(client):
+    from app.api.events import stream_user
+    from app.core.database import SessionLocal
+
+    token = _login(client)
+    db = SessionLocal()
+    try:
+        assert stream_user(db, None, f"Bearer {token}").role == UserRole.ADMIN
+    finally:
+        db.close()
+
+
 def test_stream_generator_emits_published_event():
     from app.api.events import source
 
@@ -181,7 +254,8 @@ def test_endpoint_streams_via_asgi(client):
     received = None
     try:
         with httpx.Client(timeout=None) as hc:
-            with hc.stream("GET", f"http://127.0.0.1:{port}/api/events/stream", params={"token": token}) as resp:
+            with hc.stream("GET", f"http://127.0.0.1:{port}/api/events/stream",
+                           params={"ticket": _ticket(client, token)}) as resp:
                 assert resp.status_code == 200
                 assert resp.headers["content-type"].startswith("text/event-stream")
                 for line in resp.iter_lines():
