@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.enforcement import ChallanStatus, ViolationType
 from app.schemas.fields import LocationStr
@@ -16,6 +16,14 @@ class ViolationCreate(BaseModel):
     location: LocationStr
     timestamp: datetime | None = None
     description: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _require_an_offender(self):
+        # Neither field set means no one to charge and no one to notify --
+        # the resulting challan would be uncollectable.
+        if self.vehicle_id is None and self.driver_id is None:
+            raise ValueError("A violation needs a vehicle_id, a driver_id, or both")
+        return self
 
 
 class ViolationResponse(BaseModel):

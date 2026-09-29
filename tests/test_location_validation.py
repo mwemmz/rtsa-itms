@@ -16,6 +16,8 @@ os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["TRUST_PROXY_HEADERS"] = "true"
 
+import uuid  # noqa: E402
+
 import pytest  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
@@ -29,8 +31,10 @@ MAX = 200
 
 
 def _violation(location: str) -> ViolationCreate:
+    # vehicle_id is only here to satisfy ViolationCreate's "needs an offender"
+    # rule -- these tests are about the location field, not who's charged.
     return ViolationCreate(
-        violation_type=ViolationType.SPEEDING, location=location
+        violation_type=ViolationType.SPEEDING, location=location, vehicle_id=uuid.uuid4()
     )
 
 
