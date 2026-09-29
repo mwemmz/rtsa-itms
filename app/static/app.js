@@ -178,6 +178,10 @@ var NAV = {
     { id: "dashboard", label: "Dashboard" },
     { id: "vehicles", label: "Vehicles" },
     { id: "drivers", label: "Drivers" },
+    { id: "licensing", label: "Licensing" },
+    { id: "inspections", label: "Inspections" },
+    { id: "anpr", label: "ANPR" },
+    { id: "accidents", label: "Accidents" },
     { id: "violations", label: "Record violation" },
     { id: "challans", label: "Challans" },
     { id: "toll", label: "Toll gates" },
@@ -771,9 +775,9 @@ async function openNotifs() {
 
 function statusPill(status) {
   var cls = "gray";
-  if (status === "active" || status === "paid" || status === "valid") cls = "green";
-  else if (status === "suspended" || status === "expired" || status === "overdue" || status === "deregistered") cls = "red";
-  else if (status === "unpaid") cls = "amber";
+  if (status === "active" || status === "paid" || status === "valid" || status === "passed" || status === "issued") cls = "green";
+  else if (status === "suspended" || status === "expired" || status === "overdue" || status === "deregistered" || status === "failed" || status === "rejected") cls = "red";
+  else if (status === "unpaid" || status === "pending") cls = "amber";
   return '<span class="pill ' + cls + '">' + esc(status) + "</span>";
 }
 
@@ -835,7 +839,17 @@ async function adminDashboard() {
 async function officerDashboard() {
   var violations = await api("/api/enforcement/violations?limit=6");
   var challans = await api("/api/enforcement/challans?limit=6");
-  var unpaid = challans.filter(function (c) { return c.status !== "paid"; }).length;
+  // challans_by_status is an all-time, unfiltered count (see app/services/reports.py
+  // dashboard()) -- unlike the 6-row lists above, it isn't capped, so it's the only
+  // accurate source for "how many challans are actually outstanding".
+  var unpaid = 0;
+  try {
+    var stats = await api("/api/reports/dashboard");
+    var byStatus = (stats.breakdowns && stats.breakdowns.challans_by_status) || {};
+    Object.keys(byStatus).forEach(function (s) { if (s !== "paid") unpaid += byStatus[s]; });
+  } catch (e) {
+    unpaid = challans.filter(function (c) { return c.status !== "paid"; }).length;
+  }
   return (
     '<div class="grid cards">' +
       kpi("Active challans", unpaid) +
@@ -989,9 +1003,11 @@ async function loadVehicles() {
       }).join("") + "</table></div>";
     $$("#vehicle-table .blacklist").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var reason = btn.dataset.blacklisted === "true" ? "" : prompt("Blacklist reason:");
+        var wasBlacklisted = btn.dataset.blacklisted === "true";
+        var reason = wasBlacklisted ? "" : prompt("Blacklist reason:");
         if (reason === null) return;
-        var b = btn.dataset.blacklisted === "true" ? false : true;
+        if (wasBlacklisted && !confirm("Remove this vehicle from the blacklist?")) return;
+        var b = wasBlacklisted ? false : true;
         api("/api/vehicles/" + btn.dataset.id, {
           method: "PATCH",
           body: JSON.stringify({ is_blacklisted: b, blacklist_reason: reason })
@@ -1032,6 +1048,7 @@ async function loadDrivers() {
       }).join("") + "</table></div>";
     $$("#driver-table .suspend").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (!confirm("Suspend this driver's licence? This revokes their driving privilege.")) return;
         api("/api/drivers/" + btn.dataset.id, { method: "DELETE" })
           .then(function () { toast("Driver suspended", "ok"); loadDrivers(); })
           .catch(function (e) { toast(e.message, "err"); });
@@ -1040,6 +1057,103 @@ async function loadDrivers() {
   } catch (e) {
     table.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
+}
+
+/* ---------------- officer: licence applications ---------------- */
+
+var LICENCE_STATUS_LABELS = {
+  submitted: "Submitted",
+  theory_test_scheduled: "Theory scheduled",
+  theory_test_passed: "Theory passed",
+  theory_test_failed: "Theory failed",
+  practical_test_scheduled: "Practical scheduled",
+  practical_test_passed: "Practical passed",
+  practical_test_failed: "Practical failed",
+  issued: "Issued",
+  rejected: "Rejected"
+};
+
+VIEWS.licensing = async function () {
+  $("#content").innerHTML =
+    '<div class="card"><h3>Licence applications</h3>' +
+      '<div class="toolbar"><select id="la-status"><option value="">All statuses</option>' +
+        Object.keys(LICENCE_STATUS_LABELS).map(function (s) {
+          return '<option value="' + s + '">' + LICENCE_STATUS_LABELS[s] + "</option>";
+        }).join("") +
+      '</select><button class="btn gold sm" id="la-btn">Filter</button></div>' +
+      '<div id="la-table"><div class="empty">Loading…</div></div></div>';
+  $("#la-btn").addEventListener("click", loadLicenceApplications);
+  $("#la-status").addEventListener("change", loadLicenceApplications);
+  await loadLicenceApplications();
+};
+
+function licenceAction(app) {
+  switch (app.status) {
+    case "submitted":
+    case "theory_test_scheduled":
+    case "theory_test_failed":
+      return '<button class="btn ghost sm la-theory" data-id="' + esc(app.id) + '">Record theory score</button>';
+    case "theory_test_passed":
+    case "practical_test_scheduled":
+    case "practical_test_failed":
+      return '<button class="btn ghost sm la-practical" data-id="' + esc(app.id) + '">Record practical score</button>';
+    case "practical_test_passed":
+      return '<button class="btn gold sm la-issue" data-id="' + esc(app.id) + '">Issue licence</button>';
+    default:
+      return "";
+  }
+}
+
+async function loadLicenceApplications() {
+  var table = $("#la-table");
+  table.innerHTML = '<div class="empty">Loading…</div>';
+  var status = $("#la-status").value;
+  try {
+    var items = await api("/api/licence-applications/");
+    if (status) items = items.filter(function (a) { return a.status === status; });
+    if (!items.length) { table.innerHTML = '<div class="empty">No applications found.</div>'; return; }
+    table.innerHTML = '<div class="table-wrap"><table><tr><th>Applicant</th><th>NRC</th><th>Class</th><th>Status</th><th>Theory</th><th>Practical</th><th>Licence no.</th><th></th></tr>' +
+      items.map(function (a) {
+        return "<tr><td>" + esc(a.first_name) + " " + esc(a.last_name) + '</td><td class="mono">' + esc(a.id_number) + "</td><td>" + esc(a.requested_class) + "</td><td>" +
+          esc(LICENCE_STATUS_LABELS[a.status] || a.status) + "</td><td>" + (a.theory_score == null ? "—" : a.theory_score) + "</td><td>" +
+          (a.practical_score == null ? "—" : a.practical_score) + '</td><td class="mono">' + esc(a.issued_licence_number || "—") + "</td><td>" + licenceAction(a) + "</td></tr>";
+      }).join("") + "</table></div>";
+
+    $$("#la-table .la-theory").forEach(function (btn) {
+      btn.addEventListener("click", function () { recordLicenceScore(btn.dataset.id, "theory"); });
+    });
+    $$("#la-table .la-practical").forEach(function (btn) {
+      btn.addEventListener("click", function () { recordLicenceScore(btn.dataset.id, "practical"); });
+    });
+    $$("#la-table .la-issue").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (!confirm("Issue a driver's licence for this applicant?")) return;
+        api("/api/licence-applications/" + btn.dataset.id + "/issue", { method: "POST" })
+          .then(function () { toast("Licence issued", "ok"); loadLicenceApplications(); })
+          .catch(function (e) { toast(e.message, "err"); });
+      });
+    });
+  } catch (e) {
+    table.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+function recordLicenceScore(id, kind) {
+  var raw = prompt("Enter the " + kind + " test score (0-100):");
+  if (raw === null) return;
+  var score = Number(raw);
+  if (!Number.isInteger(score) || score < 0 || score > 100) {
+    toast("Score must be a whole number from 0 to 100", "err");
+    return;
+  }
+  var body = kind === "theory" ? { theory_score: score } : { practical_score: score };
+  api("/api/licence-applications/" + id + "/" + kind, { method: "POST", body: JSON.stringify(body) })
+    .then(function () {
+      var passed = score >= 70;
+      toast((kind === "theory" ? "Theory" : "Practical") + " test recorded — " + (passed ? "passed" : "failed"), passed ? "ok" : "err");
+      loadLicenceApplications();
+    })
+    .catch(function (e) { toast(e.message, "err"); });
 }
 
 /* ---------------- admin: users ---------------- */
@@ -1097,6 +1211,7 @@ async function loadChallans() {
       }).join("") + "</table></div>";
     $$("#challan-table .pay").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (!confirm("Record " + btn.dataset.ref + " as paid?")) return;
         api("/api/enforcement/challans/" + btn.dataset.id + "/pay", { method: "POST" })
           .then(function () { toast(btn.dataset.ref + " marked as paid", "ok"); loadChallans(); })
           .catch(function (e) { toast(e.message, "err"); });
@@ -1139,6 +1254,202 @@ VIEWS.rules = async function () {
   }
 };
 
+/* ---------------- officer: accidents ---------------- */
+
+function accidentVehicleRowHtml() {
+  return '<div class="acc-vehicle-row" style="border:1px solid var(--border, #333); border-radius:8px; padding:10px; margin-bottom:8px;">' +
+    '<div class="toolbar" style="margin-bottom:6px;"><input type="text" class="acc-plate" placeholder="Plate number" required>' +
+      '<button type="button" class="btn ghost sm acc-plate-go">Look up</button></div>' +
+    '<div class="toolbar" style="margin-bottom:6px;"><input type="text" class="acc-licence" placeholder="Driver licence no. (optional)">' +
+      '<button type="button" class="btn ghost sm acc-licence-go">Look up</button></div>' +
+    '<div class="small muted acc-row-result" style="margin-bottom:6px;"></div>' +
+    '<div class="toolbar"><input type="text" class="acc-role" placeholder="Role (e.g. at fault, passenger)">' +
+      '<button type="button" class="btn ghost sm acc-remove-row">Remove</button></div>' +
+  "</div>";
+}
+
+function wireAccidentVehicleRow(row) {
+  row.querySelector(".acc-plate-go").addEventListener("click", async function () {
+    var plate = row.querySelector(".acc-plate").value.trim();
+    var out = row.querySelector(".acc-row-result");
+    if (!plate) return;
+    try {
+      var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(plate));
+      row.dataset.vehicleId = v.id;
+      out.innerHTML = "Vehicle: <b>" + esc(v.registration_number) + "</b> (" + esc(v.make) + " " + esc(v.model) + ")";
+    } catch (e) {
+      row.dataset.vehicleId = "";
+      out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+    }
+  });
+  row.querySelector(".acc-licence-go").addEventListener("click", async function () {
+    var licence = row.querySelector(".acc-licence").value.trim();
+    var out = row.querySelector(".acc-row-result");
+    if (!licence) return;
+    try {
+      var d = await api("/api/drivers/by-licence/" + encodeURIComponent(licence));
+      row.dataset.driverId = d.id;
+      out.innerHTML += (out.innerHTML ? " · " : "") + "Driver: <b>" + esc(d.first_name) + " " + esc(d.last_name) + "</b>";
+    } catch (e) {
+      row.dataset.driverId = "";
+      out.innerHTML += (out.innerHTML ? " · " : "") + '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+    }
+  });
+  row.querySelector(".acc-remove-row").addEventListener("click", function () { row.remove(); });
+}
+
+VIEWS.accidents = async function () {
+  $("#content").innerHTML =
+    '<div class="grid cards" id="acc-stats"></div>' +
+    '<div class="row">' +
+      '<div class="card"><h3>Report an accident</h3>' +
+        '<form id="acc-form">' +
+          '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, near Manda Hill" required></div>' +
+          '<div class="field"><label>Date &amp; time</label><input name="occurred_at" type="datetime-local" required></div>' +
+          '<div class="field"><label>Severity</label><select name="severity">' +
+            '<option value="minor">Minor</option><option value="serious">Serious</option><option value="fatal">Fatal</option>' +
+          "</select></div>" +
+          '<div class="field"><label>Description (optional)</label><textarea name="description" rows="2"></textarea></div>' +
+          '<div class="field"><label>Vehicles involved (optional)</label><div id="acc-vehicles"></div>' +
+            '<button type="button" class="btn ghost sm" id="acc-add-vehicle">+ Add vehicle</button></div>' +
+          '<button class="btn gold" type="submit">Report accident</button>' +
+        "</form></div>" +
+      '<div class="card"><h3>Recent accidents</h3><div id="acc-list"><div class="empty">Loading…</div></div></div>' +
+    "</div>";
+
+  $("#acc-add-vehicle").addEventListener("click", function () {
+    $("#acc-vehicles").insertAdjacentHTML("beforeend", accidentVehicleRowHtml());
+    var rows = $$(".acc-vehicle-row", $("#acc-vehicles"));
+    wireAccidentVehicleRow(rows[rows.length - 1]);
+  });
+
+  $("#acc-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var data = formData(e.target);
+    if (data.occurred_at) data.occurred_at = new Date(data.occurred_at).toISOString();
+    data.vehicles = $$(".acc-vehicle-row", $("#acc-vehicles")).map(function (row) {
+      var plate = row.querySelector(".acc-plate").value.trim();
+      if (!plate) return null;
+      var v = { plate_number: plate };
+      if (row.dataset.vehicleId) v.vehicle_id = row.dataset.vehicleId;
+      if (row.dataset.driverId) v.driver_id = row.dataset.driverId;
+      var role = row.querySelector(".acc-role").value.trim();
+      if (role) v.role = role;
+      return v;
+    }).filter(function (v) { return v !== null; });
+
+    var btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      await api("/api/accidents/", { method: "POST", body: JSON.stringify(data) });
+      toast("Accident reported", "ok");
+      e.target.reset();
+      $("#acc-vehicles").innerHTML = "";
+      await Promise.all([loadAccidentStats(), loadAccidents()]);
+    } catch (err) { toast(err.message, "err"); }
+    finally { btn.disabled = false; }
+  });
+
+  await loadAccidentStats();
+  await loadAccidents();
+};
+
+async function loadAccidentStats() {
+  try {
+    var s = await api("/api/accidents/stats");
+    $("#acc-stats").innerHTML =
+      kpi("Total accidents", s.total) +
+      kpi("Minor", s.by_severity.minor || 0) +
+      kpi("Serious", s.by_severity.serious || 0) +
+      kpi("Fatal", s.by_severity.fatal || 0);
+  } catch (e) { $("#acc-stats").innerHTML = ""; }
+}
+
+async function loadAccidents() {
+  var list = $("#acc-list");
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    var items = await api("/api/accidents/");
+    if (!items.length) { list.innerHTML = '<div class="empty">No accidents recorded yet.</div>'; return; }
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Severity</th><th>Status</th><th>Location</th><th>When</th><th></th></tr>' +
+      items.map(function (a) {
+        return "<tr><td>" + statusPill(a.severity) + "</td><td>" + statusPill(a.status) + "</td><td>" + esc(a.location) + '</td><td class="small">' +
+          dt(a.occurred_at) + '</td><td><button class="btn ghost sm acc-view" data-id="' + esc(a.id) + '">View vehicles</button></td></tr>';
+      }).join("") + "</table></div>";
+    $$("#acc-list .acc-view").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        try {
+          var vs = await api("/api/accidents/" + btn.dataset.id + "/vehicles");
+          toast(vs.length
+            ? vs.map(function (v) { return v.plate_number + (v.role ? " (" + v.role + ")" : ""); }).join(", ")
+            : "No vehicles recorded for this accident", "ok");
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+/* ---------------- officer: ANPR ---------------- */
+
+VIEWS.anpr = async function () {
+  $("#content").innerHTML =
+    '<div class="row">' +
+      '<div class="card"><h3>Record an ANPR sighting</h3>' +
+        '<form id="anpr-form">' +
+          '<div class="field"><label>Plate number</label><input name="plate_number" placeholder="e.g. BAK 123" required></div>' +
+          '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, camera 4" required></div>' +
+          '<div class="field"><label>Camera ID (optional)</label><input name="camera_id" placeholder="e.g. CAM-04"></div>' +
+          '<div class="field"><label>Confidence 0-1 (optional)</label><input name="confidence" type="number" min="0" max="1" step="0.01" placeholder="e.g. 0.94"></div>' +
+          '<div class="field"><label>Image URL (optional)</label><input name="image_url" placeholder="https://…"></div>' +
+          '<div class="field"><label>Date &amp; time (optional, defaults to now)</label><input name="timestamp" type="datetime-local"></div>' +
+          '<button class="btn gold" type="submit">Record sighting</button>' +
+        "</form></div>" +
+      '<div class="card"><h3>Recent sightings</h3>' +
+        '<div class="toolbar"><input type="text" id="anpr-filter" placeholder="Exact plate number…">' +
+        '<button class="btn ghost sm" id="anpr-filter-go">Filter</button></div>' +
+        '<div id="anpr-list"><div class="empty">Loading…</div></div></div>' +
+    "</div>";
+
+  $("#anpr-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var data = formData(e.target);
+    if (data.confidence) data.confidence = Number(data.confidence);
+    if (data.timestamp) data.timestamp = new Date(data.timestamp).toISOString();
+    try {
+      await api("/api/anpr/events", { method: "POST", body: JSON.stringify(data) });
+      toast("ANPR sighting recorded", "ok");
+      e.target.reset();
+      await loadAnprEvents();
+    } catch (err) { toast(err.message, "err"); }
+  });
+
+  $("#anpr-filter-go").addEventListener("click", loadAnprEvents);
+  $("#anpr-filter").addEventListener("keydown", function (e) { if (e.key === "Enter") loadAnprEvents(); });
+
+  await loadAnprEvents();
+};
+
+async function loadAnprEvents() {
+  var list = $("#anpr-list");
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  var plate = $("#anpr-filter").value.trim();
+  try {
+    var items = await api("/api/anpr/events" + (plate ? "?plate_number=" + encodeURIComponent(plate) : ""));
+    if (!items.length) { list.innerHTML = '<div class="empty">No ANPR sightings recorded yet.</div>'; return; }
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Plate</th><th>Matched vehicle</th><th>Location</th><th>Camera</th><th>Confidence</th><th>When</th></tr>' +
+      items.map(function (a) {
+        return "<tr><td class='mono'><b>" + esc(a.plate_number) + "</b></td><td>" +
+          (a.vehicle_id ? '<span class="pill green">known</span>' : '<span class="pill gray">unregistered</span>') + "</td><td>" +
+          esc(a.location) + "</td><td>" + esc(a.camera_id || "—") + "</td><td>" +
+          (a.confidence == null ? "—" : Math.round(a.confidence * 100) + "%") + '</td><td class="small">' + dt(a.timestamp) + "</td></tr>";
+      }).join("") + "</table></div>";
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
 /* ---------------- officer: violations ---------------- */
 
 VIEWS.violations = async function () {
@@ -1153,7 +1464,11 @@ VIEWS.violations = async function () {
             '<button type="button" class="btn ghost sm" id="plate-go">Look up</button></div>' +
             '<div class="small muted" id="plate-result" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Vehicle ID (auto-filled by lookup)</label><input name="vehicle_id" id="vio-vehicle" placeholder="UUID or leave empty"></div>' +
-          '<div class="field"><label>Driver ID (optional)</label><input name="driver_id" placeholder="UUID"></div>' +
+          '<div class="field"><label>Driver licence number (lookup)</label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="licence-lookup" placeholder="e.g. DL-2024-00123">' +
+            '<button type="button" class="btn ghost sm" id="licence-go">Look up</button></div>' +
+            '<div class="small muted" id="licence-result" style="margin-top:6px;"></div></div>' +
+          '<div class="field"><label>Driver ID (auto-filled by lookup)</label><input name="driver_id" id="vio-driver" placeholder="UUID or leave empty"></div>' +
           '<div class="field"><label>Violation type</label><select name="violation_type" id="vio-type">' +
             '<optgroup label="Driver offence — liable to the driver, licence at risk">' +
               VO_DRIVER_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
@@ -1190,6 +1505,19 @@ VIEWS.violations = async function () {
     }
   });
 
+  $("#licence-go").addEventListener("click", async function () {
+    var licence = $("#licence-lookup").value.trim();
+    var out = $("#licence-result");
+    if (!licence) return;
+    try {
+      var d = await api("/api/drivers/by-licence/" + encodeURIComponent(licence));
+      $("#vio-driver").value = d.id;
+      out.innerHTML = 'Found <b>' + esc(d.first_name) + " " + esc(d.last_name) + "</b> · " + statusPill(d.status);
+    } catch (e) {
+      out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+    }
+  });
+
   function refreshOffenceHint() {
     var sel = $("#vio-type");
     var hint = $("#vio-hint");
@@ -1209,10 +1537,15 @@ VIEWS.violations = async function () {
 
   $("#vio-form").addEventListener("submit", async function (e) {
     e.preventDefault();
+    var data = formData(e.target);
+    if (!data.vehicle_id && !data.driver_id) {
+      toast("Look up a vehicle plate or a driver licence first — a violation needs at least one.", "err");
+      return;
+    }
     var btn = $("#vio-save");
     btn.disabled = true;
     try {
-      var created = await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(formData(e.target)) });
+      var created = await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(data) });
       toast("Violation recorded — challan generated", "ok");
       e.target.reset();
       loadViolations();
@@ -1230,6 +1563,124 @@ async function loadViolations() {
   try {
     var items = await api("/api/enforcement/violations?limit=50");
     list.innerHTML = items.length ? violationRows(items) : '<div class="empty">No violations yet.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+/* ---------------- officer: inspections & fitness certificates ---------------- */
+
+var CURRENT_INSPECTION_VEHICLE = null;
+
+VIEWS.inspections = async function () {
+  $("#content").innerHTML =
+    '<div class="row">' +
+      '<div class="card"><h3>Vehicle inspections</h3>' +
+        '<div class="field"><label>Vehicle plate (lookup)</label>' +
+          '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="insp-plate" placeholder="e.g. BAK 123">' +
+          '<button type="button" class="btn ghost sm" id="insp-plate-go">Look up</button></div>' +
+          '<div class="small muted" id="insp-vehicle-result" style="margin-top:6px;"></div></div>' +
+        '<form id="insp-schedule-form" style="display:none;">' +
+          '<div class="field"><label>Inspection centre</label><input name="inspection_centre" placeholder="e.g. Lusaka Main VID Centre" required></div>' +
+          '<div class="field"><label>Scheduled date &amp; time</label><input name="scheduled_date" type="datetime-local" required></div>' +
+          '<button class="btn gold" type="submit">Schedule inspection</button>' +
+        "</form>" +
+        '<form id="insp-result-form" style="display:none; margin-top:16px; border-top:1px solid var(--border, #333); padding-top:16px;">' +
+          '<h4 style="margin:0 0 8px;">Record result</h4>' +
+          '<div class="field"><label>Result</label><select name="result"><option value="passed">Passed</option><option value="failed">Failed</option></select></div>' +
+          '<div class="field"><label>Findings (optional)</label><textarea name="findings" rows="2"></textarea></div>' +
+          '<div class="field"><label>Inspected by (optional)</label><input name="inspected_by" placeholder="Inspector name"></div>' +
+          '<button class="btn gold" type="submit">Save result</button> ' +
+          '<button type="button" class="btn ghost" id="insp-result-cancel">Cancel</button>' +
+        "</form>" +
+      "</div>" +
+      '<div class="card"><h3>Inspections for this vehicle</h3><div id="insp-list"><div class="empty">Look up a vehicle first.</div></div></div>' +
+    "</div>";
+
+  CURRENT_INSPECTION_VEHICLE = null;
+
+  $("#insp-plate-go").addEventListener("click", async function () {
+    var plate = $("#insp-plate").value.trim();
+    var out = $("#insp-vehicle-result");
+    if (!plate) return;
+    try {
+      var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(plate));
+      CURRENT_INSPECTION_VEHICLE = v.id;
+      out.innerHTML = 'Found <b>' + esc(v.registration_number) + "</b> (" + esc(v.make) + " " + esc(v.model) + ") · " + statusPill(v.status);
+      $("#insp-schedule-form").style.display = "";
+      $("#insp-result-form").style.display = "none";
+      await loadInspectionsForVehicle(v.id);
+    } catch (e) {
+      CURRENT_INSPECTION_VEHICLE = null;
+      out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+      $("#insp-schedule-form").style.display = "none";
+      $("#insp-list").innerHTML = '<div class="empty">Look up a vehicle first.</div>';
+    }
+  });
+
+  $("#insp-schedule-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    if (!CURRENT_INSPECTION_VEHICLE) return;
+    var data = formData(e.target);
+    data.vehicle_id = CURRENT_INSPECTION_VEHICLE;
+    if (data.scheduled_date) data.scheduled_date = new Date(data.scheduled_date).toISOString();
+    try {
+      await api("/api/inspections/", { method: "POST", body: JSON.stringify(data) });
+      toast("Inspection scheduled", "ok");
+      e.target.reset();
+      await loadInspectionsForVehicle(CURRENT_INSPECTION_VEHICLE);
+    } catch (err) { toast(err.message, "err"); }
+  });
+
+  $("#insp-result-cancel").addEventListener("click", function () {
+    $("#insp-result-form").style.display = "none";
+  });
+
+  $("#insp-result-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var id = e.target.dataset.inspectionId;
+    if (!id) return;
+    var data = formData(e.target);
+    try {
+      await api("/api/inspections/" + id, { method: "PATCH", body: JSON.stringify(data) });
+      toast("Inspection result recorded" + (data.result === "passed" ? " — fitness certificate issued" : ""), "ok");
+      e.target.style.display = "none";
+      await loadInspectionsForVehicle(CURRENT_INSPECTION_VEHICLE);
+    } catch (err) { toast(err.message, "err"); }
+  });
+};
+
+async function loadInspectionsForVehicle(vehicleId) {
+  var list = $("#insp-list");
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    var items = await api("/api/inspections/vehicle/" + vehicleId);
+    if (!items.length) { list.innerHTML = '<div class="empty">No inspections recorded for this vehicle yet.</div>'; return; }
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Centre</th><th>Scheduled</th><th>Result</th><th>Findings</th><th></th></tr>' +
+      items.map(function (i) {
+        var action = i.result === "pending"
+          ? '<button class="btn ghost sm insp-record" data-id="' + esc(i.id) + '">Record result</button>'
+          : (i.result === "passed" ? '<button class="btn ghost sm insp-cert" data-id="' + esc(i.id) + '">View certificate</button>' : "");
+        return "<tr><td>" + esc(i.inspection_centre) + '</td><td class="small">' + dt(i.scheduled_date) + "</td><td>" + statusPill(i.result) + "</td><td>" +
+          esc(i.findings || "—") + "</td><td>" + action + "</td></tr>";
+      }).join("") + "</table></div>";
+
+    $$("#insp-list .insp-record").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var form = $("#insp-result-form");
+        form.dataset.inspectionId = btn.dataset.id;
+        form.style.display = "";
+        form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    });
+    $$("#insp-list .insp-cert").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        try {
+          var cert = await api("/api/inspections/" + btn.dataset.id + "/fitness-certificate");
+          toast("Certificate " + cert.certificate_number + " · valid until " + dt(cert.expiry_date), "ok");
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }

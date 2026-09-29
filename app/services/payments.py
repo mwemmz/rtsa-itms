@@ -191,6 +191,31 @@ def create_payment(
     return payment, True
 
 
+def _receipt_recipient(db: Session, payment: Payment) -> uuid.UUID | None:
+    """Who should be notified about this payment.
+
+    Usually the payer themself. But when staff record a payment on a
+    citizen's behalf -- an officer marking a challan paid at the roadside, or
+    a toll operator taking a cash payment -- ``paid_by`` is the staff member,
+    not the vehicle owner. The owner is who actually needs to see the
+    receipt/failure/refund, so resolve to them when the payment is tied to a
+    vehicle with a known owner; otherwise fall back to the payer.
+    """
+    vehicle_id = None
+    if payment.payment_type == PaymentType.FINE and payment.related_entity_id:
+        challan = db.get(Challan, payment.related_entity_id)
+        vehicle_id = challan.vehicle_id if challan else None
+    elif payment.payment_type == PaymentType.TOLL and payment.related_entity_id:
+        toll = db.get(TollTransaction, payment.related_entity_id)
+        vehicle_id = toll.vehicle_id if toll else None
+
+    if vehicle_id is not None:
+        owner_id = owner_user_id(db, db.get(Vehicle, vehicle_id))
+        if owner_id:
+            return owner_id
+    return payment.paid_by
+
+
 def complete_payment(db: Session, payment: Payment, actor_id=None) -> Payment:
     if payment.status == PaymentStatus.COMPLETED:
         return payment
@@ -210,8 +235,9 @@ def complete_payment(db: Session, payment: Payment, actor_id=None) -> Payment:
             if toll is not None:
                 toll.is_paid = True
 
-    if payment.paid_by:
-        notify(db, payment.paid_by, "payment_receipt",
+    recipient = _receipt_recipient(db, payment)
+    if recipient:
+        notify(db, recipient, "payment_receipt",
                {"amount": payment.amount, "reference": payment.reference,
                 "receipt": payment.receipt_number})
     db.flush()
@@ -224,8 +250,9 @@ def fail_payment(db: Session, payment: Payment, reason: str, actor_id=None) -> P
     payment.status = PaymentStatus.FAILED
     payment.failure_reason = reason[:300]
     record_event(db, payment, "failed", actor_id, note=reason[:300])
-    if payment.paid_by:
-        notify(db, payment.paid_by, "payment_failed", {"amount": payment.amount, "reference": payment.reference})
+    recipient = _receipt_recipient(db, payment)
+    if recipient:
+        notify(db, recipient, "payment_failed", {"amount": payment.amount, "reference": payment.reference})
     db.flush()
     return payment
 
@@ -252,8 +279,9 @@ def refund_payment(db: Session, payment: Payment, actor: User, amount: int | Non
             if toll is not None:
                 toll.is_paid = False
     log_action(db, "refund", "payment", str(payment.id), f"{amount} refunded: {reason[:100]}", actor.id)
-    if payment.paid_by:
-        notify(db, payment.paid_by, "refund_issued", {"amount": amount, "reference": payment.reference})
+    recipient = _receipt_recipient(db, payment)
+    if recipient:
+        notify(db, recipient, "refund_issued", {"amount": amount, "reference": payment.reference})
     db.flush()
     return payment
 

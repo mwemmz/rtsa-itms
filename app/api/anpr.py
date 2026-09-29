@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -26,7 +28,7 @@ def capture_anpr_event(
         plate_number=payload.plate_number.upper(),
         vehicle_id=vehicle.id if vehicle else None,
         location=payload.location,
-        timestamp=payload.timestamp,
+        timestamp=payload.timestamp or datetime.utcnow(),
         confidence=payload.confidence,
         image_url=payload.image_url,
         camera_id=payload.camera_id,
