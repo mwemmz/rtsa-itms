@@ -22,6 +22,7 @@ class FineOut(BaseModel):
     id: uuid.UUID
     reference: str
     violation_type: str
+    category: str = "shared"
     location: str
     recorded_at: datetime
     penalty_amount: int

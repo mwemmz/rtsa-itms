@@ -256,21 +256,35 @@ def my_fines(
         query = query.filter(Challan.status != ChallanStatus.PAID)
     challans = query.order_by(Challan.created_at.desc()).all()
 
+    violations = (
+        {str(v.id): v for v in db.query(Violation).filter(Violation.id.in_([c.violation_id for c in challans])).all()}
+        if challans
+        else {}
+    )
+
     return [
         FineOut(
             id=c.id,
             reference=c.reference,
             violation_type=(
-                db.query(Violation.violation_type).filter(Violation.id == c.violation_id).scalar()
-                or "fine"
+                violations[str(c.violation_id)].violation_type.value
+                if c.violation_id in violations
+                else "fine"
+            ),
+            category=(
+                violations[str(c.violation_id)].violation_type.category
+                if c.violation_id in violations
+                else "shared"
             ),
             location=(
-                db.query(Violation.location).filter(Violation.id == c.violation_id).scalar()
-                or ""
+                violations[str(c.violation_id)].location
+                if c.violation_id in violations
+                else ""
             ),
             recorded_at=(
-                db.query(Violation.timestamp).filter(Violation.id == c.violation_id).scalar()
-                or c.created_at
+                violations[str(c.violation_id)].timestamp
+                if c.violation_id in violations
+                else c.created_at
             ),
             penalty_amount=c.penalty_amount,
             due_date=c.due_date,
