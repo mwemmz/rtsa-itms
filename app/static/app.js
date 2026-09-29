@@ -41,20 +41,36 @@ function formData(form) {
   return o;
 }
 
-var VO_TYPES = [
+// Grouped by offence category so the officer records the offence against the
+// party that actually carries the penalty. Mirrors DRIVER_OFFENCES /
+// VEHICLE_OFFENCES / BOTH_OFFENCES in app/models/enforcement.py.
+var VO_DRIVER_TYPES = [
   ["speeding", "Speeding"],
   ["running_red_light", "Running red light"],
-  ["no_insurance", "No insurance"],
-  ["expired_fitness", "Expired fitness"],
-  ["no_psv_permit", "No PSV permit"],
-  ["driving_without_licence", "Driving without licence"],
-  ["illegal_parking", "Illegal parking"],
-  ["overloading", "Overloading"],
-  ["rear_seat_belt", "Rear seat belt"],
+  ["drunk_driving", "Drunk driving"],
+  ["reckless_driving", "Reckless / dangerous driving"],
   ["using_phone", "Using phone"],
-  ["blacklisted_vehicle", "Blacklisted vehicle"],
+  ["rear_seat_belt", "Rear seat belt"],
+  ["driving_without_licence", "Driving without licence"]
+];
+var VO_VEHICLE_TYPES = [
+  ["expired_fitness", "Expired fitness certificate"],
+  ["unroadworthy", "Unroadworthy vehicle"],
+  ["expired_road_tax", "Expired road tax"],
+  ["missing_number_plates", "Missing / improper number plates"],
+  ["illegal_modification", "Illegal modification"],
+  ["overloading", "Overloading"],
+  ["no_psv_permit", "No PSV permit"],
+  ["blacklisted_vehicle", "Blacklisted vehicle"]
+];
+var VO_BOTH_TYPES = [
+  ["no_insurance", "No insurance"],
+  ["illegal_parking", "Illegal parking"],
   ["other", "Other"]
 ];
+var VO_TYPES = VO_DRIVER_TYPES.concat(VO_VEHICLE_TYPES, VO_BOTH_TYPES);
+var VO_LICENCE_TYPES = VO_DRIVER_TYPES.map(function (t) { return t[0]; });
+var VO_IMPOUND_TYPES = VO_VEHICLE_TYPES.map(function (t) { return t[0]; });
 var VEHICLE_STATUSES = ["active", "suspended", "deregistered", "stolen"];
 var CHALLAN_STATUSES = ["unpaid", "paid", "overdue", "disputed"];
 var DRIVER_STATUSES = ["active", "suspended", "disqualified", "expired"];
@@ -760,16 +776,26 @@ function statusPill(status) {
   return '<span class="pill ' + cls + '">' + esc(status) + "</span>";
 }
 
-var CATEGORY_LABELS = { vehicle: "Vehicle offence", driver: "Driver offence", shared: "Road offence" };
-var CATEGORY_CLASSES = { vehicle: "blue", driver: "amber", shared: "gray" };
+var CATEGORY_LABELS = { vehicle: "Vehicle offence", driver: "Driver offence", both: "Both" };
+var CATEGORY_CLASSES = { vehicle: "blue", driver: "amber", both: "gray" };
+var LIABLE_LABELS = { driver: "Driver", owner: "Owner", both: "Driver + owner" };
 
 function categoryPill(category) {
-  var key = CATEGORY_LABELS[category] ? category : "shared";
+  var key = CATEGORY_LABELS[category] ? category : "both";
   return '<span class="pill ' + CATEGORY_CLASSES[key] + '">' + esc(CATEGORY_LABELS[key]) + "</span>";
 }
 
 function offenceTypeLabel(violationType) {
   return String(violationType == null ? "" : violationType).replace(/_/g, " ");
+}
+
+// Driver offences can add licence points or lead to a ban; vehicle offences
+// ground impoundment. Show whichever consequence actually applies.
+function consequenceTags(v) {
+  var tags = "";
+  if (v.carries_licence_consequence) tags += '<span class="pill red">Licence risk</span> ';
+  if (v.grounds_impoundment) tags += '<span class="pill red">Impoundable</span> ';
+  return tags;
 }
 
 var VIEWS = {};
@@ -866,20 +892,20 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<table><tr><th>Type</th><th>Category</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
-        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No violations recorded.</div>';
 }
 
 function challanRows(cs) {
   return cs.length
-    ? '<table><tr><th>Ref</th><th>Category</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+    ? '<table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
         var offender = c.driver_name || c.owner_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
+        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No challans found.</div>';
 }
@@ -1056,12 +1082,12 @@ async function loadChallans() {
   try {
     var items = await api("/api/enforcement/challans?limit=100" + (status ? "&status=" + status : ""));
     if (!items.length) { table.innerHTML = '<div class="empty">No challans found.</div>'; return; }
-    table.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    table.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (c) {
         var pay = c.status !== "paid"
           ? '<button class="btn gold sm pay" data-id="' + esc(c.id) + '" data-ref="' + esc(c.reference) + '">Mark paid</button>'
           : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + money(c.penalty_amount) + '</td><td class="small">' + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
+        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + money(c.penalty_amount) + '</td><td class="small">' + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
     $$("#challan-table .pay").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -1120,8 +1146,18 @@ VIEWS.violations = async function () {
             '<div class="small muted" id="plate-result" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Vehicle ID (auto-filled by lookup)</label><input name="vehicle_id" id="vio-vehicle" placeholder="UUID or leave empty"></div>' +
           '<div class="field"><label>Driver ID (optional)</label><input name="driver_id" placeholder="UUID"></div>' +
-          '<div class="field"><label>Violation type</label><select name="violation_type">' +
-            VO_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") + "</select></div>" +
+          '<div class="field"><label>Violation type</label><select name="violation_type" id="vio-type">' +
+            '<optgroup label="Driver offence — liable to the driver, licence at risk">' +
+              VO_DRIVER_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
+            "</optgroup>" +
+            '<optgroup label="Vehicle offence — liable to the owner, vehicle impoundable">' +
+              VO_VEHICLE_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
+            "</optgroup>" +
+            '<optgroup label="Both — driver and owner may be liable">' +
+              VO_BOTH_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
+            "</optgroup>" +
+            "</select>" +
+            '<div class="small muted" id="vio-hint" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, toll gate 3" required></div>' +
           '<div class="field"><label>Date &amp; time (optional)</label><input name="timestamp" type="datetime-local"></div>' +
           '<div class="field"><label>Description (optional)</label><textarea name="description" rows="2"></textarea></div>' +
@@ -1142,6 +1178,23 @@ VIEWS.violations = async function () {
       out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
     }
   });
+
+  function refreshOffenceHint() {
+    var sel = $("#vio-type");
+    var hint = $("#vio-hint");
+    if (!sel || !hint) return;
+    var value = sel.value;
+    if (VO_LICENCE_TYPES.indexOf(value) !== -1) {
+      hint.innerHTML = "Driver offence: liable to the driver. Counts towards licence points, endorsement or disqualification.";
+    } else if (VO_IMPOUND_TYPES.indexOf(value) !== -1) {
+      hint.innerHTML = "Vehicle offence: liable to the registered owner or keeper. The vehicle can be impounded or taken off the road.";
+    } else {
+      hint.innerHTML = "Overlapping offence: both the driver and the owner can be held liable.";
+    }
+  }
+
+  $("#vio-type").addEventListener("change", refreshOffenceHint);
+  refreshOffenceHint();
 
   $("#vio-form").addEventListener("submit", async function (e) {
     e.preventDefault();

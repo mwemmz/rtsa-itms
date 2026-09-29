@@ -20,7 +20,10 @@ class ViolationResponse(BaseModel):
     vehicle_id: uuid.UUID | None
     driver_id: uuid.UUID | None
     violation_type: ViolationType
-    category: str = "shared"
+    category: str = "both"
+    liable_party: str = "driver"
+    carries_licence_consequence: bool = False
+    grounds_impoundment: bool = False
     location: str
     timestamp: datetime
     description: str | None
@@ -37,7 +40,10 @@ class ChallanResponse(BaseModel):
     reference: str
     violation_id: uuid.UUID
     violation_type: ViolationType | None = None
-    category: str = "shared"
+    category: str = "both"
+    liable_party: str = "both"
+    carries_licence_consequence: bool = False
+    grounds_impoundment: bool = False
     vehicle_id: uuid.UUID | None
     driver_id: uuid.UUID | None
     penalty_amount: int

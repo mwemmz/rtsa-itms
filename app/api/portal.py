@@ -270,7 +270,12 @@ def my_fines(
             category=(
                 violations[str(c.violation_id)].violation_type.category
                 if c.violation_id in violations
-                else "shared"
+                else "both"
+            ),
+            liable_party=(
+                violations[str(c.violation_id)].liable_party
+                if c.violation_id in violations
+                else "both"
             ),
             location=(
                 violations[str(c.violation_id)].location

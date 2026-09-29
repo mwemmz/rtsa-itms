@@ -26,17 +26,26 @@ from app.services.notifications import notify
 router = APIRouter(prefix="/api/enforcement", tags=["Enforcement"])
 
 VIOLATION_PENALTIES = {
+    # Driver offences: fine, and the licence is the real consequence.
     ViolationType.SPEEDING: 500000,
     ViolationType.RUNNING_RED_LIGHT: 300000,
-    ViolationType.NO_INSURANCE: 1000000,
-    ViolationType.EXPIRED_FITNESS: 800000,
-    ViolationType.NO_PSV_PERMIT: 1500000,
-    ViolationType.DRIVING_WITHOUT_LICENCE: 600000,
-    ViolationType.ILLEGAL_PARKING: 150000,
-    ViolationType.OVERLOADING: 400000,
-    ViolationType.REAR_SEAT_BELT: 100000,
+    ViolationType.DRUNK_DRIVING: 2000000,
+    ViolationType.RECKLESS_DRIVING: 1500000,
     ViolationType.USING_PHONE: 200000,
+    ViolationType.REAR_SEAT_BELT: 100000,
+    ViolationType.DRIVING_WITHOUT_LICENCE: 600000,
+    # Vehicle offences: fine, and the vehicle is the real consequence.
+    ViolationType.EXPIRED_FITNESS: 800000,
+    ViolationType.UNROADWORTHY: 1000000,
+    ViolationType.EXPIRED_ROAD_TAX: 500000,
+    ViolationType.MISSING_NUMBER_PLATES: 300000,
+    ViolationType.ILLEGAL_MODIFICATION: 900000,
+    ViolationType.OVERLOADING: 400000,
+    ViolationType.NO_PSV_PERMIT: 1500000,
     ViolationType.BLACKLISTED_VEHICLE: 2000000,
+    # Overlap: both driver and owner can be liable.
+    ViolationType.NO_INSURANCE: 1000000,
+    ViolationType.ILLEGAL_PARKING: 150000,
     ViolationType.OTHER: 100000,
 }
 
@@ -71,6 +80,9 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
                 "driver_id": v.driver_id,
                 "violation_type": v.violation_type,
                 "category": v.violation_type.category,
+                "liable_party": v.liable_party,
+                "carries_licence_consequence": v.violation_type.carries_licence_consequence,
+                "grounds_impoundment": v.violation_type.grounds_impoundment,
                 "location": v.location,
                 "timestamp": v.timestamp,
                 "description": v.description,
@@ -115,7 +127,10 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
                 "reference": c.reference,
                 "violation_id": c.violation_id,
                 "violation_type": vio.violation_type if vio else None,
-                "category": vio.violation_type.category if vio else "shared",
+                "category": vio.violation_type.category if vio else "both",
+                "liable_party": vio.liable_party if vio else "both",
+                "carries_licence_consequence": bool(vio and vio.violation_type.carries_licence_consequence),
+                "grounds_impoundment": bool(vio and vio.violation_type.grounds_impoundment),
                 "vehicle_id": c.vehicle_id,
                 "driver_id": c.driver_id,
                 "penalty_amount": c.penalty_amount,
@@ -166,6 +181,7 @@ def record_violation(
         timestamp=payload.timestamp or datetime.utcnow(),
         description=payload.description,
         recorded_by=current_user.id,
+        liable_party=payload.violation_type.liable_party,
     )
     db.add(violation)
     db.flush()
