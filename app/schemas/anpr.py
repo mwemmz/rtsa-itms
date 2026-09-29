@@ -3,10 +3,12 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.fields import LocationStr
+
 
 class ANPREventCreate(BaseModel):
     plate_number: str
-    location: str
+    location: LocationStr
     timestamp: datetime | None = None
     confidence: float | None = None
     image_url: str | None = None

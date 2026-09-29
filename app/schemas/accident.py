@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.models.accident import AccidentSeverity, AccidentStatus
+from app.schemas.fields import LocationStr
 
 
 class AccidentVehicleCreate(BaseModel):
@@ -14,7 +15,7 @@ class AccidentVehicleCreate(BaseModel):
 
 
 class AccidentCreate(BaseModel):
-    location: str
+    location: LocationStr
     occurred_at: datetime
     severity: AccidentSeverity
     description: str | None = None

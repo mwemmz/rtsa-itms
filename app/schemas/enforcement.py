@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models.enforcement import ChallanStatus, ViolationType
+from app.schemas.fields import LocationStr
 
 
 class ViolationCreate(BaseModel):
@@ -12,7 +13,7 @@ class ViolationCreate(BaseModel):
     violation_type: ViolationType
     # A challan may be contested, so the location has to be on the record. A bare
     # `str` in pydantic v2 accepts "", which let a challan be raised with no place.
-    location: str = Field(min_length=1, max_length=255)
+    location: LocationStr
     timestamp: datetime | None = None
     description: str | None = Field(default=None, max_length=1000)
 
