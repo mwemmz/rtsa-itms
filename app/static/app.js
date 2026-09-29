@@ -168,6 +168,7 @@ var NAV = {
     { id: "vehicles", label: "Vehicles" },
     { id: "drivers", label: "Drivers" },
     { id: "users", label: "Users" },
+    { id: "violations", label: "Violations" },
     { id: "challans", label: "Challans" },
     { id: "audits", label: "Audit log" },
     { id: "rules", label: "Notification rules" },
@@ -812,6 +813,7 @@ async function adminDashboard() {
   var s = await api("/api/admin/reports/summary");
   var vehicles = await api("/api/vehicles?limit=6");
   var challans = await api("/api/enforcement/challans?limit=6");
+  var violations = await api("/api/enforcement/violations?limit=6");
   return (
     '<div class="grid cards">' +
       kpi("Registered vehicles", s.vehicles) +
@@ -821,6 +823,10 @@ async function adminDashboard() {
     "</div>" +
     '<div class="row">' +
       cars("Recent vehicles", vehicleRows(vehicles)) +
+      cars("Recent violations", violationRows(violations) +
+        '<p class="small muted" style="margin:10px 0 0;"><a href="#/violations">View all violations</a></p>') +
+    "</div>" +
+    '<div class="row">' +
       cars("Recent challans", challanRows(challans)) +
     "</div>"
   );
@@ -1136,9 +1142,11 @@ VIEWS.rules = async function () {
 /* ---------------- officer: violations ---------------- */
 
 VIEWS.violations = async function () {
+  // Admins supervise enforcement but do not issue violations, so they get the list only.
+  var canRecord = USER.role === "officer";
   $("#content").innerHTML =
     '<div class="row">' +
-      '<div class="card"><h3>Record a violation</h3>' +
+      (canRecord ? '<div class="card"><h3>Record a violation</h3>' +
         '<form id="vio-form">' +
           '<div class="field"><label>Vehicle plate (lookup)</label>' +
             '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="plate-lookup" placeholder="e.g. BAK 123">' +
@@ -1162,10 +1170,13 @@ VIEWS.violations = async function () {
           '<div class="field"><label>Date &amp; time (optional)</label><input name="timestamp" type="datetime-local"></div>' +
           '<div class="field"><label>Description (optional)</label><textarea name="description" rows="2"></textarea></div>' +
           '<button class="btn gold" type="submit" id="vio-save">Record &amp; generate e-challan</button>' +
-        "</form></div>" +
-      '<div class="card"><h3>Recent violations</h3><div id="vio-list"><div class="empty">Loading…</div></div></div>' +
+        "</form></div>" : "") +
+      '<div class="card"><h3>' + (canRecord ? "Recent violations" : "All recorded violations") + "</h3>" +
+        (canRecord ? '<div class="small muted" style="margin:-4px 0 10px;">Showing the 50 most recent.</div>' : "") +
+        '<div id="vio-list"><div class="empty">Loading…</div></div></div>' +
     "</div>";
 
+  if (canRecord) {
   $("#plate-go").addEventListener("click", async function () {
     var plate = $("#plate-lookup").value.trim();
     var out = $("#plate-result");
@@ -1208,6 +1219,7 @@ VIEWS.violations = async function () {
     } catch (err) { toast(err.message, "err"); }
     finally { btn.disabled = false; }
   });
+  }
 
   await loadViolations();
 };

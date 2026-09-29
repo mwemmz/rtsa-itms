@@ -194,7 +194,9 @@ a:hover { color: var(--gold-strong); }
 .wordmark h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
 .wordmark h1 span { color: var(--gold-strong); }
 .login-card .brand-sub { margin: 0 0 4px 12px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
-.login-card .gold-bar { height: 2px; width: 40px; background: var(--gold); margin: 14px 0 20px; border-radius: 2px; }
+.login-card .gold-bar { height: 2px; width: 40px; background: var(--gold); margin: 14px 0 16px; border-radius: 2px; }
+.login-card .login-about { margin: 0 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
+.login-card .login-about b { color: var(--ink); font-weight: 600; }
 .login-msg {
   font-size: 13px;
   min-height: 18px;
