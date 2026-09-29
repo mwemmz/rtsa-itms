@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import FIELD_STAFF, OFFICERS, require_role
 from app.models.user import User, UserRole
 from app.models.driver import Driver, DriverStatus
 from app.schemas.driver import DriverCreate, DriverResponse, DriverUpdate
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/drivers", tags=["Drivers"])
 def create_driver(
     payload: DriverCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     existing = db.query(Driver).filter(
         Driver.licence_number == payload.licence_number
@@ -41,7 +41,7 @@ def list_drivers(
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     query = db.query(Driver)
     if search:
@@ -60,7 +60,7 @@ def list_drivers(
 def get_driver(
     driver_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
@@ -72,7 +72,7 @@ def get_driver(
 def get_driver_by_licence(
     licence_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     driver = db.query(Driver).filter(Driver.licence_number == licence_number).first()
     if not driver:
@@ -85,7 +85,7 @@ def update_driver(
     driver_id: str,
     payload: DriverUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
@@ -103,7 +103,7 @@ def update_driver(
 def deactivate_driver(
     driver_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:

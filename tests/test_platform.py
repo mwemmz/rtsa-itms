@@ -8,7 +8,7 @@ import io
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -145,6 +145,43 @@ def test_public_registration_cannot_create_staff():
     assert r.status_code == 201 and r.json()["role"] == "citizen"
 
 
+def test_register_normalises_and_validates_input():
+    tag = uuid4().hex[:6]
+    r = client.post("/api/auth/register", json={"email": f"  Jane.{tag}@Example.COM ", "password": PW,
+                                                "full_name": "  Jane   Banda ", "phone_number": " +260 971 234567 "})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] == f"jane.{tag}@example.com"
+    assert r.json()["full_name"] == "Jane Banda"
+    assert r.json()["phone_number"] == "+260 971 234567"
+    # same address in different case is a duplicate
+    dup = client.post("/api/auth/register", json={"email": f"JANE.{tag}@example.com", "password": PW,
+                                                  "full_name": "Someone"})
+    assert dup.status_code == 400 and "already registered" in dup.json()["detail"]
+    # sign-in accepts any casing of the address
+    assert _login(f"Jane.{tag}@EXAMPLE.com").status_code == 200
+
+    base = {"password": PW, "full_name": "Ok"}
+    assert client.post("/api/auth/register", json=dict(base, email="not-an-email")).status_code == 400
+    assert client.post("/api/auth/register", json=dict(base, email=f"n{tag}@t.com", full_name="   ")).status_code == 400
+    assert client.post("/api/auth/register", json=dict(base, email=f"p{tag}@t.com",
+                                                       phone_number="call me")).status_code == 400
+
+
+def test_register_is_throttled_per_ip():
+    ip = {"X-Forwarded-For": f"10.9.{uuid4().int % 250}.1"}
+    for i in range(10):
+        r = client.post("/api/auth/register", json={"email": f"t{i}{uuid4().hex[:6]}@t.com", "password": PW,
+                                                    "full_name": "Flood"}, headers=ip)
+        assert r.status_code == 201
+    r = client.post("/api/auth/register", json={"email": f"t{uuid4().hex[:6]}@t.com", "password": PW,
+                                                "full_name": "Flood"}, headers=ip)
+    assert r.status_code == 429
+    # a different network is unaffected
+    other = client.post("/api/auth/register", json={"email": f"o{uuid4().hex[:6]}@t.com", "password": PW,
+                                                    "full_name": "Other"}, headers={"X-Forwarded-For": "10.8.0.1"})
+    assert other.status_code == 201
+
+
 def test_password_policy_on_register():
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": "short1",
                                                 "full_name": "A"})
@@ -206,6 +243,50 @@ def test_idle_session_times_out():
     finally:
         db.close()
     r = client.get("/api/auth/me", headers=h)
+    assert r.status_code == 401 and "inactivity" in r.json()["detail"]
+
+
+def test_app_shell_is_always_revalidated():
+    for path in ("/", "/static/app.js", "/static/app.css"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
+    # an unchanged script costs a 304, not a re-download
+    etag = client.get("/static/app.js").headers["etag"]
+    assert client.get("/static/app.js", headers={"If-None-Match": etag}).status_code == 304
+    # fonts never change, so they keep normal caching
+    assert "cache-control" not in client.get("/static/fonts/inter-latin-400-normal.woff2").headers
+
+
+def test_background_refreshes_do_not_count_as_activity():
+    from app.core.security import decode_token
+    from app.models.platform import UserSession
+
+    h, _, _ = _auth_headers("citizen")
+    sid = decode_token(h["Authorization"].split()[1])["sid"]
+    bg = dict(h, **{"X-Background-Refresh": "1"})
+
+    def last_seen(set_minutes_ago=None):
+        db = _db()
+        try:
+            s = db.get(UserSession, UUID(sid))
+            if set_minutes_ago is not None:
+                s.last_seen_at = datetime.utcnow() - timedelta(minutes=set_minutes_ago)
+                db.commit()
+            return s.last_seen_at
+        finally:
+            db.close()
+
+    before = last_seen(set_minutes_ago=10)
+    # a live-update reload is served normally but leaves the idle clock alone...
+    assert client.get("/api/auth/me", headers=bg).status_code == 200
+    assert last_seen() == before
+    # ...while a request the user made does reset it
+    assert client.get("/api/auth/me", headers=h).status_code == 200
+    assert last_seen() > before
+
+    # background requests are still subject to the idle sign-out itself
+    last_seen(set_minutes_ago=180)
+    r = client.get("/api/auth/me", headers=bg)
     assert r.status_code == 401 and "inactivity" in r.json()["detail"]
 
 

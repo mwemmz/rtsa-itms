@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -26,14 +26,18 @@ def _resolve_intersection(db: Session, ref: str) -> Intersection | None:
 
 @router.get("/route", response_model=RouteResult)
 def plan_route(
-    from_: str,
     to: str,
+    from_param: str | None = Query(None, alias="from", description="Origin intersection name or id"),
+    from_: str | None = Query(None, description="Same as `from` (kept for the web app)"),
     include_alternatives: bool = True,
     avoid_incidents: bool = True,
     use_osrm: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from_ = from_param or from_
+    if not from_:
+        raise HTTPException(status_code=422, detail="Provide the origin as ?from=")
     origin = _resolve_intersection(db, from_)
     destination = _resolve_intersection(db, to)
     if not origin or not destination:

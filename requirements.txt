@@ -1,15 +1,20 @@
-fastapi>=0.104.0
+# Upper bounds keep a fresh install (every Render deploy, every new laptop) on
+# versions the test suite has passed on. Without them, SQLAlchemy 2.1 arrived
+# with a new default Postgres driver and silently broke every fresh install.
+# Raise a bound only after running the tests and scripts/smoke_test.py on it.
+fastapi>=0.104.0,<1.0
 uvicorn[standard]>=0.24.0
-sqlalchemy>=2.0.23
-alembic>=1.13.0
-psycopg2-binary>=2.9.9
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
+sqlalchemy>=2.0.23,<2.2
+alembic>=1.13.0,<2.0
+psycopg2-binary>=2.9.9,<3.0
+pydantic>=2.5.0,<3.0
+pydantic-settings>=2.1.0,<3.0
 python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.1
 python-multipart>=0.0.6
-httpx>=0.25.0
+httpx>=0.25.0,<1.0
 pytest>=7.4.0
 cryptography>=42.0.0
 openpyxl>=3.1.0
 reportlab>=4.0.0
+redis>=5.0.0

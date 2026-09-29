@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.timeutil import aware, utcnow
 from app.models.platform import Device, UserSession
-from app.models.user import STAFF_ROLES, User
+from app.models.user import STAFF_ROLES, User, UserRole
 from app.services import settings as runtime_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -96,15 +96,20 @@ def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
         )
 
 
-def get_user_from_token(token: str, db: Session) -> User:
-    """Resolve a (still-valid) access token to a live User, or raise 401."""
+def get_user_from_token(token: str, db: Session, typ: str = "access", touch: bool = True) -> User:
+    """Resolve a (still-valid) token of type `typ` to a live User, or raise 401.
+
+    `typ` is "access" everywhere except the live-events stream, which takes a
+    short-lived "stream" ticket; either way the underlying session must still be live.
+    `touch=False` checks the session without counting the request as user activity.
+    """
     try:
         payload = decode_token(token)
     except JWTError:
         raise _unauthorized()
     user_id = payload.get("sub")
     session_id = payload.get("sid")
-    if user_id is None or session_id is None or payload.get("typ") != "access":
+    if user_id is None or session_id is None or payload.get("typ") != typ:
         raise _unauthorized()
 
     session = db.get(UserSession, session_id)
@@ -131,7 +136,7 @@ def get_user_from_token(token: str, db: Session) -> User:
         if device is not None and device.is_blocked:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This device has been blocked")
 
-    if (now - aware(session.last_seen_at)).total_seconds() > SESSION_TOUCH_SECONDS:
+    if touch and (now - aware(session.last_seen_at)).total_seconds() > SESSION_TOUCH_SECONDS:
         session.last_seen_at = now
         db.commit()
 
@@ -139,12 +144,21 @@ def get_user_from_token(token: str, db: Session) -> User:
     return user
 
 
+# Sent by the web app on requests the user didn't make themselves (a live update
+# reloading the page's data, the notification bell, reconnecting the stream).
+# Those must not count as activity, or a screen left open on a busy page would
+# never reach the idle sign-out. Setting it can only ever make a session expire
+# sooner, so there's nothing to gain by abusing it.
+BACKGROUND_HEADER = "x-background-refresh"
+
+
 def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    user = get_user_from_token(token, db)
+    background = request.headers.get(BACKGROUND_HEADER) == "1"
+    user = get_user_from_token(token, db, touch=not background)
     enforce_staff_mfa(user, request.url.path, db)
     return user
 
@@ -158,3 +172,9 @@ def require_role(*allowed_roles: str):
             )
         return current_user
     return role_checker
+
+
+# Role groups for operational (Developer 1) endpoints. Citizens reach their own
+# records only through /api/citizen and /api/portal, never these registries.
+OFFICERS = (UserRole.OFFICER, UserRole.ADMIN)
+FIELD_STAFF = (UserRole.OFFICER, UserRole.TOLL_OPERATOR, UserRole.ADMIN)

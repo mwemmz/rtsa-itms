@@ -5,6 +5,7 @@ Usage:
 """
 
 import os
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -82,6 +83,12 @@ DEFAULT_RULES = [
         "body_template": "Your account was accessed from a new device ({device}, {ip}). If this was not you, sign out other sessions and change your password.",
     },
     {
+        "trigger_event": "licence_issued",
+        "channels": "in_app,email",
+        "title_template": "Your driving licence has been issued",
+        "body_template": "Licence {licence_number} (class {licence_class}) has been issued to you. It is valid until {expiry_date}.",
+    },
+    {
         "trigger_event": "licence_renewed",
         "channels": "in_app,email",
         "title_template": "Licence renewed",
@@ -128,12 +135,14 @@ def seed_demo_users() -> None:
                 hashed_password=hash_password(os.environ.get("ADMIN_INITIAL_PASSWORD") or "admin123"),
                 full_name="System Administrator",
                 role=UserRole.ADMIN,
+                email_verified_at=datetime.now(timezone.utc),
             ),
             User(
                 email="officer@rtsa.gov.zm",
                 hashed_password=hash_password("officer123"),
                 full_name="Traffic Officer",
                 role=UserRole.OFFICER,
+                email_verified_at=datetime.now(timezone.utc),
             ),
             User(
                 email="citizen@example.com",
@@ -141,6 +150,7 @@ def seed_demo_users() -> None:
                 full_name="John Mwale",
                 phone_number="+260971000001",
                 role=UserRole.CITIZEN,
+                email_verified_at=datetime.now(timezone.utc),
             ),
         ]
         db.add_all(demo_users)

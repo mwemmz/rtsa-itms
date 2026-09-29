@@ -3,7 +3,7 @@
     python -m scripts.reset_db
 
 Drops the whole ``public`` schema (every table and all data), then runs
-``alembic upgrade head`` and the seed. You must type the database name to confirm.
+``alembic upgrade heads`` and the seed. You must type the database name to confirm.
 Never run this against a database anyone else is using.
 """
 
@@ -32,7 +32,7 @@ def main() -> None:
         conn.execute(text("CREATE SCHEMA public"))
     engine.dispose()
     print("Schema dropped. Rebuilding...")
-    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True, cwd=ROOT)
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "heads"], check=True, cwd=ROOT)
     subprocess.run([sys.executable, "-m", "scripts.seed"], check=True, cwd=ROOT)
     print("Done: fresh schema created and demo data seeded.")
 

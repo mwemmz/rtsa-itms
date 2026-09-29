@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import FIELD_STAFF, require_role
 from app.api.enforcement import generate_challan_reference
 from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
 from app.models.toll import TollComplianceResult, TollTransaction
@@ -21,6 +21,7 @@ from app.schemas.toll import (
     TollTransactionResponse,
 )
 from app.services.audit import log_action
+from app.services.ownership import owner_user_id
 from app.services.compliance import check_vehicle_compliance
 from app.services.notifications import notify
 
@@ -70,14 +71,31 @@ def _process_toll_event(
     db.flush()
 
     challan_created = False
-    # Auto-generate e-Challan for flagged cases
-    if result == TollComplianceResult.FLAGGED:
+    # Auto-generate an e-Challan only for offences the vehicle is committing right now
+    # (insurance, fitness, permit, blacklist, registration). Having an unpaid fine is
+    # a reason to stop the vehicle, not a new offence: fining it would add a fresh
+    # challan at every gate, each of which guarantees the next flag.
+    chargeable = [i for i in compliance.issues if not i.endswith("outstanding challan(s)")]
+    description = "; ".join(chargeable)
+    already_fined = chargeable and (
+        db.query(Challan.id)
+        .join(Violation, Violation.id == Challan.violation_id)
+        .filter(
+            Challan.vehicle_id == vehicle.id,
+            Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]),
+            Violation.location.like("Toll gate %"),
+            Violation.description == description,
+        )
+        .first()
+        is not None
+    )
+    if result == TollComplianceResult.FLAGGED and chargeable and not already_fined:
         violation_type = ViolationType.BLACKLISTED_VEHICLE if vehicle.is_blacklisted else ViolationType.OTHER
         violation = Violation(
             vehicle_id=vehicle.id,
             violation_type=violation_type,
             location=f"Toll gate {gate_id}",
-            description="; ".join(compliance.issues),
+            description=description,
             recorded_by=actor.id,
         )
         db.add(violation)
@@ -99,24 +117,16 @@ def _process_toll_event(
         f"{plate} at {gate_id}: {result.value}", actor.id
     )
 
-    if result == TollComplianceResult.FLAGGED:
-        owner = (
-            db.query(User)
-            .filter(User.email == vehicle.owner_id_number)
-            .first()
-            or db.query(User).filter(User.full_name == vehicle.owner_name).first()
+    # Notify the account the vehicle is registered to. (Never match on owner name:
+    # two people can share a name, and the other one would receive this plate's offences.)
+    owner_id = owner_user_id(db, vehicle) if result == TollComplianceResult.FLAGGED else None
+    if owner_id:
+        notify(
+            db,
+            owner_id,
+            "toll_flagged",
+            {"registration": plate, "gate_id": gate_id, "issues": "; ".join(compliance.issues)},
         )
-        if owner:
-            notify(
-                db,
-                owner.id,
-                "toll_flagged",
-                {
-                    "registration": plate,
-                    "gate_id": gate_id,
-                    "issues": "; ".join(compliance.issues),
-                },
-            )
 
     db.commit()
     db.refresh(transaction)
@@ -138,7 +148,7 @@ def _process_toll_event(
 def process_toll_gate_event(
     payload: TollEventCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     response = _process_toll_event(
         db, payload.plate_number.upper(), payload.gate_id, payload.timestamp, payload.toll_amount, current_user
@@ -219,7 +229,7 @@ def sync_offline_toll_events(
 def list_toll_transactions(
     plate_number: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     query = db.query(TollTransaction)
     if plate_number:

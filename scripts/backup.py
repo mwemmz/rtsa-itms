@@ -1,8 +1,11 @@
 """Database backup and verification.
 
 Usage:
-    python -m scripts.backup                # write a backup now (+ prune old ones)
+    python -m scripts.backup                # write a backup now (+ prune old ones, + copy off-site if configured)
     python -m scripts.backup --verify FILE  # check a backup file is readable/complete
+
+Off-site copies (S3-compatible storage, optionally encrypted) are handled by
+``scripts/offsite.py``; see docs/DISASTER_RECOVERY.md.
 
 Two formats, chosen automatically:
 
@@ -127,6 +130,24 @@ def verify_backup(path: Path) -> dict:
             "tables": len(actual), "rows": sum(actual.values())}
 
 
+def backup_and_ship(prefer_pg_dump: bool = True) -> dict:
+    """Write a backup, verify it, and copy it off-site when that's configured.
+
+    A failed off-site copy is reported, not raised: the local backup still exists
+    and whoever triggered this (admin, worker, nightly job) needs to see both facts.
+    """
+    from scripts import offsite
+
+    path = run_backup(prefer_pg_dump=prefer_pg_dump)
+    result = {"path": path, "verification": verify_backup(path), "offsite": None}
+    if offsite.configured():
+        try:
+            result["offsite"] = {"ok": True, **offsite.upload(path)}
+        except Exception as exc:  # noqa: BLE001 - report it alongside the local result
+            result["offsite"] = {"ok": False, "error": str(exc)}
+    return result
+
+
 def list_backups() -> list[dict]:
     directory = backup_dir()
     out = []
@@ -146,9 +167,20 @@ def main() -> None:
         result = verify_backup(Path(args.verify))
         print(json.dumps(result, indent=2))
         sys.exit(0 if result["ok"] else 1)
-    path = run_backup(prefer_pg_dump=not args.json)
+    result = backup_and_ship(prefer_pg_dump=not args.json)
+    path = result["path"]
     print(f"Backup written: {path} ({path.stat().st_size:,} bytes)")
-    print(json.dumps(verify_backup(path)))
+    print(json.dumps(result["verification"]))
+    offsite_result = result["offsite"]
+    if offsite_result is None:
+        print("Off-site copy: not configured (set BACKUP_S3_BUCKET)")
+    elif offsite_result["ok"]:
+        print(f"Off-site copy: {offsite_result['key']} ({offsite_result['bytes']:,} bytes, "
+              f"{'encrypted' if offsite_result['encrypted'] else 'NOT encrypted'})")
+    else:
+        print(f"Off-site copy FAILED: {offsite_result['error']}")
+    if not result["verification"].get("ok") or (offsite_result is not None and not offsite_result["ok"]):
+        sys.exit(1)  # make a scheduled job fail loudly
 
 
 if __name__ == "__main__":

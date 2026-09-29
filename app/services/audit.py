@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.audit_log import AuditLog
+from app.services.event_visibility import audience_for
 from app.services.events import hub
 
 # actions listed here represent user-visible data changes; other audit rows
@@ -41,7 +42,7 @@ def log_action(
     )
     db.add(entry)
     db.flush()
-    if action in _MUTATING_ACTIONS:
+    if action in _MUTATING_ACTIONS and hub.wants_events():
         hub.publish(
             {
                 "entity": entity_type,
@@ -49,6 +50,8 @@ def log_action(
                 "entity_id": str(entity_id) if entity_id is not None else None,
                 "actor_id": str(actor_id) if actor_id is not None else None,
                 "at": datetime.now(timezone.utc).isoformat(),
+                # who the change is about - decides which viewers receive it
+                "audience": audience_for(db, entity_type, entity_id, actor_id),
             }
         )
     return entry

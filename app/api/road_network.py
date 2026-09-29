@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import OFFICERS, get_current_user, require_role
 from app.models.user import User
 from app.models.road_network import (
     Intersection,
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/road-network", tags=["Road Network"])
 def create_road(
     payload: RoadCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     existing = db.query(Road).filter(Road.name == payload.name).first()
     if existing:
@@ -53,7 +53,7 @@ def list_roads(
 def create_intersection(
     payload: IntersectionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     intersection = Intersection(**payload.model_dump())
     db.add(intersection)
@@ -76,7 +76,7 @@ def list_intersections(
 def create_segment(
     payload: SegmentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     seg = RoadSegment(**payload.model_dump())
     db.add(seg)

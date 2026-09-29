@@ -92,6 +92,20 @@ async function syncOfflineTollEvents() {
 }
 function setToken(t) { t ? localStorage.setItem("rtsa_token", t) : localStorage.removeItem("rtsa_token"); }
 
+// Requests made while this is > 0 weren't started by the user (live-update
+// reloads, the bell, stream reconnects). They're tagged so the server doesn't
+// count them as activity - otherwise an open page never reaches the idle sign-out.
+var BACKGROUND = 0;
+
+async function inBackground(fn) {
+  BACKGROUND++;
+  try {
+    return await fn();
+  } finally {
+    BACKGROUND--;
+  }
+}
+
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = opts.headers || {};
@@ -101,6 +115,7 @@ async function api(path, opts) {
   var t = getToken();
   if (t) opts.headers["Authorization"] = "Bearer " + t;
   opts.headers["X-Device-Id"] = deviceId();
+  if (BACKGROUND > 0) opts.headers["X-Background-Refresh"] = "1";
   var res;
   try {
     res = await fetch(path, opts);
@@ -108,7 +123,12 @@ async function api(path, opts) {
     throw new Error("Network error — is the server reachable?");
   }
   var ct = res.headers.get("content-type") || "";
-  var data = ct.indexOf("application/json") !== -1 ? await res.json() : null;
+  var data = null;
+  // 204 No Content still carries a JSON content-type here, so only parse a body that exists.
+  if (ct.indexOf("application/json") !== -1 && res.status !== 204) {
+    var text = await res.text();
+    data = text ? JSON.parse(text) : null;
+  }
   if (res.status === 401 && !/\/api\/auth\/(login|mfa)/.test(path)) {
     logout();
     throw new Error((data && data.detail) || "Session expired. Please sign in again.");
@@ -235,24 +255,28 @@ function resetLoginForm() {
   $("#login-btn").textContent = "Sign in";
 }
 
-// Only called after a login attempt is rejected for a missing/wrong CAPTCHA -
-// most deployments run with it off, so we don't pay this round trip up front.
-async function ensureCaptcha() {
+// Only called after an attempt is rejected for a missing/wrong CAPTCHA - most
+// deployments run with it off, so we don't pay this round trip up front.
+// `prefix` picks the form: "" for sign-in, "su-" for sign-up.
+async function loadCaptcha(prefix) {
   try {
     var c = await api("/api/auth/captcha");
-    if (c.provider === "sandbox") {
-      CAPTCHA = { captcha_id: c.captcha_id };
-      $("#captcha-question").textContent = c.question;
-      $("#captcha-answer").value = "";
-      $("#captcha-field").classList.remove("hidden");
-      $("#captcha-answer").focus();
-    } else {
-      // A real provider (reCAPTCHA/hCaptcha/Turnstile) is configured server-side;
-      // rendering its widget needs that provider's script + a CSP allowance, which
-      // this minimal shell doesn't wire up. See docs/PLATFORM.md.
-      CAPTCHA = null;
-    }
-  } catch (e) { /* the login attempt itself will surface an error */ }
+    // A real provider (reCAPTCHA/hCaptcha/Turnstile) configured server-side needs
+    // that provider's script + a CSP allowance, which this shell doesn't wire up.
+    // See docs/PLATFORM.md.
+    if (c.provider !== "sandbox") return null;
+    $("#" + prefix + "captcha-question").textContent = c.question;
+    $("#" + prefix + "captcha-answer").value = "";
+    $("#" + prefix + "captcha-field").classList.remove("hidden");
+    $("#" + prefix + "captcha-answer").focus();
+    return { captcha_id: c.captcha_id };
+  } catch (e) {
+    return null; // the attempt itself already surfaced an error
+  }
+}
+
+async function ensureCaptcha() {
+  CAPTCHA = await loadCaptcha("");
 }
 
 async function doLogin(email, password, msgEl, btn) {
@@ -293,8 +317,225 @@ async function doLogin(email, password, msgEl, btn) {
     msgEl.className = "login-msg err";
     msgEl.textContent = e.message;
     if (!MFA_TOKEN && /captcha/i.test(e.message)) ensureCaptcha();
+    $("#login-resend").classList.toggle("hidden", !/confirm your email/i.test(e.message));
   } finally {
     if (btn) { btn.disabled = false; btn.classList.remove("loading"); }
+  }
+}
+
+/* ---------------- citizen sign-up ---------------- */
+
+var SIGNUP_CAPTCHA = null;
+var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+var PHONE_RE = /^\+?[0-9][0-9 ]{6,19}$/;
+
+// The sign-in card holds four forms; exactly one is shown.
+var AUTH_VIEWS = {
+  signin: { form: "#login-form", focus: "#email", hash: "" },
+  signup: { form: "#signup-form", focus: "#su-name", hash: "#/signup" },
+  forgot: { form: "#forgot-form", focus: "#fg-email", hash: "#/forgot" },
+  reset: { form: "#reset-form", focus: "#rs-password", hash: "" } // never put the token back in the URL
+};
+
+function showAuthView(view) {
+  Object.keys(AUTH_VIEWS).forEach(function (name) {
+    $(AUTH_VIEWS[name].form).classList.toggle("hidden", name !== view);
+  });
+  $("#demo-hint").classList.toggle("hidden", view !== "signin");
+  $$("#login-screen .login-msg").forEach(function (el) { el.textContent = ""; el.className = "login-msg"; });
+  $("#login-resend").classList.add("hidden");
+  var hash = AUTH_VIEWS[view].hash;
+  try { history.replaceState(null, "", hash || location.pathname); } catch (e) { /* ignore */ }
+  $(AUTH_VIEWS[view].focus).focus();
+}
+
+function authMessage(el, text, ok) {
+  el.className = "login-msg " + (ok ? "ok" : "err");
+  el.textContent = text;
+}
+
+function markInvalid(input, msgEl, message) {
+  input.setAttribute("aria-invalid", "true");
+  input.focus();
+  msgEl.className = "login-msg err";
+  msgEl.textContent = message;
+}
+
+// Mirrors the server's checks for instant feedback; the server stays authoritative.
+function signupProblem(body) {
+  if (!body.full_name) return ["#su-name", "Enter your full name."];
+  if (!EMAIL_RE.test(body.email)) return ["#su-email", "Enter a valid email address."];
+  if (body.phone_number && !PHONE_RE.test(body.phone_number)) {
+    return ["#su-phone", "Enter a valid mobile number, e.g. +260971234567."];
+  }
+  if (body.password.length < 8 || !/[a-z]/i.test(body.password) || !/[0-9]/.test(body.password)) {
+    return ["#su-password", "Use at least 8 characters, with letters and numbers."];
+  }
+  if (body.password !== $("#su-confirm").value) return ["#su-confirm", "Passwords don't match."];
+  return null;
+}
+
+// Which input a server-side rejection is about, so we can point at it.
+function signupFieldFor(message) {
+  if (/email/i.test(message)) return "#su-email";
+  if (/password/i.test(message)) return "#su-password";
+  if (/mobile|phone/i.test(message)) return "#su-phone";
+  if (/name/i.test(message)) return "#su-name";
+  return null;
+}
+
+async function doSignup() {
+  var msgEl = $("#signup-msg");
+  var btn = $("#signup-btn");
+  $$("#signup-form [aria-invalid]").forEach(function (el) { el.removeAttribute("aria-invalid"); });
+  var body = {
+    full_name: $("#su-name").value.trim(),
+    email: $("#su-email").value.trim(),
+    password: $("#su-password").value
+  };
+  var phone = $("#su-phone").value.trim();
+  if (phone) body.phone_number = phone;
+  var problem = signupProblem(body);
+  if (problem) { markInvalid($(problem[0]), msgEl, problem[1]); return; }
+  if (SIGNUP_CAPTCHA) {
+    body.captcha_id = SIGNUP_CAPTCHA.captcha_id;
+    body.captcha_answer = $("#su-captcha-answer").value.trim();
+  }
+
+  msgEl.className = "login-msg";
+  msgEl.textContent = "Creating your account…";
+  btn.disabled = true;
+  btn.classList.add("loading");
+  try {
+    await api("/api/auth/register", { method: "POST", body: JSON.stringify(body) });
+  } catch (e) {
+    var field = signupFieldFor(e.message);
+    if (field) markInvalid($(field), msgEl, e.message);
+    else { msgEl.className = "login-msg err"; msgEl.textContent = e.message; }
+    if (/captcha/i.test(e.message)) SIGNUP_CAPTCHA = await loadCaptcha("su-");
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("loading");
+  }
+
+  // Created - sign straight in with the same credentials.
+  $("#signup-form").reset();
+  $("#su-captcha-field").classList.add("hidden");
+  SIGNUP_CAPTCHA = null;
+  showAuthView("signin");
+  $("#email").value = body.email;
+  $("#password").value = body.password;
+  await doLogin(body.email, body.password, $("#login-msg"), $("#login-btn"));
+  if (!USER && /captcha/i.test($("#login-msg").textContent)) {
+    // Sign-in also wants a CAPTCHA: the account exists, so say that rather than "failed".
+    $("#login-msg").className = "login-msg ok";
+    $("#login-msg").textContent = "Account created. Answer the question below to sign in.";
+  }
+}
+
+/* ---------------- forgotten password & email confirmation ---------------- */
+
+// Emailed links look like /#/reset?token=... - the token sits after "#" so the
+// browser never sends it to the server (no access logs). Read it, then drop it
+// from the address bar and history straight away.
+var RESET_TOKEN = null;
+
+function takeLinkToken() {
+  var m = /^#\/(reset|verify)\?token=([^&]+)/.exec(location.hash || "");
+  if (!m) return null;
+  try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ }
+  return { kind: m[1], token: decodeURIComponent(m[2]) };
+}
+
+async function withButton(btn, fn) {
+  btn.disabled = true;
+  btn.classList.add("loading");
+  try { return await fn(); } finally { btn.disabled = false; btn.classList.remove("loading"); }
+}
+
+async function doForgot() {
+  var msgEl = $("#forgot-msg");
+  var input = $("#fg-email");
+  input.removeAttribute("aria-invalid");
+  var email = input.value.trim();
+  if (!EMAIL_RE.test(email)) { markInvalid(input, msgEl, "Enter the email address you sign in with."); return; }
+  await withButton($("#forgot-btn"), async function () {
+    try {
+      var r = await api("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email: email }) });
+      authMessage(msgEl, r.detail + " Check your inbox (and spam folder); the link works for 30 minutes.", true);
+    } catch (e) { authMessage(msgEl, e.message); }
+  });
+}
+
+async function doReset() {
+  var msgEl = $("#reset-msg");
+  var pw = $("#rs-password"), confirm = $("#rs-confirm");
+  [pw, confirm].forEach(function (el) { el.removeAttribute("aria-invalid"); });
+  if (pw.value.length < 8 || !/[a-z]/i.test(pw.value) || !/[0-9]/.test(pw.value)) {
+    markInvalid(pw, msgEl, "Use at least 8 characters, with letters and numbers."); return;
+  }
+  if (pw.value !== confirm.value) { markInvalid(confirm, msgEl, "Passwords don't match."); return; }
+  await withButton($("#reset-btn"), async function () {
+    try {
+      await api("/api/auth/password-reset/confirm", {
+        method: "POST", body: JSON.stringify({ token: RESET_TOKEN, new_password: pw.value })
+      });
+    } catch (e) {
+      if (/password/i.test(e.message) && !/link/i.test(e.message)) { markInvalid(pw, msgEl, e.message); return; }
+      authMessage(msgEl, e.message); // expired/used link: the form below lets them ask for a new one
+      return;
+    }
+    RESET_TOKEN = null;
+    $("#reset-form").reset();
+    showAuthView("signin");
+    authMessage($("#login-msg"), "Password changed. Sign in with your new password.", true);
+  });
+}
+
+async function confirmEmail(token) {
+  try {
+    var r = await api("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: token }) });
+    if (USER) {
+      toast("Email address confirmed", "ok");
+      USER.email_verified = true;
+      renderVerifyBanner();
+    } else {
+      showAuthView("signin");
+      $("#email").value = r.email;
+      authMessage($("#login-msg"), "Email address confirmed. Sign in to continue.", true);
+    }
+  } catch (e) {
+    if (USER) toast(e.message, "err");
+    else { showAuthView("signin"); authMessage($("#login-msg"), e.message); }
+  }
+}
+
+async function resendConfirmation(email) {
+  var r = await api("/api/auth/verify-email/resend", { method: "POST", body: JSON.stringify({ email: email }) });
+  return r.detail;
+}
+
+function renderVerifyBanner() {
+  var show = !!USER && USER.email_verified === false;
+  $("#verify-banner").classList.toggle("hidden", !show);
+  if (show) $("#verify-email").textContent = USER.email;
+}
+
+// Deep links into the signed-out card: #/signup, #/forgot, and emailed #/reset / #/verify links.
+function routeAuthHash() {
+  var link = takeLinkToken();
+  if (link && link.kind === "reset") {
+    RESET_TOKEN = link.token;
+    showAuthView("reset");
+  } else if (link && link.kind === "verify") {
+    confirmEmail(link.token);
+  } else if (location.hash === "#/signup") {
+    showAuthView("signup");
+  } else if (location.hash === "#/forgot") {
+    showAuthView("forgot");
+  } else {
+    showAuthView("signin");
   }
 }
 
@@ -307,15 +548,18 @@ function logout() {
   closeLiveStream();
   resetLoginForm();
   USER = null;
+  renderVerifyBanner();
   $("#shell").classList.add("hidden");
   $("#mfa-gate").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");
+  document.title = "RTSA ITMS — Web App";
   location.hash = "";
   refreshBell();
 }
 
 async function bootstrapApp() {
   USER = await api("/api/auth/me");
+  renderVerifyBanner();
   $("#login-screen").classList.add("hidden");
   if (USER.mfa_setup_required) {
     $("#shell").classList.add("hidden");
@@ -357,36 +601,66 @@ var LIVE_VIEWS = {
 var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1 };
 var LIVE_ES = null;
 var LIVE_RELOAD_TIMER = null;
+var LIVE_RETRY_TIMER = null;
+var LIVE_RETRY_MS = 1000;
+var LIVE_GEN = 0; // bumped on every open/close so a stale async open can bail out
 
-function openLiveStream() {
+// EventSource can't send an Authorization header, so the stream is opened with a
+// single-use ticket in the URL rather than the access token (URLs end up in
+// server logs). A used ticket can't reopen the stream, so instead of letting
+// EventSource auto-reconnect we close it and come back with a fresh ticket.
+async function openLiveStream() {
   closeLiveStream();
+  var gen = LIVE_GEN;
   if (!getToken()) return;
-  var es = new EventSource("/api/events/stream?token=" + encodeURIComponent(getToken()));
+  var t;
+  try {
+    t = await inBackground(function () { return api("/api/events/ticket", { method: "POST" }); });
+  } catch (e) {
+    if (gen === LIVE_GEN) scheduleLiveReconnect();
+    return;
+  }
+  if (gen !== LIVE_GEN || !getToken()) return; // signed out or reopened meanwhile
+  var es = new EventSource("/api/events/stream?ticket=" + encodeURIComponent(t.ticket));
   LIVE_ES = es;
+  es.onopen = function () { LIVE_RETRY_MS = 1000; };
   es.onmessage = function (e) {
     try { onLiveEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed */ }
   };
   es.onerror = function () {
-    if (!getToken()) closeLiveStream(); // EventSource reconnects automatically otherwise
+    if (LIVE_ES !== es) return;
+    closeLiveStream();
+    scheduleLiveReconnect();
   };
 }
 
+function scheduleLiveReconnect() {
+  if (!getToken() || LIVE_RETRY_TIMER) return;
+  LIVE_RETRY_TIMER = setTimeout(function () {
+    LIVE_RETRY_TIMER = null;
+    openLiveStream();
+  }, LIVE_RETRY_MS);
+  LIVE_RETRY_MS = Math.min(LIVE_RETRY_MS * 2, 30000);
+}
+
 function closeLiveStream() {
+  LIVE_GEN++;
+  if (LIVE_RETRY_TIMER) { clearTimeout(LIVE_RETRY_TIMER); LIVE_RETRY_TIMER = null; }
   if (LIVE_ES) { try { LIVE_ES.close(); } catch (e) { /* ignore */ } LIVE_ES = null; }
 }
 
 function onLiveEvent(ev) {
   if (!ev || !ev.entity) return;
-  if (ev.entity === "notification") { refreshBell(); return; }
+  if (ev.entity === "notification") { inBackground(refreshBell); return; }
   var targets = LIVE_VIEWS[ev.entity] || [];
-  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") refreshBell();
+  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") inBackground(refreshBell);
   if (VIEW.id && targets.indexOf(VIEW.id) !== -1) {
     if (LIVE_FORM_VIEWS[VIEW.id]) { toast("Live update: " + (ev.action || "data") + " — refresh to see changes"); return; }
     if (LIVE_RELOAD_TIMER) clearTimeout(LIVE_RELOAD_TIMER);
     LIVE_RELOAD_TIMER = setTimeout(function () {
       LIVE_RELOAD_TIMER = null;
       if (!getToken()) return;
-      go(VIEW.id).catch(function () { /* ignore */ });
+      inBackground(function () { return go(VIEW.id); }).catch(function () { /* ignore */ });
     }, 700);
   }
 }
@@ -1369,6 +1643,33 @@ function wire() {
     e.preventDefault();
     doLogin($("#email").value.trim(), $("#password").value, $("#login-msg"), $("#login-btn"));
   });
+  $("#signup-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    doSignup();
+  });
+  $("#to-signup").addEventListener("click", function (e) { e.preventDefault(); showAuthView("signup"); });
+  $$("#to-signin, .to-signin").forEach(function (a) {
+    a.addEventListener("click", function (e) { e.preventDefault(); showAuthView("signin"); });
+  });
+  $("#to-forgot").addEventListener("click", function (e) {
+    e.preventDefault();
+    var typed = $("#email").value.trim();
+    showAuthView("forgot");
+    if (typed) $("#fg-email").value = typed;
+  });
+  $("#forgot-form").addEventListener("submit", function (e) { e.preventDefault(); doForgot(); });
+  $("#reset-form").addEventListener("submit", function (e) { e.preventDefault(); doReset(); });
+  $("#resend-from-login").addEventListener("click", async function (e) {
+    e.preventDefault();
+    try { authMessage($("#login-msg"), await resendConfirmation($("#email").value.trim()), true); }
+    catch (err) { authMessage($("#login-msg"), err.message); }
+  });
+  $("#verify-resend").addEventListener("click", async function () {
+    try { toast(await resendConfirmation(USER.email), "ok"); } catch (err) { toast(err.message, "err"); }
+  });
+  $$("#signup-form input").forEach(function (input) {
+    input.addEventListener("input", function () { input.removeAttribute("aria-invalid"); });
+  });
   $("#logout-btn").addEventListener("click", logout);
   $("#mfa-gate-signout").addEventListener("click", function (e) { e.preventDefault(); logout(); });
   $("#bell").addEventListener("click", openNotifs);
@@ -1384,18 +1685,31 @@ function wire() {
   });
   window.addEventListener("hashchange", function () {
     closeMenu();
-    if (USER) loadRouter();
+    if (USER && /^#\/verify\?token=/.test(location.hash)) confirmEmail(takeLinkToken().token);
+    else if (USER) loadRouter();
+    else if (!getToken()) routeAuthHash();
   });
 }
 
 window.addEventListener("DOMContentLoaded", function () {
   wire();
   if (getToken()) {
+    var link = takeLinkToken();
+    if (link && link.kind === "reset") {
+      // They asked to reset the password, so drop this browser's session and show the form.
+      logout();
+      RESET_TOKEN = link.token;
+      showAuthView("reset");
+      return;
+    }
     $("#login-screen").classList.add("hidden");
-    bootstrapApp().catch(function () {
+    bootstrapApp().then(function () {
+      if (link) confirmEmail(link.token);
+    }).catch(function () {
       logout();
     });
   } else {
     $("#login-screen").classList.remove("hidden");
+    routeAuthHash(); // deep links: #/signup (from /about), #/forgot, emailed #/reset and #/verify
   }
 });

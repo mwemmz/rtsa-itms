@@ -21,6 +21,7 @@ from app.schemas.portal import (
 )
 from app.services.audit import log_action
 from app.services.notifications import notify
+from app.services.ownership import owned_vehicles_query
 from app.services.payments import create_payment
 
 router = APIRouter(prefix="/api/portal", tags=["Driver Portal"])
@@ -47,12 +48,7 @@ def _get_my_licence(db: Session, user: User) -> Driver | None:
 
 
 def _get_my_vehicles(db: Session, user: User) -> list[Vehicle]:
-    return (
-        db.query(Vehicle)
-        .filter(Vehicle.user_id == user.id)
-        .order_by(Vehicle.registration_date.desc())
-        .all()
-    )
+    return owned_vehicles_query(db, user).order_by(Vehicle.registration_date.desc()).all()
 
 
 def _ensure_driver_registered(db: Session, user: User) -> Driver:

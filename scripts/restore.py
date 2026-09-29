@@ -3,13 +3,14 @@
 Usage:
     python -m scripts.restore backups/rtsa-itms-20260101T020000Z.json.gz --yes
     python -m scripts.restore backups/rtsa-itms-20260101T020000Z.dump --yes
+    python -m scripts.restore --from-offsite latest --yes   # fetch (and decrypt) from off-site storage first
 
 Safety: restoring **replaces every row** in the target database, so the script
 refuses to run without ``--yes`` and refuses a non-empty target unless
 ``--wipe`` is also given. Point ``DATABASE_URL`` at the database to restore
 into (for a rehearsal use a scratch database, never production).
 
-JSON snapshots need the schema to exist first (``alembic upgrade head``);
+JSON snapshots need the schema to exist first (``alembic upgrade heads``);
 ``.dump`` files are restored with ``pg_restore --clean --if-exists``.
 """
 
@@ -91,13 +92,23 @@ def restore_pg(path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="RTSA ITMS database restore")
-    parser.add_argument("file")
+    parser.add_argument("file", nargs="?", help="local backup file")
+    parser.add_argument("--from-offsite", metavar="KEY",
+                        help="download from off-site storage first: 'latest' or a full key (decrypted automatically)")
     parser.add_argument("--yes", action="store_true", help="confirm you want to overwrite the target database")
     parser.add_argument("--wipe", action="store_true", help="allow replacing a non-empty database")
     args = parser.parse_args()
     if not args.yes:
         raise SystemExit("Refusing to run without --yes (this replaces the target database contents).")
-    path = Path(args.file)
+    if bool(args.file) == bool(args.from_offsite):
+        raise SystemExit("Give either a local backup file or --from-offsite KEY.")
+    if args.from_offsite:
+        from scripts import offsite
+
+        path = offsite.download(args.from_offsite, Path(settings.BACKUP_DIR))
+        print(f"Downloaded {path.name} from off-site storage.")
+    else:
+        path = Path(args.file)
     print(f"Restoring {path.name} into {urlparse(settings.DATABASE_URL).hostname or 'sqlite'} ...")
     if path.suffix == ".dump":
         restore_pg(path)

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import FIELD_STAFF, OFFICERS, require_role
 from app.models.psv import PSVOperator, PSVPermit, PSVPermitStatus
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/psv", tags=["PSV"])
 def register_operator(
     payload: PSVOperatorCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     existing = db.query(PSVOperator).filter(
         PSVOperator.licence_number == payload.licence_number
@@ -43,7 +43,7 @@ def register_operator(
 @router.get("/operators", response_model=list[PSVOperatorResponse])
 def list_operators(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     return db.query(PSVOperator).all()
 
@@ -52,7 +52,7 @@ def list_operators(
 def get_operator(
     operator_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     operator = db.query(PSVOperator).filter(PSVOperator.id == operator_id).first()
     if not operator:
@@ -64,7 +64,7 @@ def get_operator(
 def issue_permit(
     payload: PSVPermitCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     operator = db.query(PSVOperator).filter(PSVOperator.id == payload.operator_id).first()
     if not operator:
@@ -95,7 +95,7 @@ def issue_permit(
 @router.get("/permits", response_model=list[PSVPermitResponse])
 def list_permits(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     return db.query(PSVPermit).all()
 
@@ -104,7 +104,7 @@ def list_permits(
 def get_active_permit_for_vehicle(
     vehicle_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     permit = (
         db.query(PSVPermit)

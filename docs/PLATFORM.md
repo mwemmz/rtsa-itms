@@ -23,6 +23,28 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
 ## Security
 
 * **Registration** only creates citizens. Staff are created by an admin (`POST /api/admin/users`).
+  Citizens sign up from the web app ("Create a citizen account" on the sign-in card, or deep link `/#/signup`,
+  linked from `/about`) and are signed straight in afterwards. `POST /api/auth/register` stores the email trimmed and
+  lowercased, rejects case-insensitive duplicates, validates name and optional mobile number, and allows 10 sign-ups
+  per IP per 5 minutes. Sign-in matches the email case-insensitively.
+* **Email confirmation**: self-registered citizens get a confirmation link (valid 48 h) and start unconfirmed; accounts
+  created by an admin or the seed script, and every account that existed before this feature, count as confirmed.
+  Until confirmed, a user gets **no email notifications** (in-app ones still arrive), so a mistyped or someone-else's
+  address never receives fines or licence mail. The app shows a banner with *Send a new link*. Setting
+  `security.require_email_verification` (off by default) also blocks sign-in until confirmed; that check runs after the
+  password, so it can't be used to probe which addresses are registered.
+* **Forgotten password**: *Forgot password?* emails a reset link (valid 30 min). The request always gets the same answer
+  and the email is sent after the response, so it can't reveal who has an account; requests are limited to 5 per IP and
+  3 per address per 5 minutes. The link is tied to the current password hash, so it works once and dies if any newer
+  link is used or the password changes. Resetting signs the account out everywhere, clears any lockout, confirms the
+  email (they proved they read that inbox), keeps MFA in force, and emails a "your password was changed" notice.
+  If someone registered another person's address, the real owner reclaims it this way: sign-up tells them it's taken
+  and to use *Forgot password*, and the reset link only reaches their inbox.
+* Both links are short-lived signed tokens (`app/services/account_links.py`, no table) that sit after `#` in the URL
+  (`/#/reset?token=...`, `/#/verify?token=...`): browsers never send that part to the server, so tokens stay out of
+  access logs, and the page removes them from the address bar straight away. Links use `PUBLIC_BASE_URL` (falls back to
+  the request's address). The web service sends these emails itself, so it needs the `SMTP_*` settings too; without
+  SMTP, non-production servers log the link so the flow can be tested locally.
 * **Passwords**: bcrypt; policy = min length (setting) + letters and numbers.
 * **Lockout**: N failed logins (setting, default 5) lock the *account* for M minutes
   (default 15), on top of the per-IP throttle. Admins unlock. Every attempt is stored (`login_attempts`).
@@ -47,6 +69,25 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   deployment step, not code (`app/services/captcha.py`).
 * **Sessions**: every JWT carries a session id (`sid`) checked against `user_sessions` on each request –
   logout, idle timeout (default 30 min), password change, role change, deactivation and admin revoke all take effect immediately.
+  Only requests the user makes count as activity: the web app sends `X-Background-Refresh: 1` on requests it makes by
+  itself (live-update reloads, the notification bell, stream reconnects), and those don't push back the idle timeout -
+  otherwise a screen left open on a busy page would never sign out. They're still refused once the session has idled out.
+  The page and its scripts/styles are served with `Cache-Control: no-cache` (revalidated via ETag), so browsers pick up
+  a deploy straight away instead of running a cached `app.js` against a newer API.
+* **Live-updates stream**: access tokens never go in a URL (URLs end up in uvicorn/Render/proxy access logs).
+  The browser's `EventSource` can't send an `Authorization` header, so the web app calls `POST /api/events/ticket`
+  first and opens `/api/events/stream?ticket=...` with a ticket that only opens the stream, expires after 30 s and
+  works once (`app/api/events.py`). After a drop it reconnects itself with a fresh ticket, backing off 1 s → 30 s.
+  Scripts can still use `Authorization: Bearer <access token>`. The stream is excluded from gzip
+  (`StreamSafeGZipMiddleware`, `app/core/middleware.py`) - older Starlette versions otherwise buffer every frame.
+  **Each viewer only receives what they may see** (`app/services/event_visibility.py`): road incidents and broadcasts
+  go to everyone; changes about a user's own account, sessions, devices, vehicles, fines, payments or licence
+  applications go to that user; operational records go to staff; accounts, sessions, devices, settings, roles, agencies
+  and notification rules only to holders of the matching permission; anything unclassified only to `audit:read`
+  holders. Who made the change is only included for `audit:read` holders. The owners of a record are looked up once
+  when the change is published. An open stream re-reads its session and permissions every 30 s and closes if the user
+  was signed out, deactivated, blocked or went idle; a demotion or permission change applies without reconnecting.
+  When adding a new entity type to `log_action`, classify it in `event_visibility.py` (until then only admins see it).
 * **Devices**: fingerprint = hash(user-agent, language, `X-Device-Id`). New devices raise a `new_device_login` notification;
   users can trust/block devices (a blocked device can't sign in).
 * **Transport/headers**: `FORCE_HTTPS` redirects http→https (behind a proxy, via `X-Forwarded-Proto`); HSTS in production;
@@ -54,6 +95,14 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
 * **RBAC**: 13 permissions × 4 roles, editable in *Settings & access*; `admin` always holds all. The last active
   admin account can't be demoted or deactivated by anyone else, even with `roles:manage`/`users:manage` remapped
   onto another role (`_is_last_admin`, `app/api/admin.py`) - it can only happen by promoting a replacement first.
+* **Operational endpoints** (vehicles, drivers, enforcement, inspections, insurance, ANPR, toll, PSV, accidents,
+  road-network writes) use two role groups from `app/core/security.py`: `OFFICERS` (officer, admin) for registry
+  writes, enforcement and accidents; `FIELD_STAFF` (officer, toll operator, admin) for gate/camera capture and the
+  read-only lookups a gate needs. Citizens never reach these registries - they see their own records through
+  `/api/citizen` and `/api/portal`. Guard new endpoints the same way; `tests/test_audit_fixes.py` pins the policy.
+* **Vehicle ownership** is resolved in one place, `app/services/ownership.py`: a vehicle belongs to an account via
+  `Vehicle.user_id` or the owner's national ID matching that account's driver record. Use `owner_user_id()` to
+  decide who to notify; never match owners by name.
 * **Not done**: per-field DB encryption beyond MFA secrets and gateway payloads (database-level encryption at rest
   is the hosting provider's – Neon encrypts storage).
 
@@ -109,8 +158,25 @@ The national-ID adapter is a **sandbox** (format check only, and it says so in t
 * `X-Process-Time` / `Server-Timing` on every response; requests slower than `SLOW_REQUEST_MS` are logged.
 * `/api/system/metrics`: per-route p50/p95/p99 and the toll-decision p95 against the `toll.compliance_target_ms` setting.
 * Connection pooling with `pool_pre_ping` + recycle; GZip; permission and setting lookups are cached for a few seconds.
-* Measured on SQLite with 600 000 toll rows: dashboard 2.2 s cold / 9 ms cached; JSON report ~0.9 s;
-  CSV export of 50 000 rows ~2.6 s; Excel ~8–10 s; PDF (2 000 rows) ~4 s. Postgres with the new indexes should do better but has not been measured.
+* **Measured on PostgreSQL 18** (local, Windows; app in-process so no network) with 600 000 toll transactions,
+  50 000 violations/fines, 30 000 payments, 20 000 vehicles and 2 000 users spread over the reports' 90-day window,
+  using the production migrations and indexes. Reproduce with `scripts/benchmark.py` against a scratch database
+  (it refuses any database whose name doesn't contain "bench"):
+
+  | Operation | Time |
+  |---|---|
+  | Toll-gate decision (200 requests) | p50 18 ms, p95 26 ms, max 38 ms - target `toll.compliance_target_ms` 500 ms |
+  | Analytics dashboard, cold / cached | 1.6 s / 6 ms |
+  | Toll report, JSON (500 rows) | 0.39 s |
+  | Other reports, JSON (500 rows) | 9-85 ms |
+  | Challans list (100) | 20 ms |
+  | Toll export, CSV 50 000 rows | 2.4 s |
+  | Toll export, Excel 50 000 rows | 8.0 s |
+  | Toll export, PDF 2 000 rows | 3.5 s |
+
+  Earlier SQLite figures for comparison: dashboard 2.2 s cold, JSON report ~0.9 s, CSV ~2.6 s, Excel 8-10 s, PDF ~4 s.
+  Exports barely change between databases: their time is spent building the file in Python (openpyxl, reportlab),
+  not in the query. If Excel/PDF exports of large ranges become common, move them to the worker and hand back a download.
 
 ## Availability & disaster recovery
 
@@ -121,6 +187,22 @@ See [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md).
 * Migration `a7c3d91e5b20` adds indexes for the hot paths (payments by status/date and payer, challans by status/vehicle,
   toll/violation/accident timestamps, audit log by time/entity/actor, expiry dates used by reminders, notifications by status).
 * All list endpoints paginate (`skip`/`limit`, capped); reports aggregate in SQL, not Python.
-* The app is stateless apart from three in-process caches/limiters (login IP throttle, agency rate limit, metrics). With more
-  than one instance, move those to Redis; everything else (sessions, lockout, settings, ledger) is in the database.
+* **Running more than one instance:** set `REDIS_URL` (on Render: add a *Key Value* instance and use its internal URL).
+  Sessions, lockouts, settings and the ledger are already in the database; these five things would otherwise be
+  per-process and go wrong behind a load balancer, so with `REDIS_URL` they're shared through Redis
+  (`app/core/shared.py`):
+
+  | What | Without Redis (one instance) | With `REDIS_URL` |
+  |---|---|---|
+  | Login and sign-up throttles | per-process counts | one sliding window per IP, all instances |
+  | Agency API rate limits | per-process counts | one window per agency, all instances |
+  | Single-use stream tickets | used-once per process | used-once across instances |
+  | Live updates | only this instance's connections | published to a Redis channel; every instance relays to its own viewers, with the same per-viewer filtering |
+  | `/api/system/metrics` | this instance | every live instance merged (each publishes its window every 10 s; `instances` shows how many) |
+
+  Nothing changes when `REDIS_URL` is unset. If Redis becomes unreachable, each of these falls back to its
+  single-instance behaviour and logs it (at most once a minute) rather than failing requests. Short read caches stay per
+  instance: permissions and settings (5 s) and the analytics dashboard (`REPORT_CACHE_SECONDS`) - a change can take
+  that long to show on another instance. These paths are tested against an in-memory stand-in for Redis
+  (`tests/test_shared_state.py`); run one real two-instance check before relying on it.
 * Route heavy work (large exports, notification delivery) to the worker as volume grows; the service functions are already queue-friendly.

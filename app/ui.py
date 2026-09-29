@@ -205,6 +205,7 @@ _PAGE = """<!DOCTYPE html>
           <button type="submit">Sign in</button>
           <div id="login-msg"></div>
           <div class="hint">Demo accounts: <code>admin@rtsa.gov.zm / admin123</code> &middot; <code>officer@rtsa.gov.zm / officer123</code> &middot; <code>citizen@example.com / citizen123</code></div>
+          <p class="hint">New citizen? <a href="/#/signup">Create an account</a> to pay fines, renew your licence and get road alerts online.</p>
         </form>
       </div>
       <div>

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import OFFICERS, get_current_user, require_role
 from app.models.driver import Driver
 from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
 from app.models.user import User, UserRole
@@ -19,6 +19,7 @@ from app.schemas.enforcement import (
 )
 from app.models.payment import PaymentType
 from app.services.audit import log_action
+from app.services.ownership import owner_user_id
 from app.services.payments import create_payment
 from app.services.notifications import notify
 
@@ -155,7 +156,7 @@ def create_challan_for_violation(
 def record_violation(
     payload: ViolationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     violation = Violation(
         vehicle_id=payload.vehicle_id,
@@ -174,25 +175,18 @@ def record_violation(
 
     # Notify the vehicle owner if they have a user account
     vehicle = db.query(Vehicle).filter(Vehicle.id == violation.vehicle_id).first()
-    owner = None
-    if vehicle:
-        owner = (
-            db.query(User)
-            .filter(User.email == vehicle.owner_id_number)
-            .first()
-            or db.query(User).filter(User.full_name == vehicle.owner_name).first()
+    owner_id = owner_user_id(db, vehicle)
+    if owner_id:
+        notify(
+            db,
+            owner_id,
+            "challan_created",
+            {
+                "reference": challan.reference,
+                "amount": challan.penalty_amount,
+                "due_date": challan.due_date.strftime("%Y-%m-%d"),
+            },
         )
-        if owner:
-            notify(
-                db,
-                owner.id,
-                "challan_created",
-                {
-                    "reference": challan.reference,
-                    "amount": challan.penalty_amount,
-                    "due_date": challan.due_date.strftime("%Y-%m-%d"),
-                },
-            )
 
     db.commit()
     violation_record = db.query(Violation).filter(Violation.id == violation.id).first()
@@ -205,7 +199,7 @@ def list_violations(
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     query = db.query(Violation)
     if vehicle_id:
@@ -221,7 +215,7 @@ def list_challans(
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     query = db.query(Challan)
     if vehicle_id:
@@ -236,7 +230,7 @@ def list_challans(
 def get_challan(
     challan_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(*OFFICERS)),
 ):
     challan = db.query(Challan).filter(Challan.id == challan_id).first()
     if not challan:

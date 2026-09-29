@@ -46,10 +46,13 @@ def scan_licence_expiries() -> int:
 
 def _run_backup() -> None:
     try:
-        from scripts.backup import run_backup
+        from scripts.backup import backup_and_ship
 
-        path = run_backup()
-        logger.info("Scheduled backup written: %s", path)
+        result = backup_and_ship()
+        logger.info("Scheduled backup written: %s", result["path"])
+        offsite = result["offsite"]
+        if offsite is not None and not offsite["ok"]:
+            logger.error("Off-site copy of %s failed: %s", result["path"].name, offsite["error"])
     except Exception as e:  # never let a backup failure stop notifications
         logger.error("Scheduled backup failed: %s", e)
 

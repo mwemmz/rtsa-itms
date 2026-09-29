@@ -214,6 +214,15 @@ a:hover { color: var(--gold-strong); }
   line-height: 1.7;
 }
 .demo-hint code { background: color-mix(in srgb, var(--panel) 60%, transparent); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.auth-switch { margin: 14px 0 0; text-align: center; font-size: 13px; color: var(--ink-2); }
+.auth-switch a { font-weight: 600; }
+.auth-title { margin: 0 0 4px; font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+.auth-lead { margin: 0 0 18px; line-height: 1.5; }
+.field-hint { margin: 5px 0 0; }
+.field-link { margin: 6px 0 0; text-align: right; font-size: 12.5px; }
+.field label .muted { font-weight: 500; }
+.field input[aria-invalid="true"],
+.field input[aria-invalid="true"]:focus { border-color: var(--err); }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
@@ -471,6 +480,22 @@ header .user-chip { font-size: 13px; color: var(--ink-2); font-weight: 500; }
 }
 
 #content { padding: 24px; flex: 1; animation: fadein 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 24px 0;
+  padding: 11px 14px;
+  background: var(--gold-soft);
+  border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent);
+  border-radius: var(--radius-control);
+  color: var(--gold-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.notice span { flex: 1 1 260px; }
+@media (max-width: 760px) { .notice { margin: 12px 14px 0; } }
 @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- cards / grids ---------- */

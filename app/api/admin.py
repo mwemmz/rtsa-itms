@@ -83,6 +83,7 @@ def create_user(
         phone_number=payload.phone_number,
         role=payload.role,
         password_changed_at=utcnow(),
+        email_verified_at=utcnow(),  # an administrator entered it
     )
     db.add(user)
     db.flush()

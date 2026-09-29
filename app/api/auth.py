@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import re
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.crypto import sha256
 from app.core.permissions import permissions_for_role
+from app.core.ratelimit import check_rate_limit, record_failure
 from app.core.security import (
     get_current_user,
     hash_password,
@@ -14,22 +19,30 @@ from app.models.platform import Device, UserSession
 from app.models.user import User, UserRole
 from app.schemas.user import (
     DeviceResponse,
+    EmailRequest,
     LoginRequest,
     MFACodeRequest,
     MFADisableRequest,
     MFAVerifyRequest,
     PasswordChange,
+    PasswordResetConfirm,
     SessionResponse,
     Token,
+    TokenRequest,
     UserCreate,
     UserResponse,
 )
+from app.services import account_links
 from app.services import auth as auth_service
 from app.services import captcha as captcha_service
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ]{6,19}$")
+REGISTRATIONS_PER_IP = 10  # per ratelimit.WINDOW_SECONDS - generous enough for a shared campus/office NAT
 
 _FORM_SCHEMA = {
     "type": "object",
@@ -84,8 +97,12 @@ def get_captcha():
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
+def register(payload: UserCreate, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
     """Public self-registration. Always creates a *citizen* account."""
+    ip_key = f"register:{auth_service.client_ip(request)}"
+    if not check_rate_limit(ip_key, REGISTRATIONS_PER_IP):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many sign-ups from this network. Try again later.")
+    record_failure(ip_key)  # every attempt counts towards the per-IP sign-up budget
     if runtime_settings.get(db, "security.captcha_enabled") and not captcha_service.verify(payload.model_dump()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CAPTCHA verification failed")
     if payload.role != UserRole.CITIZEN:
@@ -93,31 +110,136 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Staff accounts can only be created by an administrator",
         )
+    email = payload.email.strip().lower()
+    if len(email) > 254 or not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter a valid email address")
+    full_name = " ".join(payload.full_name.split())
+    if not full_name or len(full_name) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter your full name (up to 120 characters)")
+    phone = (payload.phone_number or "").strip() or None
+    if phone and not PHONE_PATTERN.match(phone):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Enter a valid mobile number, e.g. +260971234567")
     problem = validate_password_strength(
         payload.password, runtime_settings.get(db, "security.password_min_length")
     )
     if problem:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=problem)
-    existing = db.query(User).filter(User.email == payload.email).first()
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
+            # If someone else registered their address, the real owner can take it back:
+            # a reset link goes to their inbox, and using it also confirms the address.
+            detail="Email already registered. If it's yours, use \"Forgot password\" to get in.",
         )
     user = User(
-        email=payload.email,
+        email=email,
         hashed_password=hash_password(payload.password),
-        full_name=payload.full_name,
-        phone_number=payload.phone_number,
+        full_name=full_name,
+        phone_number=phone,
         role=UserRole.CITIZEN,
         password_changed_at=utcnow(),
+        email_verified_at=None,  # until they use the confirmation link
     )
     db.add(user)
     db.flush()
     log_action(db, "register", "user", str(user.id), "Registered as citizen", user.id)
     db.commit()
     db.refresh(user)
+    background.add_task(account_links.send, account_links.confirmation_email(user, account_links.public_base_url(request)))
     return user
+
+
+# --- forgotten passwords and email confirmation ---------------------------------------------
+
+LINK_REQUESTS_PER_IP = 5      # per ratelimit.WINDOW_SECONDS
+LINK_REQUESTS_PER_EMAIL = 3   # stops anyone flooding one inbox with reset mail
+
+
+def _find_by_email(db: Session, email: str) -> User | None:
+    email = email.strip()
+    return (db.query(User).filter(User.email == email).first()
+            or db.query(User).filter(func.lower(User.email) == email.lower()).first())
+
+
+def _throttle_link_requests(request: Request, kind: str, email: str) -> None:
+    ip_key = f"{kind}:{auth_service.client_ip(request)}"
+    email_key = f"{kind}-email:{sha256(email.strip().lower())[:24]}"
+    if not check_rate_limit(ip_key, LINK_REQUESTS_PER_IP) or not check_rate_limit(email_key, LINK_REQUESTS_PER_EMAIL):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests. Try again in a few minutes.")
+    record_failure(ip_key)
+    record_failure(email_key)
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
+def request_password_reset(payload: EmailRequest, request: Request, background: BackgroundTasks,
+                           db: Session = Depends(get_db)):
+    """Email a password-reset link.
+
+    Always gives the same answer, and the email goes out after the response, so
+    this can't be used to find out whether an address has an account.
+    """
+    _throttle_link_requests(request, "pwreset", payload.email)
+    user = _find_by_email(db, payload.email)
+    if user is not None and user.is_active:
+        background.add_task(account_links.send,
+                            account_links.password_reset_email(user, account_links.public_base_url(request)))
+        log_action(db, "password_reset_requested", "user", str(user.id),
+                   f"from {auth_service.client_ip(request)}", None)
+        db.commit()
+    return {"detail": "If an account uses that email, we've sent it a link to reset the password."}
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+def confirm_password_reset(payload: PasswordResetConfirm, background: BackgroundTasks,
+                           db: Session = Depends(get_db)):
+    """Set a new password with an emailed link. Signs the account out everywhere."""
+    user = account_links.user_for_reset(db, payload.token)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "This reset link is invalid, has expired or was already used. Ask for a new one.")
+    problem = validate_password_strength(payload.new_password,
+                                         runtime_settings.get(db, "security.password_min_length"))
+    if problem:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
+    user.hashed_password = hash_password(payload.new_password)  # this alone invalidates the link
+    user.password_changed_at = utcnow()
+    user.failed_login_count = 0
+    user.locked_until = None
+    if user.email_verified_at is None:
+        user.email_verified_at = utcnow()  # opening the emailed link proves they read this inbox
+    auth_service.revoke_user_sessions(db, user.id, "password_reset")
+    log_action(db, "reset_password", "user", str(user.id), "Self-service reset with an emailed link", user.id)
+    notice = account_links.password_changed_email(user)
+    db.commit()
+    background.add_task(account_links.send, notice)
+
+
+@router.post("/verify-email")
+def verify_email(payload: TokenRequest, db: Session = Depends(get_db)):
+    """Confirm the account's email address with the emailed link. Safe to repeat."""
+    user = account_links.user_for_verification(db, payload.token)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "This confirmation link is invalid or has expired. Ask for a new one.")
+    if user.email_verified_at is None:
+        user.email_verified_at = utcnow()
+        log_action(db, "verify_email", "user", str(user.id), None, user.id)
+        db.commit()
+    return {"detail": "Email address confirmed.", "email": user.email}
+
+
+@router.post("/verify-email/resend", status_code=status.HTTP_202_ACCEPTED)
+def resend_email_confirmation(payload: EmailRequest, request: Request, background: BackgroundTasks,
+                              db: Session = Depends(get_db)):
+    """Send a fresh confirmation link. Same answer whether or not the account exists."""
+    _throttle_link_requests(request, "verify", payload.email)
+    user = _find_by_email(db, payload.email)
+    if user is not None and user.is_active and user.email_verified_at is None:
+        background.add_task(account_links.send,
+                            account_links.confirmation_email(user, account_links.public_base_url(request)))
+    return {"detail": "If that account is waiting for confirmation, we've sent a new link."}
 
 
 @router.post(
@@ -173,6 +295,7 @@ def get_me(
     data = UserResponse.model_validate(current_user).model_dump(mode="json")
     data["permissions"] = sorted(permissions_for_role(db, current_user.role.value))
     data["mfa_setup_required"] = auth_service._mfa_setup_needed(db, current_user)
+    data["email_verified"] = current_user.email_verified_at is not None
     return data
 
 

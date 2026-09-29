@@ -32,6 +32,19 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
 
 ## Setup
 
+> **Quick start:** install the dependencies (step 1), copy `.env.example` to `.env` and set
+> `DATABASE_URL` to your own Postgres (step 2), then run
+>
+> ```bash
+> python -m scripts.setup_local --yes
+> ```
+>
+> It checks your Python version, packages, `.env` and database connection, explains any
+> problem in plain words (wrong password, database missing, database built by different
+> code...), then creates the database if needed, applies every migration and loads the demo
+> data. **Run it again every time you pull or merge new code.** Steps 3-5 below are what it
+> does for you.
+
 1. **Create a virtual environment and install dependencies**
 
    ```bash
@@ -65,10 +78,10 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
 3. **Run migrations**
 
    ```bash
-   alembic upgrade head
+   alembic upgrade heads
    ```
 
-   (On Windows with the venv active, use `python -m alembic upgrade head`.)
+   (On Windows with the venv active, use `python -m alembic upgrade heads`.)
 
 4. **Start the API**
 
@@ -246,7 +259,7 @@ Blueprints key).
 > **Free-tier note:** Render's free plan supports neither `preDeployCommand` nor
 > a `releaseCommand`. Instead, the web service enables
 > `RUN_MIGRATIONS_ON_STARTUP=true` and applies
-> `alembic upgrade head` + `python -m scripts.seed` **at app startup**
+> `alembic upgrade heads` + `python -m scripts.seed` **at app startup**
 > (`app/core/bootstrap.py`), before it starts serving traffic. Both steps are
 > idempotent, so redeploys and wake-ups are safe no-ops.
 

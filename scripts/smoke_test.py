@@ -4,7 +4,7 @@ Use it to prove a real PostgreSQL (or Neon) database works with the platform
 modules - the pytest suite is SQLite-only because it drops and recreates tables,
 which you must never do to a shared database.
 
-    alembic upgrade head
+    alembic upgrade heads
     python -m scripts.smoke_test
 
 It creates clearly named ``smoke-*`` records (and one deactivated admin), never
@@ -13,7 +13,7 @@ deletes or modifies anything else, and exits non-zero on the first failure.
 
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,9 +46,11 @@ def main() -> int:
 
     db = SessionLocal()
     admin = User(email=f"smoke-admin-{tag}@example.com", hashed_password=hash_password(PASSWORD),
-                 full_name="Smoke Admin", role=UserRole.ADMIN)
+                 full_name="Smoke Admin", role=UserRole.ADMIN,
+                 email_verified_at=datetime.now(timezone.utc))
     citizen = User(email=f"smoke-citizen-{tag}@example.com", hashed_password=hash_password(PASSWORD),
-                   full_name="Smoke Citizen", role=UserRole.CITIZEN)
+                   full_name="Smoke Citizen", role=UserRole.CITIZEN,
+                   email_verified_at=datetime.now(timezone.utc))
     db.add_all([admin, citizen])
     db.commit()
     vehicle = Vehicle(registration_number=f"SMK {tag[:4].upper()}", owner_name="Smoke Citizen", owner_id_number="0",

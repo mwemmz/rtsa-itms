@@ -20,6 +20,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import Integer, cast, func
 from sqlalchemy.orm import Session
 
+from app.core import shared
 from app.core.config import settings
 from app.core.crypto import constant_time_equals, sha256
 from app.core.database import get_db
@@ -61,6 +62,16 @@ def validate_scopes(agency_type: str, scopes: list[str]) -> list[str]:
 
 
 def _throttle(agency: AgencyClient) -> None:
+    if shared.enabled():  # every instance counts against the same per-agency window
+        try:
+            retry_after = shared.window_hit(f"rtsa:agency-rate:{agency.id}", agency.rate_limit_per_minute, 60)
+        except Exception as exc:  # noqa: BLE001
+            shared.degraded("agency rate limiting", exc)
+        else:
+            if retry_after is not None:
+                raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Agency rate limit exceeded",
+                                    headers={"Retry-After": str(int(retry_after) + 1)})
+            return
     now = time.monotonic()
     with _lock:
         dq = _windows[str(agency.id)]

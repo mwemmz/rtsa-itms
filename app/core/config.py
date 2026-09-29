@@ -1,9 +1,22 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # Shared team Postgres. Locally: postgresql://<user>:<password>@localhost:3330/rtsa_itms
     DATABASE_URL: str = "postgresql://localhost:3330/rtsa_itms"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _use_installed_postgres_driver(cls, url: str) -> str:
+        # SQLAlchemy 2.1 made psycopg 3 the default driver for postgresql:// URLs, but
+        # requirements.txt installs psycopg2. Without naming the driver, a fresh install
+        # (every Render deploy) cannot connect at all. Also accepts the postgres://
+        # scheme some hosts hand out, which SQLAlchemy rejects outright.
+        for scheme in ("postgresql://", "postgres://"):
+            if url.startswith(scheme):
+                return "postgresql+psycopg2://" + url[len(scheme):]
+        return url
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ENVIRONMENT: str = "development"
@@ -36,6 +49,10 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "no-reply@rtsa.gov.zm"
+    # Public address of the web app, used in emailed links (password reset, email
+    # confirmation), e.g. https://rtsa-itms-api.onrender.com. Empty = worked out
+    # from the incoming request.
+    PUBLIC_BASE_URL: str = ""
     SMS_WEBHOOK_URL: str = ""  # HTTP SMS gateway; empty = log only (sandbox)
     SMS_WEBHOOK_TOKEN: str = ""
 
@@ -50,6 +67,9 @@ class Settings(BaseSettings):
     OSRM_TIMEOUT: float = 6.0
 
     # --- Performance / scalability -----------------------------------
+    # Set when running more than one app instance, so rate limits, single-use
+    # tickets, live updates and metrics are shared (see app/core/shared.py).
+    REDIS_URL: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     SLOW_REQUEST_MS: int = 500
@@ -58,6 +78,18 @@ class Settings(BaseSettings):
     # --- Backups / DR -------------------------------------------------
     BACKUP_DIR: str = "backups"
     BACKUP_RETENTION: int = 14
+    # Off-site copies in S3-compatible storage (Amazon S3, Cloudflare R2, Backblaze
+    # B2, MinIO). Empty BACKUP_S3_BUCKET = off-site copies disabled.
+    BACKUP_S3_ENDPOINT: str = ""  # e.g. https://s3.eu-central-1.amazonaws.com, https://<acct>.r2.cloudflarestorage.com
+    BACKUP_S3_REGION: str = "us-east-1"  # R2 uses "auto"
+    BACKUP_S3_BUCKET: str = ""
+    BACKUP_S3_ACCESS_KEY_ID: str = ""
+    BACKUP_S3_SECRET_ACCESS_KEY: str = ""
+    BACKUP_S3_PREFIX: str = "rtsa-itms/"
+    BACKUP_S3_RETENTION: int = 30
+    # Fernet key used to encrypt backups before they leave the server. Keep a copy
+    # somewhere other than this deployment - without it the backups can't be read.
+    BACKUP_ENCRYPTION_KEY: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
