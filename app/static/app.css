@@ -168,15 +168,24 @@ a:hover { color: var(--gold-strong); }
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background:
+  background-color: #171d23;
+  background-image:
+    /* Scrim over the photo, so the form text keeps its contrast on a busy image. */
+    linear-gradient(180deg, rgba(23, 29, 35, 0.88) 0%, rgba(23, 29, 35, 0.72) 45%, rgba(23, 29, 35, 0.92) 100%),
+    url("/static/login-bg.png"),
+    /* Fallback gradients, used if the photo fails to load. */
     radial-gradient(1000px 500px at 85% -10%, rgba(224, 180, 83, 0.22), transparent 60%),
     radial-gradient(800px 480px at -10% 110%, rgba(54, 69, 79, 0.7), transparent 55%),
     linear-gradient(160deg, #171d23 0%, var(--slate) 70%, #1d262e 100%);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 .login-card {
   width: 100%;
   max-width: 412px;
   background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-md);
   padding: 32px 30px 26px;
