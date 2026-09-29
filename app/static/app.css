@@ -206,6 +206,58 @@ a:hover { color: var(--gold-strong); }
 .login-card .gold-bar { height: 2px; width: 40px; background: var(--gold); margin: 14px 0 16px; border-radius: 2px; }
 .login-card .login-about { margin: 0 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
 .login-card .login-about b { color: var(--ink); font-weight: 600; }
+
+/* Split sign-in: photo and the explanation on the left, the form on the right.
+   The photo stays on .login-screen so the full-bleed background is shared with
+   the MFA gate, which is still a single centred card. */
+.login-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) min(46%, 520px);
+  align-items: stretch;
+  padding: 0;
+}
+.login-art {
+  display: flex;
+  align-items: center;
+  padding: clamp(40px, 6vw, 88px);
+  min-width: 0;
+}
+.login-art-copy { max-width: 520px; }
+/* Text now sits on the photo rather than on the card, so it has to invert. */
+.login-art .wordmark h1 { color: #fff; }
+.login-art .brand-sub { color: rgba(255, 255, 255, 0.74); }
+.login-art .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
+.login-art .login-about { color: rgba(255, 255, 255, 0.84); font-size: 14.5px; line-height: 1.62; }
+.login-art .login-about b { color: #fff; }
+
+.login-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(32px, 4vw, 56px) clamp(24px, 3vw, 48px);
+  /* Opaque so the form never has to fight the photo for contrast. */
+  background: #1b2129;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
+}
+.login-split .login-card {
+  max-width: 400px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 900px) {
+  .login-split { grid-template-columns: 1fr; }
+  .login-art { padding: 40px 24px 28px; }
+  .login-art .login-about { font-size: 13.5px; margin-bottom: 4px; }
+  .login-panel {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 28px 20px 32px;
+  }
+}
 .login-msg {
   font-size: 13px;
   min-height: 18px;
@@ -829,6 +881,7 @@ html { -webkit-text-size-adjust: 100%; }
 
 @media (max-width: 480px) {
   .login-screen { padding: 16px; }
+  .login-split { padding: 0; }
   .login-card { padding: 26px 20px 22px; }
   .wordmark h1 { font-size: 18px; }
   .kpi .kpi-value { font-size: 21px; }
