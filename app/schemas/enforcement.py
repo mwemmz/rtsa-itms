@@ -20,6 +20,7 @@ class ViolationResponse(BaseModel):
     vehicle_id: uuid.UUID | None
     driver_id: uuid.UUID | None
     violation_type: ViolationType
+    category: str = "shared"
     location: str
     timestamp: datetime
     description: str | None
@@ -35,6 +36,8 @@ class ChallanResponse(BaseModel):
     id: uuid.UUID
     reference: str
     violation_id: uuid.UUID
+    violation_type: ViolationType | None = None
+    category: str = "shared"
     vehicle_id: uuid.UUID | None
     driver_id: uuid.UUID | None
     penalty_amount: int

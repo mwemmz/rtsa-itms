@@ -70,6 +70,7 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
                 "vehicle_id": v.vehicle_id,
                 "driver_id": v.driver_id,
                 "violation_type": v.violation_type,
+                "category": v.violation_type.category,
                 "location": v.location,
                 "timestamp": v.timestamp,
                 "description": v.description,
@@ -96,16 +97,25 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
         if driver_ids
         else {}
     )
+    violation_ids = list({c.violation_id for c in challans if c.violation_id})
+    violations = (
+        {str(x.id): x for x in db.query(Violation).filter(Violation.id.in_(violation_ids)).all()}
+        if violation_ids
+        else {}
+    )
 
     out = []
     for c in challans:
         veh = vehicles.get(str(c.vehicle_id)) if c.vehicle_id else None
         drv = drivers.get(str(c.driver_id)) if c.driver_id else None
+        vio = violations.get(str(c.violation_id)) if c.violation_id else None
         out.append(
             {
                 "id": c.id,
                 "reference": c.reference,
                 "violation_id": c.violation_id,
+                "violation_type": vio.violation_type if vio else None,
+                "category": vio.violation_type.category if vio else "shared",
                 "vehicle_id": c.vehicle_id,
                 "driver_id": c.driver_id,
                 "penalty_amount": c.penalty_amount,
@@ -225,7 +235,8 @@ def get_challan(
     challan = db.query(Challan).filter(Challan.id == challan_id).first()
     if not challan:
         raise HTTPException(status_code=404, detail="Challan not found")
-    return challan
+    violation = db.query(Violation).filter(Violation.id == challan.violation_id).first()
+    return _enrich_challans(db, [challan])[0] if violation else challan
 
 
 @router.post("/challans/{challan_id}/pay", response_model=ChallanPaymentResult)

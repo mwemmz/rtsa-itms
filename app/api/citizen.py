@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.api.enforcement import _enrich_challans
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.driver import Driver
@@ -80,7 +81,7 @@ def citizen_dashboard(
         fines=CitizenFinesSummary(
             total_unpaid=len(unpaid),
             total_amount=sum(c.penalty_amount for c in unpaid),
-            challans=[ChallanResponse.model_validate(c).model_dump(mode="json") for c in challans],
+            challans=[ChallanResponse.model_validate(c).model_dump(mode="json") for c in _enrich_challans(db, challans)],
         ),
     )
 
@@ -166,7 +167,7 @@ def vehicle_detail(
         "psv_permit": None if permit is None else {
             "permit_number": permit.permit_number, "route": permit.route,
             "valid_until": permit.expiry_date.isoformat(), "status": permit.status.value},
-        "fines": [ChallanResponse.model_validate(c).model_dump(mode="json") for c in fines],
+        "fines": [ChallanResponse.model_validate(c).model_dump(mode="json") for c in _enrich_challans(db, fines)],
     }
 
 
@@ -181,7 +182,8 @@ def my_fines(
     query = _fines_query(db, current_user)
     if status:
         query = query.filter(Challan.status == status)
-    return query.order_by(Challan.created_at.desc()).offset(skip).limit(limit).all()
+    challans = query.order_by(Challan.created_at.desc()).offset(skip).limit(limit).all()
+    return _enrich_challans(db, challans)
 
 
 @router.get("/fines/{challan_id}")
@@ -196,9 +198,10 @@ def fine_detail(
     violation = db.get(Violation, challan.violation_id)
     payments = db.query(Payment).filter(Payment.related_entity_id == challan.id).order_by(Payment.created_at).all()
     return {
-        "challan": ChallanResponse.model_validate(challan).model_dump(mode="json"),
+        "challan": ChallanResponse.model_validate(_enrich_challans(db, [challan])[0]).model_dump(mode="json"),
         "violation": None if violation is None else {
-            "type": violation.violation_type.value, "location": violation.location,
+            "type": violation.violation_type.value, "category": violation.violation_type.category,
+            "location": violation.location,
             "time": violation.timestamp.isoformat(), "description": violation.description},
         "overdue": challan.status != ChallanStatus.PAID and challan.due_date < datetime.utcnow(),
         "payments": [PaymentResponse.model_validate(p).model_dump(mode="json") for p in payments],

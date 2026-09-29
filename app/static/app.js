@@ -760,6 +760,18 @@ function statusPill(status) {
   return '<span class="pill ' + cls + '">' + esc(status) + "</span>";
 }
 
+var CATEGORY_LABELS = { vehicle: "Vehicle offence", driver: "Driver offence", shared: "Road offence" };
+var CATEGORY_CLASSES = { vehicle: "blue", driver: "amber", shared: "gray" };
+
+function categoryPill(category) {
+  var key = CATEGORY_LABELS[category] ? category : "shared";
+  return '<span class="pill ' + CATEGORY_CLASSES[key] + '">' + esc(CATEGORY_LABELS[key]) + "</span>";
+}
+
+function offenceTypeLabel(violationType) {
+  return String(violationType == null ? "" : violationType).replace(/_/g, " ");
+}
+
 var VIEWS = {};
 
 VIEWS.dashboard = async function () {
@@ -854,20 +866,20 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<table><tr><th>Type</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<table><tr><th>Type</th><th>Category</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
-        return "<tr><td>" + esc(v.violation_type) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No violations recorded.</div>';
 }
 
 function challanRows(cs) {
   return cs.length
-    ? '<table><tr><th>Ref</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+    ? '<table><tr><th>Ref</th><th>Category</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
         var offender = c.driver_name || c.owner_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
+        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table>"
     : '<div class="empty">No challans found.</div>';
 }
@@ -1044,12 +1056,12 @@ async function loadChallans() {
   try {
     var items = await api("/api/enforcement/challans?limit=100" + (status ? "&status=" + status : ""));
     if (!items.length) { table.innerHTML = '<div class="empty">No challans found.</div>'; return; }
-    table.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    table.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (c) {
         var pay = c.status !== "paid"
           ? '<button class="btn gold sm pay" data-id="' + esc(c.id) + '" data-ref="' + esc(c.reference) + '">Mark paid</button>'
           : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + money(c.penalty_amount) + '</td><td class="small">' + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
+        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + money(c.penalty_amount) + '</td><td class="small">' + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
     $$("#challan-table .pay").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -1248,12 +1260,12 @@ VIEWS.fines = async function () {
     var items = await api("/api/portal/fines?include_paid=true");
     var list = $("#fine-list");
     if (!items.length) { list.innerHTML = '<div class="empty">You have no fines.</div>'; return; }
-    list.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Type</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Type</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (f) {
         var pay = f.status !== "paid"
           ? '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '">Pay now</button>'
           : "";
-        return "<tr><td class='mono'>" + esc(f.reference) + "</td><td>" + esc(f.violation_type) + "</td><td>" + money(f.penalty_amount) + '</td><td class="small">' + dt(f.due_date) + "</td><td>" + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
+        return "<tr><td class='mono'>" + esc(f.reference) + "</td><td>" + esc(offenceTypeLabel(f.violation_type)) + "</td><td>" + categoryPill(f.category) + "</td><td>" + money(f.penalty_amount) + '</td><td class="small">' + dt(f.due_date) + "</td><td>" + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
     $$("#fine-list .finpay").forEach(function (btn) {
       btn.addEventListener("click", function () {
