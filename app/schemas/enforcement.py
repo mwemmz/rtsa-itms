@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.enforcement import ChallanStatus, ViolationType
 
@@ -10,9 +10,11 @@ class ViolationCreate(BaseModel):
     vehicle_id: uuid.UUID | None = None
     driver_id: uuid.UUID | None = None
     violation_type: ViolationType
-    location: str
+    # A challan may be contested, so the location has to be on the record. A bare
+    # `str` in pydantic v2 accepts "", which let a challan be raised with no place.
+    location: str = Field(min_length=1, max_length=255)
     timestamp: datetime | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=1000)
 
 
 class ViolationResponse(BaseModel):
