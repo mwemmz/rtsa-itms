@@ -6,7 +6,7 @@ reckless driving) and vehicle condition and documentation offences
 modification), and records who carries the penalty on each violation.
 
 Revision ID: d2e4f6a8b901
-Revises: c1b6d7e8f901
+Revises: f7c2e9a41d58
 """
 
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "d2e4f6a8b901"
-down_revision: Union[str, None] = "c1b6d7e8f901"
+down_revision: Union[str, None] = "f7c2e9a41d58"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -36,9 +36,18 @@ def upgrade() -> None:
         # ADD VALUE cannot run inside a transaction block on older servers, and
         # the value is only visible to other sessions after commit. Nothing else
         # in this revision depends on the new labels, so autocommit is safe here.
-        with bind.execution_options(isolation_level="AUTOCOMMIT"):
+        #
+        # It has to be a *separate* connection: by this point the migration
+        # connection has already autobegun a transaction, and SQLAlchemy 2.x
+        # refuses to change isolation_level on a connection with an open
+        # transaction (InvalidRequestError). Passing `bind` here crashed the
+        # Render deploy at startup. SQLite never reaches this branch, so the
+        # local test suite cannot catch it.
+        with bind.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             for label in NEW_OFFENCE_TYPES:
-                op.execute(f"ALTER TYPE violationtype ADD VALUE IF NOT EXISTS '{label}'")
+                conn.execute(
+                    sa.text(f"ALTER TYPE violationtype ADD VALUE IF NOT EXISTS '{label}'")
+                )
     else:
         # SQLite and other engines store enums as VARCHAR, so the model change
         # needs no DDL.
