@@ -23,6 +23,23 @@ class ViolationType(str, enum.Enum):
     BLACKLISTED_VEHICLE = "blacklisted_vehicle"
     OTHER = "other"
 
+    @property
+    def category(self) -> str:
+        if self in [
+            ViolationType.NO_INSURANCE,
+            ViolationType.EXPIRED_FITNESS,
+            ViolationType.NO_PSV_PERMIT,
+            ViolationType.BLACKLISTED_VEHICLE,
+        ]:
+            return "vehicle"
+        elif self in [
+            ViolationType.DRIVING_WITHOUT_LICENCE,
+            ViolationType.REAR_SEAT_BELT,
+            ViolationType.USING_PHONE,
+        ]:
+            return "driver"
+        return "shared"
+
 
 class ChallanStatus(str, enum.Enum):
     UNPAID = "unpaid"
@@ -57,6 +74,10 @@ class Violation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    @property
+    def category(self) -> str:
+        return self.violation_type.category
 
 
 class Challan(Base):
