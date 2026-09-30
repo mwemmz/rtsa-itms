@@ -163,13 +163,9 @@ a:hover { color: var(--gold-strong); }
 
 /* ---------- login ---------- */
 .login-screen {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background-color: #171d23;
-  background-image:
+  /* Declared here and reused by .login-brand so the split screen and the MFA
+     gate render the same photo stack from a single definition. */
+  --login-bg-stack:
     /* Scrim over the photo, so the form text keeps its contrast on a busy image. */
     linear-gradient(180deg, rgba(23, 29, 35, 0.88) 0%, rgba(23, 29, 35, 0.72) 45%, rgba(23, 29, 35, 0.92) 100%),
     url("/static/login-bg.png"),
@@ -177,6 +173,13 @@ a:hover { color: var(--gold-strong); }
     radial-gradient(1000px 500px at 85% -10%, rgba(224, 180, 83, 0.22), transparent 60%),
     radial-gradient(800px 480px at -10% 110%, rgba(54, 69, 79, 0.7), transparent 55%),
     linear-gradient(160deg, #171d23 0%, var(--slate) 70%, #1d262e 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background-color: #171d23;
+  background-image: var(--login-bg-stack);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -202,60 +205,92 @@ a:hover { color: var(--gold-strong); }
 }
 .wordmark h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
 .wordmark h1 span { color: var(--gold-strong); }
-.login-card .brand-sub { margin: 0 0 4px 12px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
-.login-card .gold-bar { height: 2px; width: 40px; background: var(--gold); margin: 14px 0 16px; border-radius: 2px; }
-.login-card .login-about { margin: 0 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
-.login-card .login-about b { color: var(--ink); font-weight: 600; }
+/* brand-sub and login-about live in the brand panel; gold-bar is shared with
+   the MFA card, so these are not scoped to one panel. */
+.brand-sub { margin: 0 0 4px 12px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
+.gold-bar { height: 2px; width: 40px; background: var(--gold); margin: 14px 0 16px; border-radius: 2px; }
+.login-about { margin: 0 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
+.login-about b { color: var(--ink); font-weight: 600; }
 
-/* Split sign-in: photo and the explanation on the left, the form on the right.
-   The photo stays on .login-screen so the full-bleed background is shared with
-   the MFA gate, which is still a single centred card. */
+/* Split sign-in: brand panel on the left, form card on the right.
+   The photo-and-gradient stack is hoisted into a custom property so the brand
+   panel can own it while .login-screen keeps the same stack for the MFA gate,
+   which is still a single centred card. Defining it twice would let the two
+   drift apart. */
 .login-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) min(46%, 520px);
+  grid-template-columns: 55fr 45fr;
   align-items: stretch;
   padding: 0;
 }
-.login-art {
+.login-brand {
   display: flex;
   align-items: center;
-  padding: clamp(40px, 6vw, 88px);
   min-width: 0;
+  padding: clamp(36px, 5vw, 72px);
+  background-color: #171d23;
+  background-image: var(--login-bg-stack);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
-.login-art-copy { max-width: 520px; }
-/* Text now sits on the photo rather than on the card, so it has to invert. */
-.login-art .wordmark h1 { color: #fff; }
-.login-art .brand-sub { color: rgba(255, 255, 255, 0.74); }
-.login-art .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
-.login-art .login-about { color: rgba(255, 255, 255, 0.84); font-size: 14.5px; line-height: 1.62; }
-.login-art .login-about b { color: #fff; }
+.login-brand-inner { max-width: 520px; }
+/* This copy sits on the dark gradient, so it uses the nav/white tones. */
+.login-brand .wordmark h1 { color: #fff; }
+.login-brand .brand-sub { color: var(--nav-ink); }
+.login-brand .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
+.login-brand .login-about { color: var(--nav-ink); font-size: 14.5px; line-height: 1.62; margin-bottom: 0; }
+.login-brand .login-about b { color: #fff; font-weight: 600; }
 
-.login-panel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(32px, 4vw, 56px) clamp(24px, 3vw, 48px);
-  /* Opaque so the form never has to fight the photo for contrast. */
-  background: #1b2129;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-  overflow-y: auto;
+/* Logo slot. The real logo file does not exist yet, so the lettermark badge
+   stays underneath and the image is laid over it: when the file 404s the
+   empty-alt image paints nothing and the badge shows through. An onerror
+   handler would be the usual trick, but the CSP on / is
+   script-src 'self' with no 'unsafe-inline', so it would be blocked. */
+.wordmark .mark { position: relative; }
+.wordmark .mark .mark-logo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  object-fit: contain;
 }
+
+/* The card is the right-hand column, so it fills its track rather than
+   floating at a fixed width. */
 .login-split .login-card {
-  max-width: 400px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--panel);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-md);
+  padding: clamp(28px, 3vw, 48px);
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* A 45% column is far wider than a login form should stretch to. */
+.login-split .login-card > form,
+.login-split .login-card > .demo-hint,
+.login-split .login-card > p {
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 760px) {
   .login-split { grid-template-columns: 1fr; }
-  .login-art { padding: 40px 24px 28px; }
-  .login-art .login-about { font-size: 13.5px; margin-bottom: 4px; }
-  .login-panel {
-    border-left: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 28px 20px 32px;
+  .login-brand { padding: 30px 20px 24px; }
+  /* Collapse the description so the form stays above the fold on a phone. */
+  .login-brand .login-about { display: none; }
+  .login-split .login-card {
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 26px 20px 32px;
   }
 }
 .login-msg {
