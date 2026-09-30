@@ -212,14 +212,17 @@ a:hover { color: var(--gold-strong); }
 .login-about { margin: 0 0 20px; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
 .login-about b { color: var(--ink); font-weight: 600; }
 
-/* Split sign-in: brand panel on the left, form card on the right.
-   The photo-and-gradient stack is hoisted into a custom property so the brand
-   panel can own it while .login-screen keeps the same stack for the MFA gate,
-   which is still a single centred card. Defining it twice would let the two
-   drift apart. */
+.welcome-text {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+/* Split sign-in: brand panel on the left, form card on the right. */
 .login-split {
   display: grid;
-  grid-template-columns: 55fr 45fr;
+  grid-template-columns: 1fr 1fr;
   align-items: stretch;
   padding: 0;
 }
@@ -235,18 +238,12 @@ a:hover { color: var(--gold-strong); }
   background-repeat: no-repeat;
 }
 .login-brand-inner { max-width: 520px; }
-/* This copy sits on the dark gradient, so it uses the nav/white tones. */
 .login-brand .wordmark h1 { color: #fff; }
 .login-brand .brand-sub { color: var(--nav-ink); }
 .login-brand .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
 .login-brand .login-about { color: var(--nav-ink); font-size: 14.5px; line-height: 1.62; margin-bottom: 0; }
 .login-brand .login-about b { color: #fff; font-weight: 600; }
 
-/* Logo slot. The real logo file does not exist yet, so the lettermark badge
-   stays underneath and the image is laid over it: when the file 404s the
-   empty-alt image paints nothing and the badge shows through. An onerror
-   handler would be the usual trick, but the CSP on / is
-   script-src 'self' with no 'unsafe-inline', so it would be blocked. */
 .wordmark .mark { position: relative; }
 .wordmark .mark .mark-logo {
   position: absolute;
@@ -257,8 +254,7 @@ a:hover { color: var(--gold-strong); }
   object-fit: contain;
 }
 
-/* The card is the right-hand column, so it fills its track rather than
-   floating at a fixed width. */
+/* The right column is the form container, flush and clean. */
 .login-split .login-card {
   width: 100%;
   max-width: none;
@@ -266,20 +262,24 @@ a:hover { color: var(--gold-strong); }
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
   background: var(--panel);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-md);
-  padding: clamp(28px, 3vw, 48px);
-  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: clamp(32px, 4vw, 56px) 24px;
 }
-/* A 45% column is far wider than a login form should stretch to. */
-.login-split .login-card > form,
-.login-split .login-card > .demo-hint,
-.login-split .login-card > p {
+.login-split .login-card-inner {
   width: 100%;
-  max-width: 420px;
-  margin-inline: auto;
+  max-width: 400px;
 }
+.login-title {
+  font-size: 32px;
+  font-weight: 700;
+  margin-bottom: 32px;
+  color: var(--ink);
+}
+
 
 @media (max-width: 760px) {
   .login-split { grid-template-columns: 1fr; }
@@ -947,4 +947,15 @@ html { -webkit-text-size-adjust: 100%; }
 .step.failed { color: var(--err); font-weight: 600; }
 .step.failed .dot { background: var(--err); border-color: var(--err); }
 pre.mono { background: var(--gold-soft); color: var(--gold-ink); padding: 10px 12px; border-radius: 9px; overflow-x: auto; }
+
+@media (max-width: 760px) {
+  .login-split { grid-template-columns: 1fr; }
+  .login-brand { padding: 36px 20px 28px; }
+  /* Collapse the description so the form stays above the fold on a phone. */
+  .login-brand .login-about { display: none; }
+  .login-split .login-card {
+    height: auto;
+    padding: 32px 20px 40px;
+  }
+}
 h4 { margin: 0 0 8px; font-size: 0.95rem; }
