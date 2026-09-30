@@ -200,40 +200,65 @@ a:hover { color: var(--gold-strong); }
 .welcome-text {
   color: rgba(255, 255, 255, 0.6);
   font-size: 14px;
+  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  margin-bottom: 16px;
+  /* Explicit, because this file has no heading/paragraph margin reset and the
+     user-agent default would otherwise add space above the first element. */
+  margin: 0 0 18px;
 }
-/* Split sign-in: brand panel on the left, form card on the right. */
+/* Split sign-in: the whole thing floats as one rounded card on a neutral
+   page background, brand panel on the left, form card on the right. The
+   corner radius lives on the outer grid and clips both children, so it
+   never has to be kept in sync across two separate panels. (Selector must
+   match the element's actual classes, login-screen + login-split.) */
+.login-screen.login-split { background: var(--slate-soft); }
 .login-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  /* Without an explicit width this grid shrink-wraps as a flex child and the
-     columns collapse, so the split must fill the viewport itself. */
-  width: 100%;
-  min-height: 100vh;
+  width: min(940px, calc(100% - 48px));
+  height: min(620px, calc(100vh - 64px));
+  min-height: 0;
   align-items: stretch;
   padding: 0;
+  margin: 32px auto;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -20px rgba(23, 29, 35, 0.45), 0 4px 18px rgba(23, 29, 35, 0.12);
 }
 .login-brand {
-  /* The photo stack is scoped to the brand column only. It is defined here,
-     not on .login-screen, so the image can never bleed behind the form. */
-  --login-bg-stack:
-    linear-gradient(180deg, rgba(23, 29, 35, 0.82) 0%, rgba(23, 29, 35, 0.62) 45%, rgba(23, 29, 35, 0.9) 100%),
-    url("/static/login-bg.png"),
-    radial-gradient(800px 480px at -10% 110%, rgba(54, 69, 79, 0.7), transparent 55%),
-    linear-gradient(160deg, #171d23 0%, var(--slate) 100%);
+  /* Previously this panel stretched login-bg.png (a square, white-backed
+     crest, not a wide photo) as a `cover` background — at this aspect ratio
+     that blows the crest up several times over and crops it on every edge.
+     The crest now sits as a small, fixed-size watermark on ::before instead,
+     so it is never scaled past its own detail or cropped illegibly. */
+  position: relative;
+  width: auto;
+  flex: none;
+  height: auto;
+  min-height: 0;
   display: flex;
   align-items: center;
   min-width: 0;
   padding: clamp(36px, 5vw, 72px);
-  background-color: #171d23;
-  background-image: var(--login-bg-stack);
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  background: radial-gradient(800px 480px at -10% 110%, rgba(54, 69, 79, 0.55), transparent 55%),
+    linear-gradient(160deg, #171d23 0%, var(--slate) 100%);
+  overflow: hidden;
 }
-.login-brand-inner { max-width: 520px; }
+.login-brand::before {
+  content: "";
+  position: absolute;
+  right: -70px;
+  bottom: -70px;
+  width: 320px;
+  height: 320px;
+  background-image: url("/static/login-bg.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  opacity: 0.14;
+  pointer-events: none;
+}
+.login-brand-inner { position: relative; z-index: 1; max-width: 520px; }
 .login-brand .wordmark h1 { color: #fff; }
 .login-brand .brand-sub { color: var(--nav-ink); }
 .login-brand .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
@@ -245,53 +270,142 @@ a:hover { color: var(--gold-strong); }
 /* The right column is the form container, flush and clean. */
 .login-split .login-card {
   /* The sign-in form is pinned to the light palette even under a dark system
-     theme, so the photo side and the form side keep one consistent look and
-     the form never turns into dark-on-dark. */
+     theme, so the photo side and the form side keep one consistent look. Every
+     token the panel actually consumes has to be restated here: pinning only the
+     text colours left the inputs dark-on-dark and the gold button unreadable. */
+  --gold: #DDAF4D;
+  --gold-strong: #c69a34;
+  --gold-soft: #f4e9cf;
+  --gold-ink: #3a2d10;
+  --slate: #36454F;
+  --slate-2: #43576a;
+  --bg: #f3f4f6;
+  --panel: #ffffff;
+  --panel-2: #fafbfc;
+  --line: #e3e7ec;
+  --line-strong: #cbd3db;
   --ink: #21272d;
   --ink-2: #5a6570;
   --ink-3: #8a94a0;
-  --line: #e3e7ec;
-  --line-strong: #cbd3db;
-  --panel-2: #fafbfc;
+  --ok: #17734f;
+  --ok-bg: #e0f2e9;
+  --err: #b3372b;
+  --err-bg: #fbe7e4;
+  --warn: #8a6208;
+  --warn-bg: #fdf3d7;
+  --info: #28608f;
+  --info-bg: #e5eefa;
+  --ring: 0 0 0 3px rgba(221, 175, 77, 0.35);
   width: 100%;
   max-width: none;
+  /* Fills its grid track (the fixed-height .login-split card), not the
+     viewport — the old min-height: 100vh here fought the floating card's
+     own height and pushed the panel taller than the card around it. */
   height: 100%;
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* "safe center": centre the form when it's shorter than the panel, same as
+     before, but fall back to flex-start once content overflows. Plain
+     `center` here would centre-clip an overflowing form — its top (and the
+     bottom) end up positioned outside the scrollable range entirely, so
+     overflow-y: auto below could never actually reach them. */
+  justify-content: safe center;
   align-items: center;
   background: #ffffff;
   border: none;
   border-radius: 0;
   box-shadow: none;
   padding: clamp(32px, 4vw, 56px) 24px;
+  /* The card now has a fixed height (it fills a fixed-height floating card
+     instead of the whole viewport), so longer forms — signup has six fields
+     plus a lead paragraph — no longer fit. Scroll the panel itself rather
+     than clip them. */
+  overflow-y: auto;
+  /* The card is a full-height column here, so animating the card itself would
+     fade and slide a screen-sized block. The content wrapper carries the
+     entrance instead; #mfa-gate keeps the animation on the card, where it is
+     a small centred box. */
+  animation: none;
 }
 .login-split .login-card-inner {
   width: 100%;
   max-width: 400px;
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .login-title {
   font-size: 32px;
   font-weight: 700;
-  margin-bottom: 32px;
+  line-height: 1.2;
+  /* Reset both edges: without the shorthand the h2 default margin pushes the
+     heading down and it stops reading as optically centred. */
+  margin: 0 0 32px;
   color: var(--ink);
 }
-.login-split .login-card .small.muted { color: var(--ink-2); }
-.login-split .login-card .auth-switch a,
-.login-split .login-card .small.muted a { color: var(--gold-strong); }
+/* Sign up / forgot / reset have their own headings, so without this the panel
+   heading would jump from 32px to 17px every time the view changed. The auth
+   titles also carry a lead paragraph, so they sit closer to the form. */
+.login-split .login-card .auth-title {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+/* The placeholders show the expected email/password shape, so they carry real
+   information here rather than decoration: --ink-3 alone is only 3.08:1. */
+.login-split .login-card .field input::placeholder { color: var(--ink-2); }
 
+/* Underline fields instead of boxed ones, to match the floating-card look:
+   quieter than a bordered box against the white panel. */
+.login-split .login-card .field input {
+  border: none;
+  border-bottom: 1.5px solid var(--line-strong);
+  border-radius: 0;
+  padding: 8px 2px;
+  background: transparent;
+}
+.login-split .login-card .field input:focus {
+  box-shadow: none;
+  border-bottom-color: var(--gold);
+}
+.login-split .login-card .field input[aria-invalid="true"] { border-bottom-color: var(--err); }
+
+/* "Forgot password?" sits on the label's line, not stacked under the input —
+   :has() scopes this to only the field that actually has the link, so every
+   other field (email, MFA, captcha, signup/reset forms) is untouched. */
+.login-split .login-card .field:has(> .field-link) { position: relative; }
+.login-split .login-card .field:has(> .field-link) label { display: inline; }
+.login-split .login-card .field-link { position: absolute; top: 0; right: 0; margin: 0; }
+
+/* Big pill button, matching the floating-card style. */
+.login-split .login-card .btn.gold.block {
+  border-radius: 999px;
+  padding: 13px 16px;
+  font-size: 14.5px;
+  margin-top: 4px;
+}
 
 @media (max-width: 760px) {
-  .login-split { grid-template-columns: 1fr; }
+  /* Below the breakpoint the floating card collapses back to a normal,
+     edge-to-edge mobile login screen instead of a small stacked island. */
+  .login-screen.login-split { background: var(--panel, #fff); }
+  .login-split {
+    grid-template-columns: 1fr;
+    width: 100%;
+    height: auto;
+    min-height: 100vh;
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
   .login-brand { padding: 30px 20px 24px; }
   /* Collapse the description so the form stays above the fold on a phone. */
   .login-brand .login-about { display: none; }
+  /* Smaller watermark on a short mobile brand panel so it doesn't overpower
+     the wordmark next to it. */
+  .login-brand::before { width: 180px; height: 180px; right: -40px; bottom: -40px; }
   .login-split .login-card {
     height: auto;
-    /* Both columns stop being full-height once they stack, otherwise each one
-       claims a whole viewport and the page scrolls twice. */
-    min-height: 0;
     border-radius: 0;
     box-shadow: none;
     padding: 26px 20px 32px;
@@ -455,7 +569,10 @@ td select:focus {
 /* ---------- app shell ---------- */
 #shell { display: flex; min-height: 100vh; }
 
-aside {
+/* Scoped to #shell on purpose: a bare `aside` selector also matches the login
+   brand panel, which was inheriting the sidebar's 232px width and sticky
+   positioning and collapsing the left column of the split. */
+#shell aside {
   width: 232px;
   flex: 0 0 232px;
   background: var(--nav-bg);
@@ -856,7 +973,7 @@ html { -webkit-text-size-adjust: 100%; }
   .field input, .field select, .field textarea, .toolbar input, .toolbar select { min-height: 44px; }
 
   /* horizontal top bar: brand + scrollable nav */
-  aside {
+  #shell aside {
     width: 100%;
     flex-basis: auto;
     height: auto;
@@ -873,7 +990,7 @@ html { -webkit-text-size-adjust: 100%; }
   .sidebar-brand .mark { width: 30px; height: 30px; flex-basis: 30px; font-size: 17px; }
   .sidebar-brand .logo { font-size: 14.5px; }
 
-  aside nav {
+  #shell aside nav {
     display: none;
   }
   .sidebar-foot { display: none; }

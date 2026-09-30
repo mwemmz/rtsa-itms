@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1e242a">
   <meta name="description" content="RTSA Integrated Transport Management System — vehicle registration, violations, fines, road tolls and route planning for Zambia.">
   <title>RTSA ITMS — Web App</title>
-  <link rel="stylesheet" href="/static/app.css?v=login-split-4">
+  <link rel="stylesheet" href="/static/app.css?v=login-split-5">
   <link rel="preload" as="image" href="/static/login-bg.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 </head>
@@ -14,7 +14,7 @@
   <div id="login-screen" class="login-screen login-split">
     <aside class="login-brand">
       <div class="login-brand-inner">
-        <h2 class="welcome-text">WELCOME</h2>
+        <p class="welcome-text">WELCOME</p>
         <div class="wordmark">
           <div class="mark" aria-hidden="true">R</div>
           <div>
@@ -31,89 +31,89 @@
     </aside>
     <div class="login-card">
       <div class="login-card-inner">
-        <h2 class="login-title">Login</h2>
-        <form id="login-form">
-        <div class="field">
-          <label for="email">Email</label>
-          <input id="email" type="email" autocomplete="username" placeholder="you@example.com">
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
-          <p class="field-link"><a href="#/forgot" id="to-forgot">Forgot password?</a></p>
-        </div>
-        <div class="field hidden" id="mfa-field">
-          <label for="mfa-code">Verification code</label>
-          <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
-        </div>
-        <div class="field hidden" id="captcha-field">
-          <label for="captcha-answer" id="captcha-question">Verification</label>
-          <input id="captcha-answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Your answer">
-        </div>
-        <div class="login-msg" id="login-msg" role="status" aria-live="polite"></div>
-        <p class="auth-switch hidden" id="login-resend"><a href="#" id="resend-from-login">Send me a new confirmation link</a></p>
-        <button class="btn gold block" type="submit" id="login-btn">Sign in</button>
-        <p class="auth-switch">New to RTSA ITMS? <a href="#/signup" id="to-signup">Create a citizen account</a></p>
-      </form>
-      <form id="signup-form" class="hidden" novalidate>
-        <h2 class="auth-title">Create a citizen account</h2>
-        <p class="small muted auth-lead">Pay fines, renew your licence and get road alerts online. Officers and other staff get their accounts from an RTSA administrator.</p>
-        <div class="field">
-          <label for="su-name">Full name</label>
-          <input id="su-name" name="full_name" autocomplete="name" placeholder="As on your NRC" required maxlength="120">
-        </div>
-        <div class="field">
-          <label for="su-email">Email</label>
-          <input id="su-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-        </div>
-        <div class="field">
-          <label for="su-phone">Mobile number <span class="muted">(optional, for SMS alerts)</span></label>
-          <input id="su-phone" name="phone_number" type="tel" autocomplete="tel" placeholder="+260971234567">
-        </div>
-        <div class="field">
-          <label for="su-password">Password</label>
-          <input id="su-password" name="password" type="password" autocomplete="new-password" placeholder="••••••••" required aria-describedby="su-password-hint">
-          <p class="small muted field-hint" id="su-password-hint">At least 8 characters, with letters and numbers.</p>
-        </div>
-        <div class="field">
-          <label for="su-confirm">Confirm password</label>
-          <input id="su-confirm" type="password" autocomplete="new-password" placeholder="••••••••" required>
-        </div>
-        <div class="field hidden" id="su-captcha-field">
-          <label for="su-captcha-answer" id="su-captcha-question">Verification</label>
-          <input id="su-captcha-answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Your answer">
-        </div>
-        <div class="login-msg" id="signup-msg" role="status" aria-live="polite"></div>
-        <button class="btn gold block" type="submit" id="signup-btn">Create account</button>
-        <p class="auth-switch">Already have an account? <a href="#" id="to-signin">Sign in</a></p>
-      </form>
-      <form id="forgot-form" class="hidden" novalidate>
-        <h2 class="auth-title">Reset your password</h2>
-        <p class="small muted auth-lead">Enter the email you sign in with and we'll send you a link to choose a new password.</p>
-        <div class="field">
-          <label for="fg-email">Email</label>
-          <input id="fg-email" type="email" autocomplete="email" placeholder="you@example.com" required>
-        </div>
-        <div class="login-msg" id="forgot-msg" role="status" aria-live="polite"></div>
-        <button class="btn gold block" type="submit" id="forgot-btn">Email me a link</button>
-        <p class="auth-switch"><a href="#" class="to-signin">Back to sign in</a></p>
-      </form>
-      <form id="reset-form" class="hidden" novalidate>
-        <h2 class="auth-title">Choose a new password</h2>
-        <p class="small muted auth-lead">This signs you out on every other device.</p>
-        <div class="field">
-          <label for="rs-password">New password</label>
-          <input id="rs-password" type="password" autocomplete="new-password" placeholder="••••••••" required aria-describedby="rs-password-hint">
-          <p class="small muted field-hint" id="rs-password-hint">At least 8 characters, with letters and numbers.</p>
-        </div>
-        <div class="field">
-          <label for="rs-confirm">Confirm new password</label>
-          <input id="rs-confirm" type="password" autocomplete="new-password" placeholder="••••••••" required>
-        </div>
-        <div class="login-msg" id="reset-msg" role="status" aria-live="polite"></div>
-        <button class="btn gold block" type="submit" id="reset-btn">Set new password</button>
-        <p class="auth-switch"><a href="#" class="to-signin">Back to sign in</a></p>
-      </form>
+        <h2 class="login-title" id="auth-title">Login</h2>
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" type="email" autocomplete="username" placeholder="you@example.com">
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+            <p class="field-link"><a href="#/forgot" id="to-forgot">Forgot password?</a></p>
+          </div>
+          <div class="field hidden" id="mfa-field">
+            <label for="mfa-code">Verification code</label>
+            <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+          </div>
+          <div class="field hidden" id="captcha-field">
+            <label for="captcha-answer" id="captcha-question">Verification</label>
+            <input id="captcha-answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Your answer">
+          </div>
+          <div class="login-msg" id="login-msg" role="status" aria-live="polite"></div>
+          <p class="auth-switch hidden" id="login-resend"><a href="#" id="resend-from-login">Send me a new confirmation link</a></p>
+          <button class="btn gold block" type="submit" id="login-btn">Sign in</button>
+          <p class="auth-switch">New to RTSA ITMS? <a href="#/signup" id="to-signup">Create a citizen account</a></p>
+        </form>
+          <form id="signup-form" class="hidden" novalidate>
+            <h2 class="auth-title">Create a citizen account</h2>
+          <p class="small muted auth-lead">Pay fines, renew your licence and get road alerts online. Officers and other staff get their accounts from an RTSA administrator.</p>
+          <div class="field">
+            <label for="su-name">Full name</label>
+            <input id="su-name" name="full_name" autocomplete="name" placeholder="As on your NRC" required maxlength="120">
+          </div>
+          <div class="field">
+            <label for="su-email">Email</label>
+            <input id="su-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+          </div>
+          <div class="field">
+            <label for="su-phone">Mobile number <span class="muted">(optional, for SMS alerts)</span></label>
+            <input id="su-phone" name="phone_number" type="tel" autocomplete="tel" placeholder="+260971234567">
+          </div>
+          <div class="field">
+            <label for="su-password">Password</label>
+            <input id="su-password" name="password" type="password" autocomplete="new-password" placeholder="••••••••" required aria-describedby="su-password-hint">
+            <p class="small muted field-hint" id="su-password-hint">At least 8 characters, with letters and numbers.</p>
+          </div>
+          <div class="field">
+            <label for="su-confirm">Confirm password</label>
+            <input id="su-confirm" type="password" autocomplete="new-password" placeholder="••••••••" required>
+          </div>
+          <div class="field hidden" id="su-captcha-field">
+            <label for="su-captcha-answer" id="su-captcha-question">Verification</label>
+            <input id="su-captcha-answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Your answer">
+          </div>
+          <div class="login-msg" id="signup-msg" role="status" aria-live="polite"></div>
+          <button class="btn gold block" type="submit" id="signup-btn">Create account</button>
+          <p class="auth-switch">Already have an account? <a href="#" id="to-signin">Sign in</a></p>
+        </form>
+        <form id="forgot-form" class="hidden" novalidate>
+          <h2 class="auth-title">Reset your password</h2>
+          <p class="small muted auth-lead">Enter the email you sign in with and we'll send you a link to choose a new password.</p>
+          <div class="field">
+            <label for="fg-email">Email</label>
+            <input id="fg-email" type="email" autocomplete="email" placeholder="you@example.com" required>
+          </div>
+          <div class="login-msg" id="forgot-msg" role="status" aria-live="polite"></div>
+          <button class="btn gold block" type="submit" id="forgot-btn">Email me a link</button>
+          <p class="auth-switch"><a href="#" class="to-signin">Back to sign in</a></p>
+        </form>
+        <form id="reset-form" class="hidden" novalidate>
+          <h2 class="auth-title">Choose a new password</h2>
+          <p class="small muted auth-lead">This signs you out on every other device.</p>
+          <div class="field">
+            <label for="rs-password">New password</label>
+            <input id="rs-password" type="password" autocomplete="new-password" placeholder="••••••••" required aria-describedby="rs-password-hint">
+            <p class="small muted field-hint" id="rs-password-hint">At least 8 characters, with letters and numbers.</p>
+          </div>
+          <div class="field">
+            <label for="rs-confirm">Confirm new password</label>
+            <input id="rs-confirm" type="password" autocomplete="new-password" placeholder="••••••••" required>
+          </div>
+          <div class="login-msg" id="reset-msg" role="status" aria-live="polite"></div>
+          <button class="btn gold block" type="submit" id="reset-btn">Set new password</button>
+          <p class="auth-switch"><a href="#" class="to-signin">Back to sign in</a></p>
+        </form>
       <div class="demo-hint" id="demo-hint">
         Demo accounts:<br>
         <code>admin@rtsa.gov.zm / admin123</code><br>
