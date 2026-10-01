@@ -606,20 +606,20 @@ var LIVE_VIEWS = {
   setting: ["settings"],
   notification_rule: ["rules"],
   road_incident: ["alerts", "dashboard"],
-  accident: ["alerts", "dashboard"],
+  accident: ["alerts", "dashboard", "accidents"],
   toll_transaction: ["toll", "reports"],
   toll_offline_event: ["toll"],
-  anpr_event: ["dashboard"],
-  inspection: ["vehicles"],
+  anpr_event: ["dashboard", "anpr"],
+  inspection: ["vehicles", "inspections"],
   insurance: ["vehicles"],
-  licence_application: ["applications", "fines"],
+  licence_application: ["applications", "fines", "licensing"],
   agency: ["integrations"],
   session: ["users", "account"],
   psv_operator: ["psv"],
   psv_permit: ["psv"]
 };
 // Views that hold in-progress user input: only toast, never auto-reload.
-var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1 };
+var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1, licensing: 1, inspections: 1, anpr: 1, accidents: 1 };
 var LIVE_ES = null;
 var LIVE_RELOAD_TIMER = null;
 var LIVE_RETRY_TIMER = null;
@@ -1841,7 +1841,7 @@ VIEWS.alerts = async function () {
     var list = $("#alert-list");
     list.innerHTML = items.length
       ? items.map(function (a) {
-          var cls = a.severity === "high" ? "red" : a.severity === "moderate" ? "amber" : "blue";
+          var cls = a.severity === "fatal" ? "red" : a.severity === "serious" ? "amber" : "blue";
           return '<div style="padding:10px 0;border-bottom:1px solid var(--line);">' +
             "<b>" + esc(a.incident_type) + "</b> · <span class='pill " + cls + "'>" + esc(a.severity) + "</span>" +
             (a.road_name ? ' <span class="muted">on ' + esc(a.road_name) + "</span>" : "") +
