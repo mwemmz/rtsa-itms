@@ -37,6 +37,17 @@ class Accident(Base):
         Enum(AccidentStatus), default=AccidentStatus.REPORTED, nullable=False
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Where on the mapped network it happened, and the live road incident it
+    # raised. Null for older rows and for reports from partner agencies.
+    road_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("roads.id"), nullable=True, index=True
+    )
+    segment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("road_segments.id"), nullable=True, index=True
+    )
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("road_incidents.id"), nullable=True
+    )
     reported_by: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("users.id"), nullable=True
     )

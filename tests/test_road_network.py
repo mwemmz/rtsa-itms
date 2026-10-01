@@ -389,3 +389,86 @@ def test_worker_licence_expiry_scan():
         assert created >= 1
     finally:
         db.close()
+
+def test_accident_on_mapped_road_flows_to_alerts_planner_and_reports():
+    officer = _make_user("officer")
+    citizen = _make_user("citizen")
+    admin = _make_user("admin")
+    net = _build_network(officer)
+    route = {"from_": net["alpha"]["name"], "to": net["beta"]["name"]}
+    assert client.get("/api/routing/route", params=route, headers=citizen).json()[
+        "primary_route"]["total_minutes"] == 2.0
+    before = client.get("/api/reports/dashboard", headers=admin).json()["kpis"]["accidents"]["Accidents"]
+
+    # Browser-style aware timestamp, a few minutes ago
+    when = (datetime.utcnow() - timedelta(minutes=5)).isoformat() + "Z"
+    r = client.post("/api/accidents/", json={
+        "segment_id": net["ab"]["id"], "location": "near the market",
+        "occurred_at": when, "severity": "fatal", "description": "Head-on collision",
+    }, headers=officer)
+    assert r.status_code == 201, r.text
+    acc = r.json()
+    assert acc["on_road"] is True
+    assert acc["road_id"] == net["r1"]["id"]
+    assert acc["location"].startswith(net["r1"]["name"])
+    assert net["alpha"]["name"] in acc["location"] and "near the market" in acc["location"]
+
+    # Citizens' alert feed names the road and the stretch
+    alerts = client.get("/api/portal/alerts", headers=citizen).json()
+    mine = [a for a in alerts if a["road_name"] == net["r1"]["name"]]
+    assert mine and net["beta"]["name"] in mine[0]["stretch"]
+    feed = client.get("/api/incidents/alerts", headers=citizen).json()
+    assert any(a["segment_id"] == net["ab"]["id"] and a["blocking"] for a in feed)
+
+    # Status board closes the road; the planner routes around it
+    board = {s["road"]: s for s in client.get("/api/routing/status", headers=citizen).json()}
+    assert board[net["r1"]["name"]]["status"] == "closed"
+    assert client.get("/api/routing/route", params=route, headers=citizen).json()[
+        "primary_route"]["total_minutes"] == 8.0
+
+    # Analytics count it straight away (no stale cache, not "in the future")
+    after = client.get("/api/reports/dashboard", headers=admin).json()["kpis"]["accidents"]["Accidents"]
+    assert after == before + 1
+
+    # Clearing the scene reopens the stretch but keeps the accident record
+    r = client.post(f"/api/accidents/{acc['id']}/clear-road", headers=officer)
+    assert r.status_code == 200, r.text
+    assert r.json()["on_road"] is False
+    assert client.get("/api/routing/route", params=route, headers=citizen).json()[
+        "primary_route"]["total_minutes"] == 2.0
+    assert client.post(f"/api/accidents/{acc['id']}/clear-road", headers=officer).status_code == 400
+
+
+def test_accident_must_be_on_a_known_road_and_not_in_the_future():
+    officer = _make_user("officer")
+    net = _build_network(officer)
+    base = {"occurred_at": datetime.utcnow().isoformat(), "severity": "minor"}
+    # Free text only is no longer accepted
+    assert client.post("/api/accidents/", json={**base, "location": "Somewhere"},
+                       headers=officer).status_code == 422
+    assert client.post("/api/accidents/", json={**base, "segment_id": str(uuid4())},
+                       headers=officer).status_code == 422
+    assert client.post("/api/accidents/", json={**base, "road_id": str(uuid4())},
+                       headers=officer).status_code == 422
+    # Stretch that isn't on the chosen road
+    assert client.post("/api/accidents/", json={**base, "road_id": net["r1"]["id"], "segment_id": net["ac"]["id"]},
+                       headers=officer).status_code == 422
+    future = (datetime.utcnow() + timedelta(hours=3)).isoformat()
+    assert client.post("/api/accidents/", json={**base, "occurred_at": future, "segment_id": net["ab"]["id"]},
+                       headers=officer).status_code == 422
+
+
+def test_incident_needs_a_road_and_takes_it_from_the_segment():
+    officer = _make_user("officer")
+    citizen = _make_user("citizen")
+    net = _build_network(officer)
+    assert client.post("/api/incidents/", json={"incident_type": "roadworks"},
+                       headers=officer).status_code == 422
+    r = client.post("/api/incidents/", json={"incident_type": "road_closed", "segment_id": net["ab"]["id"],
+                                             "broadcast_alert": False}, headers=officer)
+    assert r.status_code == 201, r.text
+    assert r.json()["road_id"] == net["r1"]["id"]
+    alert = [a for a in client.get("/api/portal/alerts", headers=citizen).json() if a["id"] == r.json()["id"]][0]
+    assert alert["road_name"] == net["r1"]["name"]
+    assert client.post(f"/api/incidents/{r.json()['id']}/resolve", headers=officer).status_code == 200
+    assert client.post(f"/api/incidents/{r.json()['id']}/resolve", headers=officer).status_code == 400

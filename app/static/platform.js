@@ -81,6 +81,27 @@ VIEWS.dashboard = async function () {
 
 /* ---------------- reports & analytics ---------------- */
 
+// Also called by the live stream (LIVE_PARTIAL_VIEWS in app.js) so the KPIs
+// follow new records without resetting the report builder below them.
+async function loadReportKpis() {
+  if (!$("#rp-kpis")) return;
+  try {
+    var d = await api("/api/reports/dashboard");
+    var k = d.kpis;
+    $("#rp-kpis").innerHTML = '<div class="grid cards">' +
+      kpi("New registrations", k.registrations["New registrations"], "vehicles on register: " + k.registrations["Total vehicles on register"]) +
+      kpi("Violations", k.violations["Violations"], "collection rate " + k.violations["Collection rate"]) +
+      kpi("Accidents", k.accidents["Accidents"],
+        (k.accidents["  Fatal"] || 0) + " fatal · " + (k.accidents["  Serious"] || 0) + " serious" +
+        (k.accidents["Accident hotspot"] ? " · hotspot: " + k.accidents["Accident hotspot"] : "")) +
+      kpi("Net revenue", money(k.revenue["Net revenue"]), "refunded " + money(k.revenue["Refunded"])) +
+      kpi("Toll non-compliance", k.toll["Non-compliance rate"], k.toll["Flagged"] + " of " + k.toll["Vehicles checked"] + " checks") +
+      kpi("PSV permits valid", k.psv["Permits currently valid"], k.psv["Permits expired"] + " expired") +
+      "</div>";
+  } catch (e) { fail("#rp-kpis", e); }
+}
+window.loadReportKpis = loadReportKpis;
+
 VIEWS.reports = async function () {
   $("#content").innerHTML = '<div id="rp-kpis"><div class="empty">Loading analytics…</div></div>' +
     '<div class="card"><h3>Report builder</h3><div class="toolbar">' +
@@ -94,17 +115,8 @@ VIEWS.reports = async function () {
   try {
     var cat = await api("/api/reports/");
     $("#rp-key").innerHTML = cat.map(function (r) { return '<option value="' + esc(r.key) + '">' + esc(r.title) + "</option>"; }).join("");
-    var d = await api("/api/reports/dashboard");
-    var k = d.kpis;
-    $("#rp-kpis").innerHTML = '<div class="grid cards">' +
-      kpi("New registrations", k.registrations["New registrations"], "vehicles on register: " + k.registrations["Total vehicles on register"]) +
-      kpi("Violations", k.violations["Violations"], "collection rate " + k.violations["Collection rate"]) +
-      kpi("Accidents", k.accidents["Accidents"], k.accidents["Accident hotspot"] ? "hotspot: " + k.accidents["Accident hotspot"] : "") +
-      kpi("Net revenue", money(k.revenue["Net revenue"]), "refunded " + money(k.revenue["Refunded"])) +
-      kpi("Toll non-compliance", k.toll["Non-compliance rate"], k.toll["Flagged"] + " of " + k.toll["Vehicles checked"] + " checks") +
-      kpi("PSV permits valid", k.psv["Permits currently valid"], k.psv["Permits expired"] + " expired") +
-      "</div>";
-  } catch (e) { fail("#rp-kpis", e); }
+  } catch (e) { fail("#rp-out", e); }
+  await loadReportKpis();
 
   function params() {
     var q = [];

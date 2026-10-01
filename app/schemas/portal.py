@@ -46,5 +46,6 @@ class RouteAlertOut(BaseModel):
     severity: str
     description: str | None
     road_name: str | None
+    stretch: str | None = None
     starts_at: datetime
     suggested_alternative: str | None = None

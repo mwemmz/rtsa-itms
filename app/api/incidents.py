@@ -15,7 +15,7 @@ from app.models.road_network import (
 from app.schemas.road_network import IncidentCreate, IncidentResponse
 from app.services.audit import log_action
 from app.services.notifications import broadcast
-from app.services.routing import active_blocking_segments
+from app.services.routing import active_blocking_segments, describe_place
 
 router = APIRouter(prefix="/api/incidents", tags=["Incidents"])
 
@@ -51,11 +51,26 @@ def report_incident(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.OFFICER, UserRole.ADMIN)),
 ):
+    # Incidents must sit on the mapped network, or the status board can't mark
+    # the road and the route planner can't avoid it.
+    if payload.segment_id is None and payload.road_id is None:
+        raise HTTPException(status_code=422, detail="Choose the road (and stretch) the incident is on")
+    road_id = payload.road_id
+    if payload.segment_id is not None:
+        seg = db.get(RoadSegment, payload.segment_id)
+        if seg is None:
+            raise HTTPException(status_code=422, detail="Unknown road stretch")
+        if road_id is not None and road_id != seg.road_id:
+            raise HTTPException(status_code=422, detail="That stretch is not on the chosen road")
+        road_id = seg.road_id
+    if db.get(Road, road_id) is None:
+        raise HTTPException(status_code=422, detail="Unknown road")
+
     incident = RoadIncident(
         incident_type=payload.incident_type,
         severity=payload.severity,
         segment_id=payload.segment_id,
-        road_id=payload.road_id,
+        road_id=road_id,
         description=payload.description,
         reported_by=current_user.id,
     )
@@ -63,19 +78,16 @@ def report_incident(
     db.flush()
 
     suggestion = _suggest_alternative(db, incident)
+    road_name, stretch = describe_place(db, incident.road_id, incident.segment_id)
 
     # Notify motorists
     if payload.broadcast_alert:
-        road_name = None
-        if incident.road_id:
-            road = db.query(Road).filter(Road.id == incident.road_id).first()
-            road_name = road.name if road else None
         broadcast(
             db,
             "road_alert",
             {
                 "incident_type": payload.incident_type.value,
-                "road": road_name or "a Lusaka road",
+                "road": (road_name or "a Lusaka road") + (f" ({stretch})" if stretch else ""),
                 "description": payload.description or "",
                 "suggestion": suggestion or "Plan an alternative route.",
             },
@@ -116,16 +128,16 @@ def active_alerts(
     )
     results = []
     for inc in incidents:
-        road_name = None
-        if inc.road_id:
-            road = db.query(Road).filter(Road.id == inc.road_id).first()
-            road_name = road.name if road else None
+        road_name, stretch = describe_place(db, inc.road_id, inc.segment_id)
         results.append(
             {
                 "id": str(inc.id),
                 "incident_type": inc.incident_type.value,
                 "severity": inc.severity.value,
                 "road": road_name,
+                "stretch": stretch,
+                "segment_id": str(inc.segment_id) if inc.segment_id else None,
+                "blocking": bool(inc.segment_id) and inc.incident_type.value in ("accident", "road_closed"),
                 "description": inc.description,
                 "started_at": inc.starts_at.isoformat() if inc.starts_at else None,
                 "suggestion": _suggest_alternative(db, inc),
@@ -143,6 +155,8 @@ def resolve_incident(
     incident = db.query(RoadIncident).filter(RoadIncident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+    if not incident.is_active:
+        raise HTTPException(status_code=400, detail="Incident is already resolved")
     incident.is_active = False
     incident.ends_at = datetime.utcnow()
     db.flush()

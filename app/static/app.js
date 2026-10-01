@@ -17,6 +17,9 @@ function money(n) {
 
 function dt(v) {
   if (!v) return "";
+  // The API stores naive UTC; without a zone marker the browser would read it
+  // as local time and show it hours off.
+  if (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(v)) v += "Z";
   var d = new Date(v);
   if (isNaN(d.getTime())) return v;
   return d.toLocaleString("en-ZM", { dateStyle: "short", timeStyle: "short" });
@@ -597,29 +600,37 @@ async function bootstrapApp() {
 
 // Which views should auto-reload when a given entity changes elsewhere.
 var LIVE_VIEWS = {
-  vehicle: ["vehicles", "challans", "dashboard"],
+  vehicle: ["vehicles", "challans", "dashboard", "reports"],
   driver: ["drivers", "dashboard"],
-  challan: ["challans", "fines", "dashboard"],
+  challan: ["challans", "fines", "dashboard", "reports"],
   payment: ["fines", "receipts", "challans", "payments", "reports", "dashboard"],
   user: ["users", "audits", "dashboard"],
   role: ["users", "audits"],
   setting: ["settings"],
   notification_rule: ["rules"],
-  road_incident: ["alerts", "dashboard"],
-  accident: ["alerts", "dashboard", "accidents"],
+  road_incident: ["alerts", "dashboard", "planner", "accidents"],
+  accident: ["dashboard", "accidents", "reports"],
   toll_transaction: ["toll", "reports"],
   toll_offline_event: ["toll"],
   anpr_event: ["dashboard", "anpr"],
   inspection: ["vehicles", "inspections"],
   insurance: ["vehicles"],
-  licence_application: ["applications", "fines", "licensing"],
+  licence_application: ["applications", "fines", "licensing", "reports"],
   agency: ["integrations"],
   session: ["users", "account"],
   psv_operator: ["psv"],
   psv_permit: ["psv"]
 };
 // Views that hold in-progress user input: only toast, never auto-reload.
-var LIVE_FORM_VIEWS = { planner: 1, violations: 1, toll: 1, account: 1, licensing: 1, inspections: 1, anpr: 1, accidents: 1 };
+var LIVE_FORM_VIEWS = { violations: 1, toll: 1, account: 1, licensing: 1, inspections: 1, anpr: 1 };
+// Views with a form that can still refresh their data panels in place. Checked
+// before LIVE_FORM_VIEWS; the value is the refresh function.
+var LIVE_PARTIAL_VIEWS = {
+  planner: function () { return refreshPlannerLive(); },
+  alerts: function () { return loadAlertList(); },
+  accidents: function () { return Promise.all([loadAccidentStats(), loadAccidents()]); },
+  reports: function () { return window.loadReportKpis ? window.loadReportKpis() : null; }
+};
 var LIVE_ES = null;
 var LIVE_RELOAD_TIMER = null;
 var LIVE_RETRY_TIMER = null;
@@ -676,6 +687,16 @@ function onLiveEvent(ev) {
   var targets = LIVE_VIEWS[ev.entity] || [];
   if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") inBackground(refreshBell);
   if (VIEW.id && targets.indexOf(VIEW.id) !== -1) {
+    if (LIVE_PARTIAL_VIEWS[VIEW.id]) {
+      var viewId = VIEW.id;
+      if (LIVE_RELOAD_TIMER) clearTimeout(LIVE_RELOAD_TIMER);
+      LIVE_RELOAD_TIMER = setTimeout(function () {
+        LIVE_RELOAD_TIMER = null;
+        if (!getToken() || VIEW.id !== viewId) return;
+        inBackground(LIVE_PARTIAL_VIEWS[viewId]).catch(function () { /* ignore */ });
+      }, 700);
+      return;
+    }
     if (LIVE_FORM_VIEWS[VIEW.id]) { toast("Live update: " + (ev.action || "data") + " — refresh to see changes"); return; }
     if (LIVE_RELOAD_TIMER) clearTimeout(LIVE_RELOAD_TIMER);
     LIVE_RELOAD_TIMER = setTimeout(function () {
@@ -850,11 +871,15 @@ async function officerDashboard() {
   } catch (e) {
     unpaid = challans.filter(function (c) { return c.status !== "paid"; }).length;
   }
+  var incidents = [];
+  try { incidents = await api("/api/incidents/alerts"); } catch (e) { /* board still renders */ }
+  var blocking = incidents.filter(function (a) { return a.blocking; }).length;
   return (
     '<div class="grid cards">' +
       kpi("Active challans", unpaid) +
       kpi("Recent violations", violations.length) +
-      kpi("Tools", "<div><a class='btn gold sm' href='#/violations'>Record violation</a> <a class='btn sm' href='#/toll'>Toll gate</a></div>") +
+      kpi("Active road incidents", "<a href='#/alerts'>" + incidents.length + "</a>", blocking + " blocking a road") +
+      kpi("Tools", "<div><a class='btn gold sm' href='#/violations'>Record violation</a> <a class='btn sm' href='#/accidents'>Report accident</a> <a class='btn sm' href='#/toll'>Toll gate</a></div>") +
     "</div>" +
     '<div class="row">' +
       cars("Recent violations", violationRows(violations)) +
@@ -888,8 +913,11 @@ async function citizenDashboard() {
         : '<div class="empty">No vehicles registered to you.</div>') +
       cars("Road alerts", (d.active_alerts || []).length
         ? d.active_alerts.map(function (a) {
-            return '<div class="small" style="padding:6px 0;border-bottom:1px solid var(--line);"><b>' + esc(a.incident_type) + "</b> · " + esc(a.severity) + '<br>' + esc(a.description || "") + (a.road_name ? ' <span class="muted">(' + esc(a.road_name) + ")</span>" : "") + "</div>";
-          }).join("")
+            return '<div class="small" style="padding:6px 0;border-bottom:1px solid var(--line);"><b>' + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · " + esc(a.severity) +
+              (a.road_name ? ' on <b>' + esc(a.road_name) + "</b>" : "") +
+              (a.stretch ? '<div class="muted">' + esc(a.stretch) + "</div>" : "") +
+              (a.description ? "<div>" + esc(a.description) + "</div>" : "") + "</div>";
+          }).join("") + '<p class="small" style="margin:10px 0 0;"><a href="#/planner">Plan a route around these</a></p>'
         : '<div class="empty">No active alerts.</div>') +
     "</div>"
   );
@@ -1254,6 +1282,110 @@ VIEWS.rules = async function () {
   }
 };
 
+/* ---------------- road network picker (accidents, incidents) ---------------- */
+
+// Places are picked from the mapped network rather than typed, so every
+// accident or incident lands on a real road that the alert feed, status board
+// and route planner all understand.
+async function loadRoadNetwork() {
+  var res = await Promise.all([
+    api("/api/road-network/roads"),
+    api("/api/road-network/intersections"),
+    api("/api/road-network/segments")
+  ]);
+  var net = { roads: res[0], intersections: res[1], segments: res[2], ix: {}, roadById: {} };
+  net.intersections.forEach(function (i) { net.ix[i.id] = i; });
+  net.roads.forEach(function (r) { net.roadById[r.id] = r; });
+  return net;
+}
+
+function stretchLabel(net, seg) {
+  var a = net.ix[seg.start_intersection_id], b = net.ix[seg.end_intersection_id];
+  return (a ? a.name : "?") + " → " + (b ? b.name : "?");
+}
+
+// Rough metres between two lat/lng points (equirectangular is plenty at city scale).
+function metresBetween(lat1, lng1, lat2, lng2) {
+  var x = (lng2 - lng1) * Math.cos((lat1 + lat2) * Math.PI / 360);
+  var y = lat2 - lat1;
+  return Math.sqrt(x * x + y * y) * 111320;
+}
+
+function metresToSegment(net, seg, lat, lng) {
+  var a = net.ix[seg.start_intersection_id], b = net.ix[seg.end_intersection_id];
+  if (!a || !b) return Infinity;
+  var k = Math.cos(lat * Math.PI / 180);
+  var ax = a.longitude * k, ay = a.latitude, bx = b.longitude * k, by = b.latitude, px = lng * k, py = lat;
+  var dx = bx - ax, dy = by - ay;
+  var t = dx || dy ? ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy) : 0;
+  t = Math.max(0, Math.min(1, t));
+  var cx = ax + t * dx, cy = ay + t * dy;
+  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)) * 111320;
+}
+
+function currentPosition() {
+  return new Promise(function (resolve, reject) {
+    if (!navigator.geolocation) { reject(new Error("This browser can't share your location")); return; }
+    navigator.geolocation.getCurrentPosition(
+      function (p) { resolve({ lat: p.coords.latitude, lng: p.coords.longitude }); },
+      function (e) { reject(new Error(e.code === 1 ? "Location permission was denied" : "Couldn't get your location")); },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  });
+}
+
+// Validation is done on submit by the caller (accidents need a stretch,
+// incidents may cover a whole road), so the selects carry no `required`.
+function roadPickerHtml(prefix) {
+  return '<div class="field"><label>Road</label><select id="' + prefix + '-road"><option value="">Choose a road…</option></select></div>' +
+    '<div class="field"><label>Stretch (between junctions)</label><select id="' + prefix + '-segment" disabled><option value="">Choose the road first</option></select>' +
+    '<div class="toolbar" style="margin-top:6px;"><button type="button" class="btn ghost sm" id="' + prefix + '-here">Use my location</button>' +
+    '<span class="small muted" id="' + prefix + '-here-msg"></span></div></div>';
+}
+
+// Returns a getter for { road_id, segment_id } or null when nothing is chosen.
+// wholeRoad: offer "Whole road" as the empty stretch choice.
+function wireRoadPicker(prefix, net, wholeRoad) {
+  var roadSel = $("#" + prefix + "-road"), segSel = $("#" + prefix + "-segment"), msg = $("#" + prefix + "-here-msg");
+  roadSel.innerHTML = '<option value="">Choose a road…</option>' + net.roads.map(function (r) {
+    return '<option value="' + esc(r.id) + '">' + esc(r.name) + "</option>";
+  }).join("");
+  function fillSegments(selectId) {
+    var segs = net.segments.filter(function (s) { return s.road_id === roadSel.value; });
+    segSel.disabled = !segs.length;
+    segSel.innerHTML = segs.length
+      ? '<option value="">' + (wholeRoad ? "Whole road" : "Choose the stretch…") + "</option>" + segs.map(function (s) {
+          return '<option value="' + esc(s.id) + '">' + esc(stretchLabel(net, s)) + "</option>";
+        }).join("")
+      : '<option value="">' + (roadSel.value ? "No mapped stretches on this road" : "Choose the road first") + "</option>";
+    if (selectId) segSel.value = selectId;
+  }
+  roadSel.addEventListener("change", function () { msg.textContent = ""; fillSegments(); });
+  $("#" + prefix + "-here").addEventListener("click", async function () {
+    msg.textContent = "Locating…";
+    try {
+      var pos = await currentPosition();
+      var best = null, bestM = Infinity;
+      net.segments.forEach(function (s) {
+        var m = metresToSegment(net, s, pos.lat, pos.lng);
+        if (m < bestM) { bestM = m; best = s; }
+      });
+      if (!best) { msg.textContent = "No mapped roads to match against"; return; }
+      roadSel.value = best.road_id;
+      fillSegments(best.id);
+      var km = (bestM / 1000).toFixed(1);
+      msg.textContent = bestM > 2000
+        ? "Nearest mapped road is " + km + " km away — check this is right"
+        : "Matched to the nearest mapped road (" + km + " km)";
+    } catch (e) { msg.textContent = e.message; }
+  });
+  fillSegments();
+  return function () {
+    if (!roadSel.value) return null;
+    return { road_id: roadSel.value, segment_id: segSel.value || null };
+  };
+}
+
 /* ---------------- officer: accidents ---------------- */
 
 function accidentVehicleRowHtml() {
@@ -1304,7 +1436,8 @@ VIEWS.accidents = async function () {
     '<div class="row">' +
       '<div class="card"><h3>Report an accident</h3>' +
         '<form id="acc-form">' +
-          '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, near Manda Hill" required></div>' +
+          roadPickerHtml("acc") +
+          '<div class="field"><label>Landmark / exact spot (optional)</label><input name="location" maxlength="120" placeholder="e.g. near Manda Hill"></div>' +
           '<div class="field"><label>Date &amp; time</label><input name="occurred_at" type="datetime-local" required></div>' +
           '<div class="field"><label>Severity</label><select name="severity">' +
             '<option value="minor">Minor</option><option value="serious">Serious</option><option value="fatal">Fatal</option>' +
@@ -1323,10 +1456,33 @@ VIEWS.accidents = async function () {
     wireAccidentVehicleRow(rows[rows.length - 1]);
   });
 
+  var when = $("#acc-form [name=occurred_at]");
+  function localNow() {
+    var d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  }
+  when.max = localNow();
+  when.value = localNow();
+
+  var pickPlace = null;
+  try {
+    pickPlace = wireRoadPicker("acc", await loadRoadNetwork());
+  } catch (err) {
+    $("#acc-form").insertAdjacentHTML("afterbegin", '<div class="error-box">Couldn\'t load the road network: ' + esc(err.message) + "</div>");
+  }
+
   $("#acc-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     var data = formData(e.target);
-    if (data.occurred_at) data.occurred_at = new Date(data.occurred_at).toISOString();
+    delete data["acc-road"]; delete data["acc-segment"];
+    var place = pickPlace && pickPlace();
+    if (!place || !place.segment_id) { toast("Choose the road and the stretch where it happened", "err"); return; }
+    data.road_id = place.road_id;
+    data.segment_id = place.segment_id;
+    if (data.occurred_at && new Date(data.occurred_at) > new Date(Date.now() + 10 * 60000)) {
+      toast("The accident time can't be in the future", "err"); return;
+    }
     data.vehicles = $$(".acc-vehicle-row", $("#acc-vehicles")).map(function (row) {
       var plate = row.querySelector(".acc-plate").value.trim();
       if (!plate) return null;
@@ -1342,8 +1498,12 @@ VIEWS.accidents = async function () {
     btn.disabled = true;
     try {
       await api("/api/accidents/", { method: "POST", body: JSON.stringify(data) });
-      toast("Accident reported", "ok");
+      toast("Accident reported — the stretch is now closed in the route planner", "ok");
       e.target.reset();
+      when.max = localNow();
+      when.value = localNow();
+      $("#acc-segment").disabled = true;
+      $("#acc-here-msg").textContent = "";
       $("#acc-vehicles").innerHTML = "";
       await Promise.all([loadAccidentStats(), loadAccidents()]);
     } catch (err) { toast(err.message, "err"); }
@@ -1371,11 +1531,25 @@ async function loadAccidents() {
   try {
     var items = await api("/api/accidents/");
     if (!items.length) { list.innerHTML = '<div class="empty">No accidents recorded yet.</div>'; return; }
-    list.innerHTML = '<div class="table-wrap"><table><tr><th>Severity</th><th>Status</th><th>Location</th><th>When</th><th></th></tr>' +
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Severity</th><th>Road</th><th>Location</th><th>When</th><th></th></tr>' +
       items.map(function (a) {
-        return "<tr><td>" + statusPill(a.severity) + "</td><td>" + statusPill(a.status) + "</td><td>" + esc(a.location) + '</td><td class="small">' +
-          dt(a.occurred_at) + '</td><td><button class="btn ghost sm acc-view" data-id="' + esc(a.id) + '">View vehicles</button></td></tr>';
+        var sevCls = a.severity === "fatal" ? "red" : a.severity === "serious" ? "amber" : "blue";
+        var road = a.on_road ? '<span class="pill red">blocking</span>' : a.incident_id ? '<span class="pill green">cleared</span>' : '<span class="pill gray">—</span>';
+        return "<tr><td><span class='pill " + sevCls + "'>" + esc(a.severity) + "</span></td><td>" + road + "</td><td>" + esc(a.location) + '</td><td class="small">' +
+          dt(a.occurred_at) + '</td><td><button class="btn ghost sm acc-view" data-id="' + esc(a.id) + '">Vehicles</button>' +
+          (a.on_road ? ' <button class="btn sm acc-clear" data-id="' + esc(a.id) + '">Clear from road</button>' : "") + "</td></tr>";
       }).join("") + "</table></div>";
+    $$("#acc-list .acc-clear").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        if (!confirm("Mark the scene as cleared? The stretch reopens in the route planner and the alert is removed.")) return;
+        btn.disabled = true;
+        try {
+          await api("/api/accidents/" + btn.dataset.id + "/clear-road", { method: "POST" });
+          toast("Road reopened", "ok");
+          await loadAccidents();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
     $$("#acc-list .acc-view").forEach(function (btn) {
       btn.addEventListener("click", async function () {
         try {
@@ -1834,25 +2008,92 @@ VIEWS.licence = async function () {
 
 /* ---------------- citizen: alerts ---------------- */
 
+var INCIDENT_TYPE_LABELS = {
+  accident: "Accident", road_closed: "Road closed", maintenance: "Maintenance",
+  congestion: "Congestion", roadworks: "Roadworks"
+};
+
+function isRoadStaff() { return USER && (USER.role === "officer" || USER.role === "admin"); }
+
 VIEWS.alerts = async function () {
-  $("#content").innerHTML = '<div class="card"><h3>Active road alerts</h3><div id="alert-list"><div class="empty">Loading…</div></div></div>';
+  var staff = isRoadStaff();
+  $("#content").innerHTML =
+    (staff ? '<div class="row">' : "") +
+    '<div class="card"><h3>Active road alerts</h3>' +
+      '<div class="small muted" style="margin:-4px 0 8px;">Accidents and closures here are routed around in the <a href="#/planner">route planner</a>.</div>' +
+      '<div id="alert-list"><div class="empty">Loading…</div></div></div>' +
+    (staff
+      ? '<div class="card"><h3>Report a road incident</h3><form id="inc-form">' +
+          roadPickerHtml("inc") +
+          '<div class="field"><label>Type</label><select name="incident_type">' +
+            Object.keys(INCIDENT_TYPE_LABELS).filter(function (k) { return k !== "accident"; }).map(function (k) {
+              return '<option value="' + k + '">' + INCIDENT_TYPE_LABELS[k] + "</option>";
+            }).join("") + "</select>" +
+            '<div class="small muted field-hint">Accidents are reported from the <a href="#/accidents">Accidents</a> screen so the case is recorded too.</div></div>' +
+          '<div class="field"><label>Severity</label><select name="severity"><option value="minor">Minor</option><option value="serious">Serious</option><option value="fatal">Fatal</option></select></div>' +
+          '<div class="field"><label>Description</label><textarea name="description" rows="2" placeholder="What drivers should know"></textarea></div>' +
+          '<button class="btn gold" type="submit">Publish alert</button></form></div></div>'
+      : "");
+
+  if (staff) {
+    var pickPlace = null;
+    try { pickPlace = wireRoadPicker("inc", await loadRoadNetwork(), true); }
+    catch (err) { toast("Couldn't load the road network: " + err.message, "err"); }
+    $("#inc-form").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var data = formData(e.target);
+      var place = pickPlace && pickPlace();
+      if (!place) { toast("Choose the road", "err"); return; }
+      data.road_id = place.road_id;
+      if (place.segment_id) data.segment_id = place.segment_id;
+      var btn = e.target.querySelector("button[type=submit]");
+      btn.disabled = true;
+      try {
+        await api("/api/incidents/", { method: "POST", body: JSON.stringify(data) });
+        toast("Alert published", "ok");
+        e.target.reset();
+        $("#inc-segment").disabled = true;
+        $("#inc-here-msg").textContent = "";
+        await loadAlertList();
+      } catch (err) { toast(err.message, "err"); }
+      finally { btn.disabled = false; }
+    });
+  }
+  await loadAlertList();
+};
+
+async function loadAlertList() {
+  var list = $("#alert-list");
+  if (!list) return;
   try {
     var items = await api("/api/portal/alerts");
-    var list = $("#alert-list");
     list.innerHTML = items.length
       ? items.map(function (a) {
           var cls = a.severity === "fatal" ? "red" : a.severity === "serious" ? "amber" : "blue";
           return '<div style="padding:10px 0;border-bottom:1px solid var(--line);">' +
-            "<b>" + esc(a.incident_type) + "</b> · <span class='pill " + cls + "'>" + esc(a.severity) + "</span>" +
-            (a.road_name ? ' <span class="muted">on ' + esc(a.road_name) + "</span>" : "") +
+            "<b>" + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · <span class='pill " + cls + "'>" + esc(a.severity) + "</span>" +
+            (a.road_name ? ' <span class="muted">on <b>' + esc(a.road_name) + "</b></span>" : ' <span class="muted">(no road recorded)</span>') +
+            (a.stretch ? '<div class="small muted">' + esc(a.stretch) + "</div>" : "") +
             (a.description ? '<div class="small">' + esc(a.description) + "</div>" : "") +
-            '<div class="small muted">Since ' + dt(a.starts_at) + "</div></div>";
+            '<div class="small muted">Since ' + dt(a.starts_at) +
+            (isRoadStaff() ? ' · <a href="#" class="inc-resolve" data-id="' + esc(a.id) + '">Mark resolved</a>' : "") + "</div></div>";
         }).join("")
       : '<div class="empty">No active alerts.</div>';
+    $$("#alert-list .inc-resolve").forEach(function (link) {
+      link.addEventListener("click", async function (e) {
+        e.preventDefault();
+        if (!confirm("Mark this incident resolved? The road reopens in the route planner.")) return;
+        try {
+          await api("/api/incidents/" + link.dataset.id + "/resolve", { method: "POST" });
+          toast("Incident resolved", "ok");
+          await loadAlertList();
+        } catch (err) { toast(err.message, "err"); }
+      });
+    });
   } catch (e) {
-    $("#alert-list").innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
-};
+}
 
 /* ---------------- route planner (all roles) ---------------- */
 
@@ -1861,8 +2102,10 @@ VIEWS.planner = async function () {
     '<div class="planner-layout">' +
       '<div class="planner-top row">' +
         '<div class="card"><h3>Plan a route <span class="subtle">(incident-aware)</span></h3>' +
-          '<div class="field"><label>From</label><input id="from-select" class="loc-search" placeholder="Type an intersection…" autocomplete="off"><div class="suggest-list" id="from-suggest"></div></div>' +
-          '<div class="field"><label>To</label><input id="to-select" class="loc-search" placeholder="Type an intersection…" autocomplete="off"><div class="suggest-list" id="to-suggest"></div></div>' +
+          '<div class="field"><label>From</label><input id="from-select" class="loc-search" placeholder="Pick a junction…" autocomplete="off"><div class="suggest-list" id="from-suggest"></div></div>' +
+          '<div class="toolbar" style="margin:-6px 0 12px;"><button type="button" class="btn ghost sm" id="from-here">Use my current location</button>' +
+            '<span class="small muted" id="from-here-msg"></span></div>' +
+          '<div class="field"><label>To</label><input id="to-select" class="loc-search" placeholder="Pick a junction…" autocomplete="off"><div class="suggest-list" id="to-suggest"></div></div>' +
           '<label><input type="checkbox" id="avoid-incidents" checked> Avoid incidents / road closures</label>' +
           '<div style="margin-top:12px;"><button class="btn gold" id="plan-btn">Find route</button></div>' +
           '<div id="route-result"></div></div>' +
@@ -1875,24 +2118,82 @@ VIEWS.planner = async function () {
     "</div>";
 
   var fromSel = $("#from-select"), toSel = $("#to-select");
+  var inters = [];
+  PLANNER_ORIGIN_POS = null;
   try {
-    var inters = await api("/api/road-network/intersections");
+    inters = await api("/api/road-network/intersections");
     INTERSECTIONS_BY_NAME = {};
     inters.forEach(function (i) { INTERSECTIONS_BY_NAME[i.name] = [i.latitude, i.longitude]; });
     wireLocationSearch(fromSel, $("#from-suggest"), inters, planRoute);
     wireLocationSearch(toSel, $("#to-suggest"), inters, planRoute);
+    fromSel.addEventListener("input", function () {
+      // Typing over "my location" means the user picked a junction instead.
+      if (PLANNER_ORIGIN_POS) { PLANNER_ORIGIN_POS = null; $("#from-here-msg").textContent = ""; }
+    });
   } catch (e) {
     fromSel.value = "";
     toSel.value = "";
     $("#status-board").innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
 
+  $("#from-here").addEventListener("click", async function () {
+    var msg = $("#from-here-msg");
+    msg.textContent = "Locating…";
+    try {
+      var pos = await currentPosition();
+      var best = null, bestM = Infinity;
+      inters.forEach(function (i) {
+        var m = metresBetween(pos.lat, pos.lng, i.latitude, i.longitude);
+        if (m < bestM) { bestM = m; best = i; }
+      });
+      if (!best) { msg.textContent = "No mapped junctions to start from"; return; }
+      fromSel.value = best.name;
+      fromSel.classList.remove("invalid");
+      PLANNER_ORIGIN_POS = { lat: pos.lat, lng: pos.lng, junction: best.name, metres: bestM };
+      var km = (bestM / 1000).toFixed(1);
+      msg.textContent = bestM > 25000
+        ? "You're " + km + " km from the mapped network — starting at its nearest junction"
+        : "Nearest junction is " + km + " km from you";
+      showOriginOnMap();
+      planRoute();
+    } catch (e) { msg.textContent = e.message; }
+  });
+
   initPlannerMap();
-  renderNetworkOnMap(inters || []);
+  renderNetworkOnMap(inters);
 
   $("#plan-btn").addEventListener("click", planRoute);
   await loadStatusBoard();
 };
+
+var PLANNER_ORIGIN_POS = null; // { lat, lng, junction, metres } when "my location" is the start
+var PLANNER_INCIDENTS = [];
+
+// Exact (case-insensitive) junction name, or null. Only mapped junctions can be
+// routed, so free text never reaches the API.
+function knownJunction(name) {
+  var n = String(name || "").trim().toLowerCase();
+  if (!n) return null;
+  var keys = Object.keys(INTERSECTIONS_BY_NAME);
+  for (var i = 0; i < keys.length; i++) if (keys[i].toLowerCase() === n) return keys[i];
+  return null;
+}
+
+function showOriginOnMap() {
+  if (!window.L || !plannerMap) return;
+  if (plannerMap._rtsaOrigin) { plannerMap.removeLayer(plannerMap._rtsaOrigin); plannerMap._rtsaOrigin = null; }
+  if (!PLANNER_ORIGIN_POS) return;
+  var p = PLANNER_ORIGIN_POS, j = INTERSECTIONS_BY_NAME[p.junction];
+  var g = L.layerGroup();
+  L.circleMarker([p.lat, p.lng], { radius: 7, color: "#fff", weight: 2, fillColor: "#2f80ed", fillOpacity: 1 })
+    .bindPopup("<b>You are here</b>").addTo(g);
+  if (j) {
+    L.polyline([[p.lat, p.lng], j], { color: "#2f80ed", weight: 3, dashArray: "4 6", opacity: 0.85 })
+      .bindPopup("~" + (p.metres / 1000).toFixed(1) + " km to " + esc(p.junction)).addTo(g);
+  }
+  g.addTo(plannerMap);
+  plannerMap._rtsaOrigin = g;
+}
 
 function wireLocationSearch(input, list, inters, onPick) {
   function matches(q) {
@@ -1902,9 +2203,13 @@ function wireLocationSearch(input, list, inters, onPick) {
   }
   function render(q) {
     var ql = (q || "").toLowerCase().trim();
-    if (!ql) { list.style.display = "none"; return; }
-    var hits = matches(ql).slice(0, 8);
-    if (!hits.length) { list.style.display = "none"; return; }
+    // An empty box lists every junction, so it works like a dropdown too.
+    var hits = (ql ? matches(ql) : inters.slice()).slice(0, 50);
+    if (!hits.length) {
+      list.innerHTML = '<div class="suggest-item muted" data-none="1">No mapped junction matches “' + esc(q) + '”</div>';
+      list.style.display = "block";
+      return;
+    }
     list.innerHTML = hits.map(function (i) {
       return '<div class="suggest-item" data-name="' + esc(i.name) + '">' + esc(i.name) + "</div>";
     }).join("");
@@ -1913,14 +2218,21 @@ function wireLocationSearch(input, list, inters, onPick) {
   function hide() { list.style.display = "none"; }
   function select(active) {
     var el = active || list.querySelector(".suggest-item.select");
-    if (!el) return;
+    if (!el || el.getAttribute("data-none")) return;
     input.value = el.getAttribute("data-name");
+    input.classList.remove("invalid");
     hide();
     onPick();
   }
   input.addEventListener("input", function () { render(input.value); });
   input.addEventListener("focus", function () { render(input.value); });
-  input.addEventListener("blur", function () { setTimeout(hide, 120); });
+  input.addEventListener("blur", function () {
+    setTimeout(hide, 120);
+    // Snap to the canonical name, or flag text that isn't a mapped junction.
+    var known = knownJunction(input.value);
+    if (known) { input.value = known; input.classList.remove("invalid"); }
+    else input.classList.toggle("invalid", !!input.value.trim());
+  });
   input.addEventListener("keydown", function (e) {
     var items = $$(".suggest-item", list);
     if (e.key === "ArrowDown" && items.length) {
@@ -2017,17 +2329,46 @@ function renderNetworkOnMap(intersections) {
       if (group.getLayers().length) group.addTo(plannerMap);
       return;
     }
-    var lines = L.geoJSON(gj, {
-      style: function () { return { color: "#8a94a0", weight: 2, opacity: 0.6 }; },
-      onEachFeature: function (feat, layer) {
-        var p = feat.properties || {};
-        layer.bindPopup("<b>" + esc(p.road) + "</b><br>" + p.distance_km + " km · ~" + p.travel_minutes + " min");
-      }
-    });
-    group.addLayer(lines);
+    plannerMap._rtsaGeo = gj;
     group.addTo(plannerMap);
+    renderIncidentsOnMap();
   });
   plannerMap._rtsaNetwork = group;
+}
+
+// Network lines coloured by live state: red where an accident/closure blocks the
+// stretch (the planner routes around it), amber where the road has an incident.
+async function renderIncidentsOnMap() {
+  if (!window.L || !plannerMap || !plannerMap._rtsaGeo) return;
+  try { PLANNER_INCIDENTS = await api("/api/incidents/alerts"); } catch (e) { PLANNER_INCIDENTS = []; }
+  if (!plannerMap) return;
+  var bySeg = {}, byRoad = {};
+  PLANNER_INCIDENTS.forEach(function (a) {
+    if (a.segment_id) (bySeg[a.segment_id] = bySeg[a.segment_id] || []).push(a);
+    else if (a.road) (byRoad[a.road] = byRoad[a.road] || []).push(a);
+  });
+  if (plannerMap._rtsaLines) plannerMap.removeLayer(plannerMap._rtsaLines);
+  var lines = L.geoJSON(plannerMap._rtsaGeo, {
+    style: function (feat) {
+      var p = feat.properties || {};
+      var here = bySeg[p.id] || [];
+      if (here.some(function (a) { return a.blocking; })) return { color: "#e5484d", weight: 5, opacity: 0.95 };
+      if (here.length || byRoad[p.road]) return { color: "#f5a524", weight: 4, opacity: 0.9 };
+      return { color: "#8a94a0", weight: 2, opacity: 0.6 };
+    },
+    onEachFeature: function (feat, layer) {
+      var p = feat.properties || {};
+      var here = (bySeg[p.id] || []).concat(byRoad[p.road] || []);
+      layer.bindPopup("<b>" + esc(p.road) + "</b><br>" + p.distance_km + " km · ~" + p.travel_minutes + " min" +
+        here.map(function (a) {
+          return "<br><b style='color:#e5484d'>" + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> (" + esc(a.severity) + ")" +
+            (a.description ? ": " + esc(a.description) : "");
+        }).join(""));
+    }
+  });
+  lines.addTo(plannerMap);
+  lines.bringToBack();
+  plannerMap._rtsaLines = lines;
 }
 
 async function loadNetworkGeoJson(onReady) {
@@ -2036,6 +2377,19 @@ async function loadNetworkGeoJson(onReady) {
     onReady(gj);
   } catch (e) {
     onReady(null);
+  }
+}
+
+// Called on live road events while the planner is open: refresh the status
+// board and map, and re-plan the route on screen without touching the inputs.
+async function refreshPlannerLive() {
+  if (!$("#status-board")) return;
+  await Promise.all([loadStatusBoard(), renderIncidentsOnMap()]);
+  if (plannerMap && plannerMap._rtsaRoutes && $("#from-select").value && $("#to-select").value) {
+    await planRoute();
+    toast("Road conditions changed — your route was updated", "ok");
+  } else {
+    toast("Road conditions changed — map updated", "ok");
   }
 }
 
@@ -2084,9 +2438,11 @@ function showRouteOnMap(r) {
   }
 
   if (bounds.length) {
-    var startM = L.marker(bounds[0]).addTo(plannerMap);
+    // Circle markers: the default L.marker pin images come from the CDN, which
+    // the Content-Security-Policy img-src blocks, so they rendered broken.
+    var startM = L.circleMarker(bounds[0], { radius: 8, color: "#fff", weight: 2, fillColor: "#2fb344", fillOpacity: 1 }).addTo(plannerMap);
     startM.bindPopup("Start: " + esc(r.origin));
-    var endM = L.marker(bounds[bounds.length - 1]).addTo(plannerMap);
+    var endM = L.circleMarker(bounds[bounds.length - 1], { radius: 8, color: "#fff", weight: 2, fillColor: "#e5484d", fillOpacity: 1 }).addTo(plannerMap);
     endM.bindPopup("Destination: " + esc(r.destination));
     routeLayers.push(startM, endM);
   }
@@ -2105,15 +2461,29 @@ function clearRouteLayers() {
 }
 
 async function planRoute() {
-  var from = $("#from-select").value, to = $("#to-select").value;
   var out = $("#route-result");
-  if (!from || !to) return;
-  if (from === to) { out.innerHTML = '<div class="error-box">Choose two different intersections.</div>'; clearRouteLayers(); return; }
+  var fromIn = $("#from-select"), toIn = $("#to-select");
+  if (!fromIn.value.trim() || !toIn.value.trim()) return;
+  var from = knownJunction(fromIn.value), to = knownJunction(toIn.value);
+  fromIn.classList.toggle("invalid", !from);
+  toIn.classList.toggle("invalid", !to);
+  if (!from || !to) {
+    out.innerHTML = '<div class="error-box">Pick ' + (!from && !to ? "both places" : !from ? "the start" : "the destination") +
+      " from the list of mapped junctions" + (!from ? ", or use your current location" : "") + ".</div>";
+    clearRouteLayers();
+    return;
+  }
+  fromIn.value = from; toIn.value = to;
+  if (from === to) { out.innerHTML = '<div class="error-box">Choose two different junctions.</div>'; clearRouteLayers(); return; }
   var avoid = $("#avoid-incidents").checked;
   out.innerHTML = '<span class="muted">Planning…</span>';
   try {
     var r = await api("/api/routing/route?from_=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to) + "&avoid_incidents=" + avoid + "&include_alternatives=true&use_osrm=true");
     var blocks = [];
+    if (PLANNER_ORIGIN_POS && PLANNER_ORIGIN_POS.junction === from) {
+      blocks.push('<div class="small muted" style="margin-top:10px;">Starting from your location: ~' +
+        (PLANNER_ORIGIN_POS.metres / 1000).toFixed(1) + " km to " + esc(from) + " (blue dashed line), then:</div>");
+    }
     if (r.primary_route) {
       blocks.push('<div class="card" style="box-shadow:none;margin:10px 0 0;padding:10px;"><b>Primary route</b> · ' + r.primary_route.step_count + " steps · " +
         r.primary_route.total_distance_km + " km · ~" + r.primary_route.total_minutes + ' min' +
@@ -2123,7 +2493,9 @@ async function planRoute() {
           return "<tr><td>" + esc(s.road_name) + "</td><td class='small'>" + esc(s.from_intersection) + " → " + esc(s.to_intersection) + "</td><td>" + s.distance_km + "</td><td>" + s.travel_minutes + "</td></tr>";
         }).join("") + "</table></div>");
     } else {
-      blocks.push('<div class="error-box">No route found between these intersections.</div>');
+      blocks.push('<div class="error-box">' + (avoid && r.incidents_avoided
+        ? "Every way to " + esc(to) + " is currently closed by an incident. See <a href=\"#/alerts\">road alerts</a>, or untick “Avoid incidents” to see the usual route."
+        : "No route found between these junctions.") + "</div>");
     }
     (r.alternatives || []).forEach(function (alt, idx) {
       blocks.push('<div class="card" style="box-shadow:none;margin:8px 0 0;padding:10px;"><b>Alternative ' + (idx + 1) + "</b> · " + alt.step_count + " steps · " +
