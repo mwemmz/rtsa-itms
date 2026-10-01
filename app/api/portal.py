@@ -23,6 +23,20 @@ from app.services.audit import log_action
 from app.services.notifications import notify
 from app.services.ownership import owned_vehicles_query
 from app.services.payments import create_payment
+from app.services.routing import describe_place
+
+
+def _alert_out(db: Session, inc: RoadIncident) -> RouteAlertOut:
+    road_name, stretch = describe_place(db, inc.road_id, inc.segment_id)
+    return RouteAlertOut(
+        id=inc.id,
+        incident_type=inc.incident_type.value,
+        severity=inc.severity.value,
+        description=inc.description,
+        road_name=road_name,
+        stretch=stretch,
+        starts_at=inc.starts_at,
+    )
 
 router = APIRouter(prefix="/api/portal", tags=["Driver Portal"])
 
@@ -100,22 +114,7 @@ def dashboard(
         .limit(5)
         .all()
     )
-    alerts = []
-    for inc in alert_incidents:
-        road_name = None
-        if inc.road_id:
-            road = db.query(Road).filter(Road.id == inc.road_id).first()
-            road_name = road.name if road else None
-        alerts.append(
-            RouteAlertOut(
-                id=inc.id,
-                incident_type=inc.incident_type.value,
-                severity=inc.severity.value,
-                description=inc.description,
-                road_name=road_name,
-                starts_at=inc.starts_at,
-            ).model_dump()
-        )
+    alerts = [_alert_out(db, inc).model_dump() for inc in alert_incidents]
 
     unread = (
         db.query(Notification)
@@ -330,23 +329,7 @@ def my_alerts(
         .order_by(RoadIncident.starts_at.desc())
         .all()
     )
-    alerts = []
-    for inc in incidents:
-        road_name = None
-        if inc.road_id:
-            road = db.query(Road).filter(Road.id == inc.road_id).first()
-            road_name = road.name if road else None
-        alerts.append(
-            RouteAlertOut(
-                id=inc.id,
-                incident_type=inc.incident_type.value,
-                severity=inc.severity.value,
-                description=inc.description,
-                road_name=road_name,
-                starts_at=inc.starts_at,
-            )
-        )
-    return alerts
+    return [_alert_out(db, inc) for inc in incidents]
 
 
 @router.post("/login")

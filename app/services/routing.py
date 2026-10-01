@@ -72,6 +72,38 @@ def active_blocking_segments(db: Session, at: datetime | None = None) -> set[str
     return {str(i.segment_id) for i in incidents if i.segment_id}
 
 
+def describe_place(
+    db: Session,
+    road_id=None,
+    segment_id=None,
+) -> tuple[str | None, str | None]:
+    """(road name, "Junction A → Junction B") for an incident or accident.
+
+    The road comes from the segment when there is one, so a record that only
+    stores a segment still names its road.
+    """
+    road_name = None
+    stretch = None
+    if segment_id:
+        seg = db.get(RoadSegment, segment_id)
+        if seg:
+            road_id = road_id or seg.road_id
+            ends = {
+                str(i.id): i.name
+                for i in db.query(Intersection).filter(
+                    Intersection.id.in_([seg.start_intersection_id, seg.end_intersection_id])
+                )
+            }
+            a = ends.get(str(seg.start_intersection_id))
+            b = ends.get(str(seg.end_intersection_id))
+            if a and b:
+                stretch = f"{a} → {b}"
+    if road_id:
+        road = db.get(Road, road_id)
+        road_name = road.name if road else None
+    return road_name, stretch
+
+
 def _dijkstra(
     adjacency: dict[str, list[tuple[str, RoadSegment]]],
     origin_id: str,

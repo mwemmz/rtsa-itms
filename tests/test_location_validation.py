@@ -39,7 +39,10 @@ def _violation(location: str) -> ViolationCreate:
 
 
 def _accident(location: str) -> AccidentCreate:
+    # segment_id only satisfies the "must be on a mapped road" rule; location
+    # here is the optional landmark text.
     return AccidentCreate(
+        segment_id=uuid.uuid4(),
         location=location,
         occurred_at="2026-01-01T00:00:00",
         severity=AccidentSeverity.MINOR,

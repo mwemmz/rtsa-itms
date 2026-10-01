@@ -523,6 +523,8 @@ td select:focus {
 }
 .suggest-item:hover,
 .suggest-item.select { background: var(--gold-soft); color: var(--gold-ink); }
+.suggest-item[data-none] { cursor: default; color: var(--ink-2); background: none; }
+.loc-search.invalid { border-color: var(--err); }
 
 /* ---------- buttons ---------- */
 .btn {

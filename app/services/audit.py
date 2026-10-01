@@ -42,6 +42,13 @@ def log_action(
     )
     db.add(entry)
     db.flush()
+    if action in _MUTATING_ACTIONS:
+        # The analytics dashboard is cached; drop it so the next read reflects
+        # this change instead of serving numbers from before it. Imported here
+        # because the reports service imports modules that import this one.
+        from app.services import reports
+
+        reports.clear_cache()
     if action in _MUTATING_ACTIONS and hub.wants_events():
         hub.publish(
             {
