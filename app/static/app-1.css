@@ -200,19 +200,15 @@ a:hover { color: var(--gold-strong); }
 .welcome-text {
   color: rgba(255, 255, 255, 0.6);
   font-size: 14px;
-  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  /* Explicit, because this file has no heading/paragraph margin reset and the
-     user-agent default would otherwise add space above the first element. */
-  margin: 0 0 18px;
+  margin-bottom: 16px;
 }
 /* Split sign-in: the whole thing floats as one rounded card on a neutral
    page background, brand panel on the left, form card on the right. The
    corner radius lives on the outer grid and clips both children, so it
-   never has to be kept in sync across two separate panels. (Selector must
-   match the element's actual classes, login-screen + login-split.) */
-.login-screen.login-split { background: var(--slate-soft); }
+   never has to be kept in sync across two separate panels. */
+.login-screen.login-split-wrap { background: var(--slate-soft); }
 .login-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -298,29 +294,17 @@ a:hover { color: var(--gold-strong); }
   --ring: 0 0 0 3px rgba(221, 175, 77, 0.35);
   width: 100%;
   max-width: none;
-  /* Fills its grid track (the fixed-height .login-split card), not the
-     viewport — the old min-height: 100vh here fought the floating card's
-     own height and pushed the panel taller than the card around it. */
   height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  /* "safe center": centre the form when it's shorter than the panel, same as
-     before, but fall back to flex-start once content overflows. Plain
-     `center` here would centre-clip an overflowing form — its top (and the
-     bottom) end up positioned outside the scrollable range entirely, so
-     overflow-y: auto below could never actually reach them. */
-  justify-content: safe center;
+  justify-content: center;
   align-items: center;
   background: #ffffff;
   border: none;
   border-radius: 0;
   box-shadow: none;
   padding: clamp(32px, 4vw, 56px) 24px;
-  /* The card now has a fixed height (it fills a fixed-height floating card
-     instead of the whole viewport), so longer forms — signup has six fields
-     plus a lead paragraph — no longer fit. Scroll the panel itself rather
-     than clip them. */
-  overflow-y: auto;
   /* The card is a full-height column here, so animating the card itself would
      fade and slide a screen-sized block. The content wrapper carries the
      entrance instead; #mfa-gate keeps the animation on the card, where it is
@@ -335,10 +319,7 @@ a:hover { color: var(--gold-strong); }
 .login-title {
   font-size: 32px;
   font-weight: 700;
-  line-height: 1.2;
-  /* Reset both edges: without the shorthand the h2 default margin pushes the
-     heading down and it stops reading as optically centred. */
-  margin: 0 0 32px;
+  margin-bottom: 32px;
   color: var(--ink);
 }
 /* Sign up / forgot / reset have their own headings, so without this the panel
@@ -355,57 +336,17 @@ a:hover { color: var(--gold-strong); }
    information here rather than decoration: --ink-3 alone is only 3.08:1. */
 .login-split .login-card .field input::placeholder { color: var(--ink-2); }
 
-/* Underline fields instead of boxed ones, to match the floating-card look:
-   quieter than a bordered box against the white panel. */
-.login-split .login-card .field input {
-  border: none;
-  border-bottom: 1.5px solid var(--line-strong);
-  border-radius: 0;
-  padding: 8px 2px;
-  background: transparent;
-}
-.login-split .login-card .field input:focus {
-  box-shadow: none;
-  border-bottom-color: var(--gold);
-}
-.login-split .login-card .field input[aria-invalid="true"] { border-bottom-color: var(--err); }
-
-/* "Forgot password?" sits on the label's line, not stacked under the input —
-   :has() scopes this to only the field that actually has the link, so every
-   other field (email, MFA, captcha, signup/reset forms) is untouched. */
-.login-split .login-card .field:has(> .field-link) { position: relative; }
-.login-split .login-card .field:has(> .field-link) label { display: inline; }
-.login-split .login-card .field-link { position: absolute; top: 0; right: 0; margin: 0; }
-
-/* Big pill button, matching the floating-card style. */
-.login-split .login-card .btn.gold.block {
-  border-radius: 999px;
-  padding: 13px 16px;
-  font-size: 14.5px;
-  margin-top: 4px;
-}
 
 @media (max-width: 760px) {
-  /* Below the breakpoint the floating card collapses back to a normal,
-     edge-to-edge mobile login screen instead of a small stacked island. */
-  .login-screen.login-split { background: var(--panel, #fff); }
-  .login-split {
-    grid-template-columns: 1fr;
-    width: 100%;
-    height: auto;
-    min-height: 100vh;
-    margin: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
+  .login-split { grid-template-columns: 1fr; }
   .login-brand { padding: 30px 20px 24px; }
   /* Collapse the description so the form stays above the fold on a phone. */
   .login-brand .login-about { display: none; }
-  /* Smaller watermark on a short mobile brand panel so it doesn't overpower
-     the wordmark next to it. */
-  .login-brand::before { width: 180px; height: 180px; right: -40px; bottom: -40px; }
   .login-split .login-card {
     height: auto;
+    /* Both columns stop being full-height once they stack, otherwise each one
+       claims a whole viewport and the page scrolls twice. */
+    min-height: 0;
     border-radius: 0;
     box-shadow: none;
     padding: 26px 20px 32px;
