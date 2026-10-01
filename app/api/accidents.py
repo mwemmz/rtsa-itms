@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import OFFICERS, require_role
 from app.models.accident import Accident, AccidentSeverity, AccidentStatus, AccidentVehicle
+from app.models.road_network import IncidentSeverity, IncidentType, RoadIncident
 from app.models.user import User
 from app.schemas.accident import (
     AccidentCreate,
@@ -12,6 +13,7 @@ from app.schemas.accident import (
     AccidentVehicleResponse,
 )
 from app.services.audit import log_action
+from app.services.notifications import broadcast
 
 router = APIRouter(prefix="/api/accidents", tags=["Accidents"])
 
@@ -48,6 +50,34 @@ def report_accident(
         db, "report", "accident", str(accident.id),
         f"{payload.severity.value} accident at {payload.location}", current_user.id
     )
+
+    # An accident is a road incident too -- put it on the live alert feed
+    # (road_network.py's IncidentType.ACCIDENT exists for exactly this) so
+    # motorists and the map see it without a separate manual report.
+    incident = RoadIncident(
+        incident_type=IncidentType.ACCIDENT,
+        severity=IncidentSeverity(payload.severity.value),
+        description=payload.description or f"Accident at {payload.location}",
+        starts_at=payload.occurred_at,
+        reported_by=current_user.id,
+    )
+    db.add(incident)
+    db.flush()
+    log_action(
+        db, "report_incident", "road_incident", str(incident.id),
+        f"{payload.severity.value} accident at {payload.location}", current_user.id
+    )
+    broadcast(
+        db,
+        "road_alert",
+        {
+            "incident_type": "accident",
+            "road": payload.location,
+            "description": payload.description or "",
+            "suggestion": "An accident was reported here. Expect delays.",
+        },
+    )
+
     db.commit()
     db.refresh(accident)
     return accident
