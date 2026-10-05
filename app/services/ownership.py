@@ -8,6 +8,9 @@ A vehicle belongs to a user account when either
 
 Never match on names: two people can share one, and the other would see (or be
 notified about) this owner's vehicles and fines.
+
+A fine (e-Challan) is owed by a user when it is charged to one of their vehicles,
+or to their account directly (a false road report has no vehicle to charge).
 """
 
 import uuid
@@ -16,6 +19,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Query, Session
 
 from app.models.driver import Driver
+from app.models.enforcement import Challan
 from app.models.user import User
 from app.models.vehicle import Vehicle
 
@@ -42,3 +46,17 @@ def owner_user_id(db: Session, vehicle: Vehicle | None) -> uuid.UUID | None:
         .first()
     )
     return driver.user_id if driver else None
+
+
+def owed_challans_query(db: Session, user: User) -> Query:
+    """Every e-Challan this user is liable to pay, paid or not."""
+    vehicle_ids = owned_vehicles_query(db, user).with_entities(Vehicle.id)
+    return db.query(Challan).filter(or_(Challan.vehicle_id.in_(vehicle_ids), Challan.user_id == user.id))
+
+
+def owes_challan(db: Session, user: User, challan: Challan | None) -> bool:
+    if challan is None:
+        return False
+    if challan.user_id is not None and challan.user_id == user.id:
+        return True
+    return challan.vehicle_id is not None and owner_user_id(db, db.get(Vehicle, challan.vehicle_id)) == user.id

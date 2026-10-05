@@ -194,6 +194,34 @@ curl "http://localhost:8000/api/routing/route?from=Great%20East%20/%20Airport%20
   -H "Authorization: Bearer <token>"
 ```
 
+### Citizen road reports (with accountability)
+
+Citizens report what they see on the road; everyone's route planner reacts at once,
+and an officer verifies it after the fact.
+
+1. A citizen signs up with their **NRC number** (`POST /api/auth/register`,
+   `nrc_number` required, one account per NRC). Older accounts add it once under
+   *My account*; after that only an admin can change it.
+2. They report from **Report incident** (`POST /api/incidents/`): type, road and
+   stretch ("Use my location" finds it), severity, and a declaration that it is
+   true. The report goes on the live feed as `unverified` and an accident or
+   closure closes its stretch in the route planner immediately. Officers get an
+   in-app notice; motorists are not pushed an alert yet.
+3. An officer reviews it under **Road alerts**:
+   * **Confirm** (`POST /api/incidents/{id}/confirm`): it becomes an official
+     alert, motorists are notified, and a confirmed accident opens an accident
+     case (cleared later from the Accidents screen).
+   * **Dismiss** (`POST /api/incidents/{id}/dismiss`, `false_report: false`): the
+     road reopens and the reporter is not blamed.
+   * **False report** (`false_report: true` plus a reason): the road reopens and
+     the reporter's account is fined with an e-Challan they pay from *Fines &
+     payments*.
+4. Limits (admin settings, `road_reports.*`): the false-report fine, how many
+   false reports within how many days suspend reporting (default 3 in 180), and
+   how many unverified reports one citizen can have live at once (default 3).
+   `GET /api/incidents/reporting-status` says whether the signed-in user can
+   report and why not; `GET /api/incidents/mine` lists their reports.
+
 The road network is explorable as a **leaflet** (`GET /api/road-network/leaflet`,
 human-readable status of every road) and as **GeoJSON** (`GET /api/road-network/geojson`,
 ready for a Leaflet/OpenLayers map), plus a live board at
@@ -212,8 +240,8 @@ ready for a Leaflet/OpenLayers map), plus a live board at
 
 | Role            | Scope                                                        |
 |-----------------|--------------------------------------------------------------|
-| `citizen`       | Own vehicles/fines/applications/payments, pay, profile & security |
-| `officer`       | Record violations, inspections, issue licences; view + export reports |
+| `citizen`       | Own vehicles/fines/applications/payments, pay, profile & security, report road incidents |
+| `officer`       | Record violations, inspections, issue licences, review citizen road reports; view + export reports |
 | `toll_operator` | Post toll events; view reports                                 |
 | `admin`         | Everything, including user management, settings, integrations, ops |
 

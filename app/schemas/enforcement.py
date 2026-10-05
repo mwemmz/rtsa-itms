@@ -48,6 +48,8 @@ class ViolationResponse(BaseModel):
     owner_name: str | None = None
     owner_id_number: str | None = None
     driver_name: str | None = None
+    # Set when the violation is charged to an account rather than a vehicle or driver.
+    account_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -70,6 +72,7 @@ class ChallanResponse(BaseModel):
     registration_number: str | None = None
     owner_name: str | None = None
     driver_name: str | None = None
+    account_name: str | None = None
 
     model_config = {"from_attributes": True}
 

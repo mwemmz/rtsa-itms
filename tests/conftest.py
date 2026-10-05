@@ -43,3 +43,10 @@ def create_user(role: str = "citizen", password: str = "password123", **extra):
         return user.email, user.id
     finally:
         db.close()
+
+
+def random_nrc() -> str:
+    """A well-formed NRC number for a test sign-up; one account per NRC, so make it unique."""
+    from random import randint
+
+    return f"{randint(100000, 999999)}/{randint(10, 99)}/{randint(1, 3)}"

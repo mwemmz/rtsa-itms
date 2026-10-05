@@ -21,6 +21,7 @@ from app.models.notification import NotificationRule  # noqa: E402
 from app.models.vehicle import Vehicle  # noqa: E402
 
 from main import app  # noqa: E402
+from tests.conftest import random_nrc  # noqa: E402
 
 client = TestClient(app)
 
@@ -247,6 +248,7 @@ def test_driver_portal_flow():
             "email": f"portal_{uuid4().hex[:8]}@test.com",
             "password": "password123",
             "full_name": "Portal Driver",
+            "nrc_number": random_nrc(),
             "role": UserRole.CITIZEN.value,
         },
     )
@@ -349,6 +351,7 @@ def test_worker_licence_expiry_scan():
             "email": f"expiry_{uuid4().hex[:8]}@test.com",
             "password": "password123",
             "full_name": "Expiring Driver",
+            "nrc_number": random_nrc(),
             "role": UserRole.CITIZEN.value,
         },
     )

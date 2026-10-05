@@ -11,6 +11,9 @@ class UserCreate(BaseModel):
     password: str
     full_name: str
     phone_number: str | None = None
+    # National Registration Card number, required for self-registration: road
+    # reports (and fines for false ones) are tied to it.
+    nrc_number: str | None = None
     # Public self-registration only ever creates citizens; any other value is
     # rejected. Staff accounts are created by an administrator.
     role: UserRole = UserRole.CITIZEN
@@ -26,12 +29,15 @@ class AdminUserCreate(BaseModel):
     password: str
     full_name: str
     phone_number: str | None = None
+    nrc_number: str | None = None
     role: UserRole = UserRole.CITIZEN
 
 
 class AdminUserUpdate(BaseModel):
     full_name: str | None = None
     phone_number: str | None = None
+    # Only an administrator can correct an NRC once it is on an account.
+    nrc_number: str | None = None
     is_active: bool | None = None
     role: UserRole | None = None
 
@@ -44,6 +50,7 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     phone_number: str | None = None
+    nrc_number: str | None = None
     mfa_enabled: bool = False
     last_login_at: datetime | None = None
     locked_until: datetime | None = None

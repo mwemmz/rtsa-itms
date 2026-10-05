@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services import account_links
 from app.services import settings as runtime_settings
 from main import app
-from tests.conftest import create_user
+from tests.conftest import create_user, random_nrc
 
 client = TestClient(app)
 PW = "password123"
@@ -57,7 +57,8 @@ def _user(email) -> User:
 
 
 def _register(email):
-    r = client.post("/api/auth/register", json={"email": email, "password": PW, "full_name": "Jane Banda"},
+    r = client.post("/api/auth/register", json={"email": email, "password": PW, "full_name": "Jane Banda",
+                                                  "nrc_number": random_nrc()},
                     headers={"X-Forwarded-For": f"10.20.{uuid4().int % 250}.1"})
     assert r.status_code == 201, r.text
     return r
@@ -222,7 +223,8 @@ def test_the_real_owner_can_take_back_an_address_someone_else_registered(outbox)
     squatter = _auth(email)
     outbox.clear()
 
-    taken = client.post("/api/auth/register", json={"email": email, "password": PW, "full_name": "Real Owner"})
+    taken = client.post("/api/auth/register", json={"email": email, "password": PW, "full_name": "Real Owner",
+                                                    "nrc_number": random_nrc()})
     assert taken.status_code == 400 and "Forgot password" in taken.json()["detail"]
     client.post("/api/auth/password-reset/request", json={"email": email})  # the link lands in the owner's inbox
     client.post("/api/auth/password-reset/confirm",

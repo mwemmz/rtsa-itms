@@ -173,6 +173,7 @@ var NAV = {
     { id: "users", label: "Users" },
     { id: "violations", label: "Violations" },
     { id: "challans", label: "Challans" },
+    { id: "alerts", label: "Road alerts" },
     { id: "audits", label: "Audit log" },
     { id: "rules", label: "Notification rules" },
     { id: "planner", label: "Route planner" }
@@ -193,6 +194,7 @@ var NAV = {
   ],
   citizen: [
     { id: "dashboard", label: "My dashboard" },
+    { id: "report", label: "Report incident" },
     { id: "fines", label: "Fines & payments" },
     { id: "licence", label: "My licence" },
     { id: "alerts", label: "Road alerts" },
@@ -352,6 +354,22 @@ async function doLogin(email, password, msgEl, btn) {
 var SIGNUP_CAPTCHA = null;
 var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 var PHONE_RE = /^\+?[0-9][0-9 ]{6,19}$/;
+var NRC_RE = /^\d{6}\/\d{2}\/\d$/;
+
+// Puts the slashes in an NRC as it's typed: 123456781 -> 123456/78/1.
+function formatNrc(value) {
+  var d = String(value || "").replace(/\D/g, "").slice(0, 9);
+  return d.length > 8 ? d.slice(0, 6) + "/" + d.slice(6, 8) + "/" + d.slice(8)
+    : d.length > 6 ? d.slice(0, 6) + "/" + d.slice(6) : d;
+}
+
+function wireNrcInput(input) {
+  input.addEventListener("input", function () {
+    var atEnd = input.selectionStart === input.value.length;
+    input.value = formatNrc(input.value);
+    if (atEnd) input.selectionStart = input.selectionEnd = input.value.length;
+  });
+}
 
 // The sign-in card holds four forms; exactly one is shown.
 var AUTH_VIEWS = {
@@ -388,6 +406,7 @@ function markInvalid(input, msgEl, message) {
 // Mirrors the server's checks for instant feedback; the server stays authoritative.
 function signupProblem(body) {
   if (!body.full_name) return ["#su-name", "Enter your full name."];
+  if (!NRC_RE.test(body.nrc_number)) return ["#su-nrc", "Enter your NRC number as on your card, e.g. 123456/78/1."];
   if (!EMAIL_RE.test(body.email)) return ["#su-email", "Enter a valid email address."];
   if (body.phone_number && !PHONE_RE.test(body.phone_number)) {
     return ["#su-phone", "Enter a valid mobile number, e.g. +260971234567."];
@@ -401,6 +420,7 @@ function signupProblem(body) {
 
 // Which input a server-side rejection is about, so we can point at it.
 function signupFieldFor(message) {
+  if (/NRC/.test(message)) return "#su-nrc";
   if (/email/i.test(message)) return "#su-email";
   if (/password/i.test(message)) return "#su-password";
   if (/mobile|phone/i.test(message)) return "#su-phone";
@@ -414,6 +434,7 @@ async function doSignup() {
   $$("#signup-form [aria-invalid]").forEach(function (el) { el.removeAttribute("aria-invalid"); });
   var body = {
     full_name: $("#su-name").value.trim(),
+    nrc_number: formatNrc($("#su-nrc").value),
     email: $("#su-email").value.trim(),
     password: $("#su-password").value
   };
@@ -608,7 +629,7 @@ var LIVE_VIEWS = {
   role: ["users", "audits"],
   setting: ["settings"],
   notification_rule: ["rules"],
-  road_incident: ["alerts", "dashboard", "planner", "accidents"],
+  road_incident: ["alerts", "dashboard", "planner", "accidents", "report"],
   accident: ["dashboard", "accidents", "reports"],
   toll_transaction: ["toll", "reports"],
   toll_offline_event: ["toll"],
@@ -628,6 +649,7 @@ var LIVE_FORM_VIEWS = { violations: 1, toll: 1, account: 1, licensing: 1, inspec
 var LIVE_PARTIAL_VIEWS = {
   planner: function () { return refreshPlannerLive(); },
   alerts: function () { return loadAlertList(); },
+  report: function () { return Promise.all([loadReportStanding(), loadMyReports()]); },
   accidents: function () { return Promise.all([loadAccidentStats(), loadAccidents()]); },
   reports: function () { return window.loadReportKpis ? window.loadReportKpis() : null; }
 };
@@ -802,9 +824,9 @@ function statusPill(status) {
   return '<span class="pill ' + cls + '">' + esc(status) + "</span>";
 }
 
-var CATEGORY_LABELS = { vehicle: "Vehicle offence", driver: "Driver offence", both: "Both" };
-var CATEGORY_CLASSES = { vehicle: "blue", driver: "amber", both: "gray" };
-var LIABLE_LABELS = { driver: "Driver", owner: "Owner", both: "Driver + owner" };
+var CATEGORY_LABELS = { vehicle: "Vehicle offence", driver: "Driver offence", both: "Both", reporter: "False report" };
+var CATEGORY_CLASSES = { vehicle: "blue", driver: "amber", both: "gray", reporter: "red" };
+var LIABLE_LABELS = { driver: "Driver", owner: "Owner", both: "Driver + owner", reporter: "Reporter" };
 
 function categoryPill(category) {
   var key = CATEGORY_LABELS[category] ? category : "both";
@@ -874,11 +896,13 @@ async function officerDashboard() {
   var incidents = [];
   try { incidents = await api("/api/incidents/alerts"); } catch (e) { /* board still renders */ }
   var blocking = incidents.filter(function (a) { return a.blocking; }).length;
+  var toReview = incidents.filter(function (a) { return a.verification === "unverified"; }).length;
   return (
     '<div class="grid cards">' +
       kpi("Active challans", unpaid) +
       kpi("Recent violations", violations.length) +
       kpi("Active road incidents", "<a href='#/alerts'>" + incidents.length + "</a>", blocking + " blocking a road") +
+      kpi("Citizen reports to review", "<a href='#/alerts'>" + toReview + "</a>", toReview ? "Live on the planner until reviewed" : "All reviewed") +
       kpi("Tools", "<div><a class='btn gold sm' href='#/violations'>Record violation</a> <a class='btn sm' href='#/accidents'>Report accident</a> <a class='btn sm' href='#/toll'>Toll gate</a></div>") +
     "</div>" +
     '<div class="row">' +
@@ -911,14 +935,16 @@ async function citizenDashboard() {
             return "<tr><td><b>" + esc(v.registration_number) + "</b><div class='small muted'>" + esc(v.make) + " " + esc(v.model) + " (" + v.year + ")</div></td><td>" + statusPill(v.status) + "</td></tr>";
           }).join("")) + "</table></div>"
         : '<div class="empty">No vehicles registered to you.</div>') +
-      cars("Road alerts", (d.active_alerts || []).length
+      cars("Road alerts", ((d.active_alerts || []).length
         ? d.active_alerts.map(function (a) {
             return '<div class="small" style="padding:6px 0;border-bottom:1px solid var(--line);"><b>' + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · " + esc(a.severity) +
+              (a.verification === "unverified" ? " " + verificationPill(a.verification) : "") +
               (a.road_name ? ' on <b>' + esc(a.road_name) + "</b>" : "") +
               (a.stretch ? '<div class="muted">' + esc(a.stretch) + "</div>" : "") +
               (a.description ? "<div>" + esc(a.description) + "</div>" : "") + "</div>";
           }).join("") + '<p class="small" style="margin:10px 0 0;"><a href="#/planner">Plan a route around these</a></p>'
         : '<div class="empty">No active alerts.</div>') +
+        '<p style="margin:12px 0 0;"><a class="btn gold sm" href="#/report">Report an incident</a></p>') +
     "</div>"
   );
 }
@@ -941,7 +967,7 @@ function vehicleRows(vs) {
 function violationRows(vs) {
   return vs.length
     ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
-        var offender = v.driver_name || v.owner_name || "Unknown offender";
+        var offender = v.driver_name || v.owner_name || v.account_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
         return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (v.speed_kmh == null ? '<span class="small muted">—</span>' : "<b>" + esc(String(v.speed_kmh).replace(/\.0$/, "")) + "</b> km/h") + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table></div>"
@@ -951,7 +977,7 @@ function violationRows(vs) {
 function challanRows(cs) {
   return cs.length
     ? '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
-        var offender = c.driver_name || c.owner_name || "Unknown offender";
+        var offender = c.driver_name || c.owner_name || c.account_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
         return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table></div>"
@@ -2021,12 +2047,28 @@ var INCIDENT_TYPE_LABELS = {
 
 function isRoadStaff() { return USER && (USER.role === "officer" || USER.role === "admin"); }
 
+// Where a report stands with RTSA. Mirrors IncidentVerification in app/models/road_network.py.
+var VERIFICATION_LABELS = {
+  official: ["Official", "blue"],
+  unverified: ["Unverified", "amber"],
+  confirmed: ["Confirmed", "green"],
+  dismissed: ["Closed, no action", "gray"],
+  "false": ["Found false", "red"]
+};
+
+function verificationPill(v) {
+  var l = VERIFICATION_LABELS[v] || [v, "gray"];
+  return '<span class="pill ' + l[1] + '">' + esc(l[0]) + "</span>";
+}
+
 VIEWS.alerts = async function () {
   var staff = isRoadStaff();
   $("#content").innerHTML =
     (staff ? '<div class="row">' : "") +
     '<div class="card"><h3>Active road alerts</h3>' +
-      '<div class="small muted" style="margin:-4px 0 8px;">Accidents and closures here are routed around in the <a href="#/planner">route planner</a>.</div>' +
+      '<div class="small muted" style="margin:-4px 0 8px;">Accidents and closures here are routed around in the <a href="#/planner">route planner</a>' +
+        (staff ? ", including citizen reports still waiting for review." : ".") + "</div>" +
+      (USER.role === "citizen" ? '<p style="margin:0 0 10px;"><a class="btn gold sm" href="#/report">Report an incident</a></p>' : "") +
       '<div id="alert-list"><div class="empty">Loading…</div></div></div>' +
     (staff
       ? '<div class="card"><h3>Report a road incident</h3><form id="inc-form">' +
@@ -2060,7 +2102,7 @@ VIEWS.alerts = async function () {
         e.target.reset();
         $("#inc-segment").disabled = true;
         $("#inc-here-msg").textContent = "";
-        await loadAlertList();
+        await loadAlertList(true);
       } catch (err) { toast(err.message, "err"); }
       finally { btn.disabled = false; }
     });
@@ -2068,23 +2110,69 @@ VIEWS.alerts = async function () {
   await loadAlertList();
 };
 
-async function loadAlertList() {
+function alertHtml(a, staff) {
+  var cls = a.severity === "fatal" ? "red" : a.severity === "serious" ? "amber" : "blue";
+  var review = a.verification === "unverified";
+  var who = "";
+  if (staff && a.reporter) {
+    var r = a.reporter;
+    who = '<div class="small">Reported by <b>' + esc(r.name) + "</b>" +
+      (r.nrc ? ' · NRC <span class="mono">' + esc(r.nrc) + "</span>" : "") +
+      (r.phone ? " · " + esc(r.phone) : "") +
+      (r.false_reports ? ' · <span class="pill red">' + Number(r.false_reports) + " false report" + (r.false_reports === 1 ? "" : "s") + "</span>" : "") +
+      "</div>";
+  } else if (a.citizen_report) {
+    who = '<div class="small muted">' + (a.mine ? "Your report" : "Reported by a motorist") +
+      (review ? ", waiting for an officer to verify it" : "") + "</div>";
+  }
+  var actions = "";
+  if (staff && review) {
+    // Dismiss / false open an inline reason box: the reporter sees the reason, and
+    // a false report is fined, so the officer has to say why.
+    actions = '<div class="review-actions">' +
+      '<button type="button" class="btn gold sm inc-confirm" data-id="' + esc(a.id) + '">Confirm</button>' +
+      '<button type="button" class="btn ghost sm inc-review" data-mode="dismiss">Dismiss</button>' +
+      '<button type="button" class="btn ghost sm inc-review" data-mode="false" style="color:var(--err);">False report, fine reporter</button></div>' +
+      '<form class="review-form hidden" data-id="' + esc(a.id) + '" style="margin-top:8px;">' +
+        '<div class="small review-hint" style="margin-bottom:6px;"></div>' +
+        '<div class="field" style="margin:0 0 6px;"><textarea rows="2" maxlength="500" required aria-label="Reason the reporter will see"></textarea></div>' +
+        '<div class="review-actions"><button type="submit" class="btn sm review-submit"></button>' +
+        '<button type="button" class="btn ghost sm review-cancel">Cancel</button></div></form>';
+  } else if (staff) {
+    actions = ' · <a href="#" class="inc-resolve" data-id="' + esc(a.id) + '">Mark resolved</a>';
+  }
+  return '<div class="report-row">' +
+    "<b>" + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · <span class='pill " + cls + "'>" + esc(a.severity) + "</span>" +
+    (a.citizen_report ? " " + verificationPill(a.verification) : "") +
+    (a.road ? ' <span class="muted">on <b>' + esc(a.road) + "</b></span>" : ' <span class="muted">(no road recorded)</span>') +
+    (a.stretch ? '<div class="small muted">' + esc(a.stretch) + (a.blocking ? " · closed in the route planner" : "") + "</div>" : "") +
+    (a.description ? '<div class="small">' + esc(a.description) + "</div>" : "") +
+    who +
+    '<div class="small muted">Since ' + dt(a.started_at) + (review ? "" : actions) + "</div>" +
+    (review ? actions : "") +
+  "</div>";
+}
+
+// force: reload even if an officer is part-way through writing a review reason
+// (live updates call this without it, so a new report can't wipe their text).
+async function loadAlertList(force) {
   var list = $("#alert-list");
   if (!list) return;
+  var staff = isRoadStaff();
+  var drafting = $$("#alert-list .review-form:not(.hidden) textarea").some(function (t) { return t.value.trim(); });
+  if (drafting && !force) { toast("Road alerts changed — the list refreshes when you finish this review"); return; }
   try {
-    var items = await api("/api/portal/alerts");
+    var items = await api("/api/incidents/alerts");
+    var fine = 0;
+    if (staff && items.some(function (a) { return a.verification === "unverified"; })) {
+      try { fine = (await api("/api/incidents/reporting-status")).fine_amount; } catch (e) { /* hint just omits it */ }
+    }
+    // Reports waiting for review go first so officers see them straight away.
+    if (staff) items.sort(function (x, y) { return (y.verification === "unverified") - (x.verification === "unverified"); });
     list.innerHTML = items.length
-      ? items.map(function (a) {
-          var cls = a.severity === "fatal" ? "red" : a.severity === "serious" ? "amber" : "blue";
-          return '<div style="padding:10px 0;border-bottom:1px solid var(--line);">' +
-            "<b>" + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · <span class='pill " + cls + "'>" + esc(a.severity) + "</span>" +
-            (a.road_name ? ' <span class="muted">on <b>' + esc(a.road_name) + "</b></span>" : ' <span class="muted">(no road recorded)</span>') +
-            (a.stretch ? '<div class="small muted">' + esc(a.stretch) + "</div>" : "") +
-            (a.description ? '<div class="small">' + esc(a.description) + "</div>" : "") +
-            '<div class="small muted">Since ' + dt(a.starts_at) +
-            (isRoadStaff() ? ' · <a href="#" class="inc-resolve" data-id="' + esc(a.id) + '">Mark resolved</a>' : "") + "</div></div>";
-        }).join("")
+      ? items.map(function (a) { return alertHtml(a, staff); }).join("")
       : '<div class="empty">No active alerts.</div>';
+
     $$("#alert-list .inc-resolve").forEach(function (link) {
       link.addEventListener("click", async function (e) {
         e.preventDefault();
@@ -2092,10 +2180,190 @@ async function loadAlertList() {
         try {
           await api("/api/incidents/" + link.dataset.id + "/resolve", { method: "POST" });
           toast("Incident resolved", "ok");
-          await loadAlertList();
+          await loadAlertList(true);
         } catch (err) { toast(err.message, "err"); }
       });
     });
+    $$("#alert-list .inc-confirm").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        btn.disabled = true;
+        try {
+          await api("/api/incidents/" + btn.dataset.id + "/confirm", { method: "POST" });
+          toast("Report confirmed — motorists have been alerted", "ok");
+          await loadAlertList(true);
+        } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+      });
+    });
+    $$("#alert-list .inc-review").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".report-row"), form = row.querySelector(".review-form");
+        var falseReport = btn.dataset.mode === "false";
+        form.dataset.mode = btn.dataset.mode;
+        form.querySelector(".review-hint").innerHTML = falseReport
+          ? '<span style="color:var(--err);">The reporter is fined' + (fine ? " <b>" + esc(money(fine)) + "</b>" : "") +
+            " and it counts towards suspending their reporting.</span> Say what shows the report is false; they will see this."
+          : "Closes the report and reopens the road. The reporter is not penalised and sees your reason.";
+        form.querySelector("textarea").placeholder = falseReport
+          ? "e.g. Officer at the scene at 14:05: no collision, traffic flowing"
+          : "e.g. Scene already cleared on arrival";
+        var submit = form.querySelector(".review-submit");
+        submit.textContent = falseReport ? "Fine reporter" : "Close report";
+        submit.className = "btn sm review-submit " + (falseReport ? "gold" : "ghost");
+        form.classList.remove("hidden");
+        form.querySelector("textarea").focus();
+      });
+    });
+    $$("#alert-list .review-cancel").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var form = btn.closest(".review-form");
+        form.querySelector("textarea").value = "";
+        form.classList.add("hidden");
+      });
+    });
+    $$("#alert-list .review-form").forEach(function (form) {
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var reason = form.querySelector("textarea").value.trim();
+        if (reason.length < 5) { toast("Give the reason in a few words", "err"); return; }
+        var falseReport = form.dataset.mode === "false";
+        var submit = form.querySelector(".review-submit");
+        submit.disabled = true;
+        try {
+          await api("/api/incidents/" + form.dataset.id + "/dismiss", {
+            method: "POST", body: JSON.stringify({ false_report: falseReport, reason: reason })
+          });
+          toast(falseReport ? "Marked false — the reporter has been fined" : "Report closed — the road reopens in the route planner", "ok");
+          await loadAlertList(true);
+        } catch (err) { toast(err.message, "err"); submit.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+/* ---------------- citizen: report a road incident ---------------- */
+
+// Citizens report what they see. It goes on the road feed and closes the stretch
+// in everyone's route planner at once, marked unverified until an officer
+// reviews it. Reports are tied to the reporter's NRC; a false one is fined.
+var REPORT_TYPES = ["accident", "road_closed", "congestion", "roadworks"];
+var REPORT_STANDING = null;
+
+VIEWS.report = async function () {
+  $("#content").innerHTML =
+    '<div class="row">' +
+      '<div class="card"><h3>Report a road incident</h3>' +
+        '<div id="rep-standing"></div>' +
+        '<form id="rep-form" novalidate>' +
+          '<div class="field"><label id="rep-type-label">What is happening?</label><div class="choice-row" role="group" aria-labelledby="rep-type-label">' +
+            REPORT_TYPES.map(function (t, i) {
+              return '<button type="button" class="btn ghost sm rep-type" data-type="' + t + '" aria-pressed="' + (i === 0) + '">' + esc(INCIDENT_TYPE_LABELS[t]) + "</button>";
+            }).join("") + "</div></div>" +
+          roadPickerHtml("rep") +
+          '<div class="field"><label for="rep-severity">How serious is it?</label><select id="rep-severity" name="severity">' +
+            '<option value="minor">Minor: traffic still moving</option><option value="serious" selected>Serious: lane or road blocked, injuries</option><option value="fatal">Fatal</option></select></div>' +
+          '<div class="field"><label for="rep-description">Details (optional)</label><textarea id="rep-description" name="description" rows="2" maxlength="1000" placeholder="e.g. two cars blocking the left lane near the filling station"></textarea></div>' +
+          '<label class="declare"><input type="checkbox" id="rep-declare" aria-labelledby="rep-declare-text"> <span id="rep-declare-text">I confirm this report is true and happening now.</span></label>' +
+          '<button class="btn gold" type="submit" id="rep-submit">Send report</button>' +
+        "</form></div>" +
+      '<div class="card"><h3>My reports</h3><div id="rep-mine"><div class="empty">Loading…</div></div></div>' +
+    "</div>";
+
+  var type = REPORT_TYPES[0];
+  $$(".rep-type").forEach(function (b) {
+    b.addEventListener("click", function () {
+      type = b.dataset.type;
+      $$(".rep-type").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    });
+  });
+
+  var pickPlace = null;
+  try {
+    pickPlace = wireRoadPicker("rep", await loadRoadNetwork());
+  } catch (err) {
+    $("#rep-form").insertAdjacentHTML("afterbegin", '<div class="error-box">Couldn\'t load the road network: ' + esc(err.message) + "</div>");
+  }
+
+  $("#rep-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var place = pickPlace && pickPlace();
+    if (!place || !place.segment_id) { toast("Choose the road and the stretch, or tap “Use my location”", "err"); return; }
+    if (!$("#rep-declare").checked) { toast("Tick the box to confirm the report is true", "err"); $("#rep-declare").focus(); return; }
+    var body = {
+      incident_type: type,
+      severity: $("#rep-severity").value,
+      road_id: place.road_id,
+      segment_id: place.segment_id,
+      description: $("#rep-description").value.trim() || null,
+      declaration: true
+    };
+    var btn = $("#rep-submit");
+    btn.disabled = true;
+    try {
+      await api("/api/incidents/", { method: "POST", body: JSON.stringify(body) });
+      toast("Thank you — drivers are being routed around it now. An officer will verify your report.", "ok");
+      e.target.reset();
+      $("#rep-severity").value = "serious";
+      $("#rep-road").dispatchEvent(new Event("change")); // empties the stretch list too
+      $("#rep-here-msg").textContent = "";
+      await Promise.all([loadReportStanding(), loadMyReports()]);
+    } catch (err) { toast(err.message, "err"); }
+    finally { btn.disabled = !(REPORT_STANDING && REPORT_STANDING.can_report); }
+  });
+
+  await Promise.all([loadReportStanding(), loadMyReports()]);
+
+  // Someone reporting is usually standing at the scene: if they've already let
+  // the app use their location, find the stretch for them.
+  if (pickPlace && REPORT_STANDING && REPORT_STANDING.can_report && navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: "geolocation" }).then(function (p) {
+      if (p.state === "granted" && $("#rep-here") && !$("#rep-road").value) $("#rep-here").click();
+    }).catch(function () { /* not supported: the button is still there */ });
+  }
+};
+
+async function loadReportStanding() {
+  var box = $("#rep-standing");
+  if (!box) return;
+  try {
+    var st = REPORT_STANDING = await api("/api/incidents/reporting-status");
+    var fine = money(st.fine_amount);
+    if (!st.can_report) {
+      box.innerHTML = '<div class="error-box">' + esc(st.reason) +
+        (st.nrc_on_file ? "" : ' <a href="#/account">Add it now</a>') + "</div>";
+    } else {
+      box.innerHTML = '<div class="info-box">Your report goes on the route planner straight away so other drivers avoid the road, and an officer then verifies it. ' +
+        "Reports are tied to your NRC: one found to be false is fined <b>" + esc(fine) + "</b>, and " +
+        Number(st.strike_limit) + " false reports in " + Number(st.window_days) + " days suspend reporting." +
+        (st.false_reports ? " You have <b>" + Number(st.false_reports) + "</b> on record." : "") + "</div>";
+    }
+    $("#rep-declare-text").textContent = "I confirm this report is true and happening now. I understand a false report is fined " + fine + ".";
+    $$("#rep-form input, #rep-form select, #rep-form textarea, #rep-form button").forEach(function (el) { el.disabled = !st.can_report; });
+    // A stretch can only be picked once a road is chosen.
+    if (st.can_report && !$("#rep-road").value) $("#rep-segment").disabled = true;
+  } catch (e) {
+    box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+async function loadMyReports() {
+  var list = $("#rep-mine");
+  if (!list) return;
+  try {
+    var items = await api("/api/incidents/mine");
+    list.innerHTML = items.length
+      ? items.map(function (r) {
+          var state = r.verification === "confirmed" && !r.is_active ? '<span class="pill gray">Cleared</span>' : verificationPill(r.verification);
+          return '<div class="report-row"><b>' + esc(INCIDENT_TYPE_LABELS[r.incident_type] || r.incident_type) + "</b> " + state +
+            (r.road_name ? ' <span class="muted">on <b>' + esc(r.road_name) + "</b></span>" : "") +
+            (r.stretch ? '<div class="small muted">' + esc(r.stretch) + "</div>" : "") +
+            '<div class="small muted">' + dt(r.starts_at) + "</div>" +
+            (r.review_note ? '<div class="small">Officer: ' + esc(r.review_note) + "</div>" : "") +
+            (r.verification === "false" ? '<div class="small"><a href="#/fines">See the fine under Fines &amp; payments</a></div>' : "") +
+          "</div>";
+        }).join("")
+      : '<div class="empty">You haven\'t reported anything yet.</div>';
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
@@ -2368,6 +2636,7 @@ async function renderIncidentsOnMap() {
       layer.bindPopup("<b>" + esc(p.road) + "</b><br>" + p.distance_km + " km · ~" + p.travel_minutes + " min" +
         here.map(function (a) {
           return "<br><b style='color:#e5484d'>" + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> (" + esc(a.severity) + ")" +
+            (a.verification === "unverified" ? " <i>unverified report</i>" : "") +
             (a.description ? ": " + esc(a.description) : "");
         }).join(""));
     }
@@ -2564,6 +2833,7 @@ function wire() {
   $$("#signup-form input").forEach(function (input) {
     input.addEventListener("input", function () { input.removeAttribute("aria-invalid"); });
   });
+  wireNrcInput($("#su-nrc"));
   $("#logout-btn").addEventListener("click", logout);
   $("#mfa-gate-signout").addEventListener("click", function (e) { e.preventDefault(); logout(); });
   $("#bell").addEventListener("click", openNotifs);

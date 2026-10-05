@@ -86,6 +86,23 @@ class IncidentSeverity(str, enum.Enum):
     FATAL = "fatal"
 
 
+class IncidentVerification(str, enum.Enum):
+    """Where a road incident stands with RTSA.
+
+    Staff reports are ``official`` from the start. A citizen's report is
+    ``unverified`` until an officer reviews it: ``confirmed``, ``dismissed`` (not
+    there any more, a duplicate - no blame) or ``false`` (fined). Unverified
+    reports still close their stretch in the route planner straight away; the
+    fine for a false one is what keeps that honest.
+    """
+
+    OFFICIAL = "official"
+    UNVERIFIED = "unverified"
+    CONFIRMED = "confirmed"
+    DISMISSED = "dismissed"
+    FALSE = "false"
+
+
 class RoadIncident(Base):
     """A live event affecting a road segment (accident, closure, works...)."""
 
@@ -115,6 +132,19 @@ class RoadIncident(Base):
     reported_by: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("users.id"), nullable=True
     )
+    # Stored as text (not a database enum) so adding a state needs no type DDL.
+    verification: Mapped[str] = mapped_column(
+        String(12), default=IncidentVerification.OFFICIAL.value,
+        server_default=IncidentVerification.OFFICIAL.value, nullable=False, index=True,
+    )
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("users.id"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The officer's reason for dismissing or rejecting a citizen report.
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -17,6 +17,7 @@ _MUTATING_ACTIONS = {
     "update_rule", "broadcast", "apply", "theory_test", "practical_test",
     "issue_licence", "renew_licence", "schedule", "update_result",
     "generate_challan", "report", "report_incident", "resolve_incident",
+    "confirm_incident", "dismiss_incident",
     "toll_event", "queue_toll_event", "sync_toll_event", "reject_toll_event",
     "pay", "refund", "reconcile", "register_agency", "update_agency",
     "rotate_agency_key", "agency_upsert_policy", "agency_report_accident",

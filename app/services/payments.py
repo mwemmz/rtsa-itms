@@ -37,7 +37,7 @@ from app.models.vehicle import Vehicle
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.notifications import notify
-from app.services.ownership import owner_user_id
+from app.services.ownership import owes_challan, owner_user_id
 
 GATEWAYS = {"sandbox", "sandbox_decline", "mobile_money"}
 ASYNC_GATEWAYS = {"mobile_money"}
@@ -91,7 +91,7 @@ def resolve_payable(db: Session, user: User, payment_type: PaymentType,
     if payment_type == PaymentType.FINE:
         # row lock (ignored on SQLite) so two concurrent payments can't both settle it
         challan = db.query(Challan).filter(Challan.id == entity_id).with_for_update().first()
-        if challan is None or not _owns_vehicle(db, user, challan.vehicle_id):
+        if challan is None or not (user.role in STAFF or owes_challan(db, user, challan)):
             # same answer for "missing" and "not yours": don't leak existence
             raise HTTPException(status.HTTP_404_NOT_FOUND, "e-Challan not found")
         if challan.status == ChallanStatus.PAID:
