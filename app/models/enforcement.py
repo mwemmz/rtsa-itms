@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -132,6 +132,10 @@ class Violation(Base):
         Enum(ViolationType), nullable=False
     )
     location: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Measured road speed at the moment the offence was observed, km/h. Optional
+    # because most offences have no meaningful speed reading, but a speeding
+    # ticket is worthless without it, so the form prompts for it on those.
+    speed_kmh: Mapped[float | None] = mapped_column(Float, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), nullable=False
     )

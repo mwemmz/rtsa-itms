@@ -940,10 +940,10 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
-        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (v.speed_kmh == null ? '<span class="small muted">—</span>' : "<b>" + esc(String(v.speed_kmh).replace(/\.0$/, "")) + "</b> km/h") + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No violations recorded.</div>';
 }
@@ -1627,8 +1627,11 @@ async function loadAnprEvents() {
 /* ---------------- officer: violations ---------------- */
 
 VIEWS.violations = async function () {
-  // Admins supervise enforcement but do not issue violations, so they get the list only.
-  var canRecord = USER.role === "officer";
+  // Officers issue violations, and so do admins -- the API has always allowed
+  // both (OFFICERS = (OFFICER, ADMIN) in app/core/security.py), so gating the
+  // form to officers alone left admins unable to record from the panel even
+  // though the endpoint would have accepted the request.
+  var canRecord = USER.role === "officer" || USER.role === "admin";
   $("#content").innerHTML =
     '<div class="row">' +
       (canRecord ? '<div class="card"><h3>Record a violation</h3>' +
@@ -1656,6 +1659,9 @@ VIEWS.violations = async function () {
             "</select>" +
             '<div class="small muted" id="vio-hint" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, toll gate 3" required></div>' +
+          '<div class="field"><label>Speed at the time (km/h)</label>' +
+            '<input name="speed_kmh" type="number" inputmode="decimal" step="0.1" min="0" max="500" placeholder="e.g. 112.5">' +
+            '<div class="small muted" style="margin-top:6px;">Optional, but record it whenever it was measured — a speeding ticket is not defensible without the reading.</div></div>' +
           '<div class="field"><label>Date &amp; time (optional)</label><input name="timestamp" type="datetime-local"></div>' +
           '<div class="field"><label>Description (optional)</label><textarea name="description" rows="2"></textarea></div>' +
           '<button class="btn gold" type="submit" id="vio-save">Record &amp; generate e-challan</button>' +
