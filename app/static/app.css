@@ -164,6 +164,10 @@ a:hover { color: var(--gold-strong); }
 /* ---------- login ---------- */
 .login-screen {
   min-height: 100vh;
+  /* 100vh on a phone includes the strip behind the collapsing URL bar, which
+     pushes the bottom of the form out of reach. 100dvh tracks the visible
+     viewport where it is supported and is simply ignored where it is not. */
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -394,6 +398,7 @@ a:hover { color: var(--gold-strong); }
     width: 100%;
     height: auto;
     min-height: 100vh;
+    min-height: 100dvh;
     margin: 0;
     border-radius: 0;
     box-shadow: none;
@@ -973,6 +978,11 @@ html { -webkit-text-size-adjust: 100%; }
   .btn.sm { min-height: 36px; }
   .field label { font-size: 13px; }
   .field input, .field select, .field textarea, .toolbar input, .toolbar select { min-height: 44px; }
+  /* iOS Safari zooms the whole page when a focused field computes to under
+     16px, and the user then has to pinch-zoom back out. The desktop sizes are
+     kept, but every tappable field stays at 16px so focus never zooms. */
+  .field input, .field select, .field textarea,
+  .toolbar input, .toolbar select, td select, .field textarea { font-size: 16px; }
 
   /* horizontal top bar: brand + scrollable nav */
   #shell aside {
@@ -1029,8 +1039,10 @@ html { -webkit-text-size-adjust: 100%; }
 
   /* drawer + toasts span the width */
   .drawer {
-    width: 100vw;
-    max-width: 100vw;
+    /* 100vw includes the scrollbar gutter on Android, which pushes the drawer
+       wider than the viewport and produces a sideways-scrolling page. */
+    width: 100%;
+    max-width: 100%;
     padding: calc(env(safe-area-inset-top) + 18px) 18px 24px;
   }
   #toast { bottom: calc(env(safe-area-inset-bottom) + 12px); right: 12px; left: 12px; max-width: none; }
@@ -1050,6 +1062,15 @@ html { -webkit-text-size-adjust: 100%; }
   .demo-hint { font-size: 12px; }
   .row { gap: 12px; }
   .row > * { flex-basis: 100%; }
+}
+
+/* Landscape phones have almost no vertical room, and once the split stacks the
+   brand panel alone fills the screen and pushes the form below the fold. Drop
+   the brand panel there and let the sign-in form own the viewport; the agency
+   name is already on the sign-in screen header. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .login-split .login-brand { display: none; }
+  .login-screen.login-split { background: #ffffff; }
 }
 
 /* fake hover states only for devices that really hover */
