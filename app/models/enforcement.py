@@ -24,6 +24,9 @@ class ViolationType(str, enum.Enum):
       can be impounded or taken off the road.
     * **Both** — offences that can implicate the driver and the owner at
       once, e.g. driving a vehicle you know is unroadworthy.
+    * **Reporter** — knowingly reporting a road incident that wasn't there.
+      Not a driving offence: it is charged to the reporter's account (traced
+      through the NRC they registered with), not to a vehicle or licence.
     """
 
     # --- Driver: conduct and fitness to drive ---
@@ -50,12 +53,17 @@ class ViolationType(str, enum.Enum):
     ILLEGAL_PARKING = "illegal_parking"
     OTHER = "other"
 
+    # --- Reporter: false road incident reports ---
+    FALSE_REPORT = "false_report"
+
     @property
     def category(self) -> str:
         if self in DRIVER_OFFENCES:
             return "driver"
         if self in VEHICLE_OFFENCES:
             return "vehicle"
+        if self in REPORTER_OFFENCES:
+            return "reporter"
         return "both"
 
     @property
@@ -75,8 +83,8 @@ class ViolationType(str, enum.Enum):
         Vehicle offences fall on the registered owner or keeper regardless of
         who was driving, so they resolve to ``owner`` rather than ``vehicle``.
         """
-        if self.category == "both":
-            return "both"
+        if self.category in ("both", "reporter"):
+            return self.category
         return "driver" if self in DRIVER_OFFENCES else "owner"
 
 
@@ -115,6 +123,12 @@ BOTH_OFFENCES = frozenset({
     ViolationType.OTHER,
 })
 
+# Issued only by an officer rejecting a citizen's road report, never from the
+# violation form.
+REPORTER_OFFENCES = frozenset({
+    ViolationType.FALSE_REPORT,
+})
+
 
 class Violation(Base):
     __tablename__ = "violations"
@@ -127,6 +141,11 @@ class Violation(Base):
     )
     driver_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("drivers.id"), nullable=True
+    )
+    # The account charged when the offence is not about a vehicle or a licence
+    # (a false road report). Null for every road offence.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("users.id"), nullable=True, index=True
     )
     violation_type: Mapped[ViolationType] = mapped_column(
         Enum(ViolationType), nullable=False
@@ -176,6 +195,10 @@ class Challan(Base):
     )
     driver_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("drivers.id"), nullable=True
+    )
+    # Same as Violation.user_id: who owes it when there is no vehicle to charge.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("users.id"), nullable=True, index=True
     )
     penalty_amount: Mapped[int] = mapped_column(Integer, nullable=False)
     due_date: Mapped[datetime] = mapped_column(nullable=False)

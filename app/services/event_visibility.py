@@ -138,7 +138,7 @@ def _owners(db: Session, entity_type: str, eid: uuid.UUID) -> list[Any]:
         row = db.get(Challan if entity_type == "challan" else Violation, eid)
         if row is None:
             return []
-        return [_vehicle_owner(db, row.vehicle_id), _driver_user(db, row.driver_id)]
+        return [_vehicle_owner(db, row.vehicle_id), _driver_user(db, row.driver_id), row.user_id]
     if entity_type in ("toll_transaction", "inspection", "insurance", "psv_permit"):
         from app.models.inspection import Inspection
         from app.models.insurance import Insurance

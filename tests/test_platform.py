@@ -23,7 +23,7 @@ from app.models.vehicle import Vehicle
 from app.services import integration as integration_service
 from app.services import settings as runtime_settings
 from main import app
-from tests.conftest import create_user
+from tests.conftest import create_user, random_nrc
 
 client = TestClient(app)
 PW = "password123"
@@ -138,29 +138,30 @@ def test_offline_toll_event_queue_and_sync():
 
 def test_public_registration_cannot_create_staff():
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": PW,
-                                                "full_name": "Sneaky", "role": "admin"})
+                                                "full_name": "Sneaky", "role": "admin", "nrc_number": random_nrc()})
     assert r.status_code == 403
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": PW,
-                                                "full_name": "Ok User"})
+                                                "full_name": "Ok User", "nrc_number": random_nrc()})
     assert r.status_code == 201 and r.json()["role"] == "citizen"
 
 
 def test_register_normalises_and_validates_input():
     tag = uuid4().hex[:6]
     r = client.post("/api/auth/register", json={"email": f"  Jane.{tag}@Example.COM ", "password": PW,
-                                                "full_name": "  Jane   Banda ", "phone_number": " +260 971 234567 "})
+                                                "full_name": "  Jane   Banda ", "phone_number": " +260 971 234567 ",
+                                                "nrc_number": random_nrc()})
     assert r.status_code == 201, r.text
     assert r.json()["email"] == f"jane.{tag}@example.com"
     assert r.json()["full_name"] == "Jane Banda"
     assert r.json()["phone_number"] == "+260 971 234567"
     # same address in different case is a duplicate
     dup = client.post("/api/auth/register", json={"email": f"JANE.{tag}@example.com", "password": PW,
-                                                  "full_name": "Someone"})
+                                                  "full_name": "Someone", "nrc_number": random_nrc()})
     assert dup.status_code == 400 and "already registered" in dup.json()["detail"]
     # sign-in accepts any casing of the address
     assert _login(f"Jane.{tag}@EXAMPLE.com").status_code == 200
 
-    base = {"password": PW, "full_name": "Ok"}
+    base = {"password": PW, "full_name": "Ok", "nrc_number": random_nrc()}
     assert client.post("/api/auth/register", json=dict(base, email="not-an-email")).status_code == 400
     assert client.post("/api/auth/register", json=dict(base, email=f"n{tag}@t.com", full_name="   ")).status_code == 400
     assert client.post("/api/auth/register", json=dict(base, email=f"p{tag}@t.com",
@@ -171,23 +172,24 @@ def test_register_is_throttled_per_ip():
     ip = {"X-Forwarded-For": f"10.9.{uuid4().int % 250}.1"}
     for i in range(10):
         r = client.post("/api/auth/register", json={"email": f"t{i}{uuid4().hex[:6]}@t.com", "password": PW,
-                                                    "full_name": "Flood"}, headers=ip)
+                                                    "full_name": "Flood", "nrc_number": random_nrc()}, headers=ip)
         assert r.status_code == 201
     r = client.post("/api/auth/register", json={"email": f"t{uuid4().hex[:6]}@t.com", "password": PW,
-                                                "full_name": "Flood"}, headers=ip)
+                                                "full_name": "Flood", "nrc_number": random_nrc()}, headers=ip)
     assert r.status_code == 429
     # a different network is unaffected
     other = client.post("/api/auth/register", json={"email": f"o{uuid4().hex[:6]}@t.com", "password": PW,
-                                                    "full_name": "Other"}, headers={"X-Forwarded-For": "10.8.0.1"})
+                                                    "full_name": "Other", "nrc_number": random_nrc()},
+                        headers={"X-Forwarded-For": "10.8.0.1"})
     assert other.status_code == 201
 
 
 def test_password_policy_on_register():
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": "short1",
-                                                "full_name": "A"})
+                                                "full_name": "A", "nrc_number": random_nrc()})
     assert r.status_code == 400
     r = client.post("/api/auth/register", json={"email": f"x{uuid4().hex[:6]}@t.com", "password": "onlyletters",
-                                                "full_name": "A"})
+                                                "full_name": "A", "nrc_number": random_nrc()})
     assert r.status_code == 400
 
 
@@ -396,7 +398,8 @@ def test_captcha_sandbox_challenge_gates_login_and_registration():
         a, b = (int(x) for x in challenge["question"].replace("What is ", "").replace("?", "").split(" + "))
 
         # registration without solving the captcha is rejected
-        payload = {"email": f"cap{uuid4().hex[:6]}@test.com", "password": PW, "full_name": "Cap Tester"}
+        payload = {"email": f"cap{uuid4().hex[:6]}@test.com", "password": PW, "full_name": "Cap Tester",
+                   "nrc_number": random_nrc()}
         assert client.post("/api/auth/register", json=payload).status_code == 400
         # wrong answer is rejected
         bad = dict(payload, captcha_id=challenge["captcha_id"], captcha_answer=str(a + b + 1))

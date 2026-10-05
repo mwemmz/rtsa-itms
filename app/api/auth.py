@@ -17,6 +17,7 @@ from app.core.security import (
 from app.core.timeutil import utcnow
 from app.models.platform import Device, UserSession
 from app.models.user import User, UserRole
+from app.schemas.fields import clean_nrc
 from app.schemas.user import (
     DeviceResponse,
     EmailRequest,
@@ -120,6 +121,10 @@ def register(payload: UserCreate, request: Request, background: BackgroundTasks,
     if phone and not PHONE_PATTERN.match(phone):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Enter a valid mobile number, e.g. +260971234567")
+    nrc = clean_nrc(payload.nrc_number)
+    if nrc is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Enter your NRC number as on your card, e.g. 123456/78/1")
     problem = validate_password_strength(
         payload.password, runtime_settings.get(db, "security.password_min_length")
     )
@@ -133,11 +138,17 @@ def register(payload: UserCreate, request: Request, background: BackgroundTasks,
             # a reset link goes to their inbox, and using it also confirms the address.
             detail="Email already registered. If it's yours, use \"Forgot password\" to get in.",
         )
+    if db.query(User).filter(User.nrc_number == nrc).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account already uses this NRC number. Sign in to it, or contact RTSA if it isn't yours.",
+        )
     user = User(
         email=email,
         hashed_password=hash_password(payload.password),
         full_name=full_name,
         phone_number=phone,
+        nrc_number=nrc,
         role=UserRole.CITIZEN,
         password_changed_at=utcnow(),
         email_verified_at=None,  # until they use the confirmation link

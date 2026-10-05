@@ -94,6 +94,30 @@ DEFAULT_RULES = [
         "title_template": "Licence renewed",
         "body_template": "Your licence {licence_number} has been renewed. New expiry: {expiry_date}.",
     },
+    {
+        "trigger_event": "road_report_received",
+        "channels": "in_app",
+        "title_template": "Road report to review: {incident_type}",
+        "body_template": "{reporter} reported a {severity} {incident_type} on {place}. It is on the route planner now; confirm it or dismiss it under Road alerts.",
+    },
+    {
+        "trigger_event": "road_report_confirmed",
+        "channels": "in_app",
+        "title_template": "Your road report was confirmed",
+        "body_template": "An officer confirmed your {incident_type} report on {place}. Thank you for helping other motorists.",
+    },
+    {
+        "trigger_event": "road_report_dismissed",
+        "channels": "in_app",
+        "title_template": "Your road report was closed",
+        "body_template": "An officer closed your {incident_type} report on {place}: {reason}. No action is taken against you.",
+    },
+    {
+        "trigger_event": "road_report_false",
+        "channels": "in_app,email",
+        "title_template": "Fine for a false road report",
+        "body_template": "An officer found your road report on {place} to be false ({reason}). e-Challan {reference} for {amount} is due by {due_date}. False reports so far: {strikes} of {strike_limit} before reporting is suspended.",
+    },
 ]
 
 
@@ -108,6 +132,25 @@ def seed_notification_rules() -> None:
                 added += 1
         db.commit()
         print(f"Notification rules: {added} added, {len(DEFAULT_RULES) - added} already present")
+    finally:
+        db.close()
+
+
+DEMO_CITIZEN_NRC = "123456/10/1"
+
+
+def backfill_demo_citizen_nrc() -> None:
+    """Databases seeded before NRCs were collected: give the demo citizen one so it can report."""
+    from app.models.user import User
+
+    db = SessionLocal()
+    try:
+        citizen = db.query(User).filter(User.email == "citizen@example.com").first()
+        taken = db.query(User).filter(User.nrc_number == DEMO_CITIZEN_NRC).first()
+        if citizen and not citizen.nrc_number and not taken:
+            citizen.nrc_number = DEMO_CITIZEN_NRC
+            db.commit()
+            print(f"Demo citizen NRC set to {DEMO_CITIZEN_NRC}")
     finally:
         db.close()
 
@@ -149,6 +192,7 @@ def seed_demo_users() -> None:
                 hashed_password=hash_password("citizen123"),
                 full_name="John Mwale",
                 phone_number="+260971000001",
+                nrc_number=DEMO_CITIZEN_NRC,
                 role=UserRole.CITIZEN,
                 email_verified_at=datetime.now(timezone.utc),
             ),
@@ -449,6 +493,7 @@ def seed_demo_portal() -> None:
 if __name__ == "__main__":
     seed_notification_rules()
     seed_demo_users()
+    backfill_demo_citizen_nrc()
     seed_demo_vehicles()
     seed_road_network()
     seed_demo_portal()

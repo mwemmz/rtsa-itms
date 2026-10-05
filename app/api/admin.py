@@ -15,6 +15,7 @@ from app.models.payment import Payment
 from app.models.platform import Device, LoginAttempt, RolePermission, UserSession
 from app.models.user import STAFF_ROLES, User, UserRole
 from app.models.vehicle import Vehicle
+from app.schemas.fields import clean_nrc
 from app.schemas.notification import NotificationRuleCreate, NotificationRuleResponse
 from app.schemas.user import (
     AdminUserCreate,
@@ -76,11 +77,13 @@ def create_user(
         raise HTTPException(status_code=400, detail=problem)
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+    nrc = _checked_nrc(db, payload.nrc_number) if payload.nrc_number else None
     user = User(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         phone_number=payload.phone_number,
+        nrc_number=nrc,
         role=payload.role,
         password_changed_at=utcnow(),
         email_verified_at=utcnow(),  # an administrator entered it
@@ -91,6 +94,16 @@ def create_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+def _checked_nrc(db: Session, value: str, user: User | None = None) -> str:
+    nrc = clean_nrc(value)
+    if nrc is None:
+        raise HTTPException(status_code=400, detail="NRC must look like 123456/78/1")
+    owner = db.query(User).filter(User.nrc_number == nrc).first()
+    if owner is not None and owner is not user:
+        raise HTTPException(status_code=400, detail="Another account already uses this NRC number")
+    return nrc
 
 
 def _get_user(db: Session, user_id: str) -> User:
@@ -120,6 +133,8 @@ def update_user(
     deactivating = changes.get("is_active") is False
     if (demoting or deactivating) and _is_last_admin(db, user):
         raise HTTPException(status_code=400, detail="Cannot remove the last remaining admin account")
+    if "nrc_number" in changes:
+        changes["nrc_number"] = _checked_nrc(db, changes["nrc_number"], user) if changes["nrc_number"] else None
     for field, value in changes.items():
         setattr(user, field, value)
     if changes.get("is_active") is False:

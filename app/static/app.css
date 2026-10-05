@@ -941,6 +941,25 @@ tbody tr:last-child td { border-bottom: 0; }
   font-size: 13px;
 }
 .toolbar { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+.info-box {
+  background: var(--info-bg);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+  color: var(--ink);
+  padding: 10px 13px;
+  border-radius: var(--radius-control);
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* citizen incident report: type choice + declaration */
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice-row .btn[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+.declare { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; line-height: 1.45; margin: 4px 0 14px; cursor: pointer; }
+.declare input { margin-top: 3px; flex: none; }
+.report-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.report-row:last-child { border-bottom: 0; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 
 /* paid / success flash row */
 tr.flash td { animation: flash 1.6s ease-out; }

@@ -20,11 +20,12 @@ from app.models.vehicle import Vehicle
 from app.schemas.citizen import CitizenDashboard, CitizenFinesSummary
 from app.schemas.driver import DriverResponse
 from app.schemas.enforcement import ChallanResponse
+from app.schemas.fields import clean_nrc
 from app.schemas.payment import PaymentResponse
 from app.schemas.vehicle import VehicleResponse
 from app.services.audit import log_action
 from app.services.compliance import check_vehicle_compliance
-from app.services.ownership import owned_vehicles_query
+from app.services.ownership import owed_challans_query, owned_vehicles_query
 
 router = APIRouter(prefix="/api/citizen", tags=["Citizen Portal"])
 
@@ -55,15 +56,9 @@ def my_vehicles_query(db: Session, user: User):
     return owned_vehicles_query(db, user)
 
 
-def _my_vehicle_ids(db: Session, user: User) -> list:
-    return [v.id for v in my_vehicles_query(db, user).with_entities(Vehicle.id).all()]
-
-
 def _fines_query(db: Session, user: User):
-    ids = _my_vehicle_ids(db, user)
-    if not ids:
-        return db.query(Challan).filter(Challan.id.is_(None))  # empty result
-    return db.query(Challan).filter(Challan.vehicle_id.in_(ids))
+    """Fines on the user's vehicles plus any charged to their account (false road reports)."""
+    return owed_challans_query(db, user)
 
 
 @router.get("/dashboard", response_model=CitizenDashboard)
@@ -303,7 +298,8 @@ def my_payments(
 @router.get("/profile")
 def profile(current_user: User = Depends(get_current_user)):
     return {"email": current_user.email, "full_name": current_user.full_name,
-            "phone_number": current_user.phone_number, "mfa_enabled": current_user.mfa_enabled,
+            "phone_number": current_user.phone_number, "nrc_number": current_user.nrc_number,
+            "mfa_enabled": current_user.mfa_enabled,
             "member_since": current_user.created_at.isoformat() if current_user.created_at else None}
 
 
@@ -325,6 +321,19 @@ def update_profile(
         if phone and (not digits.isdigit() or not 9 <= len(digits) <= 15):
             raise HTTPException(status_code=422, detail="Enter a valid phone number, e.g. +260971234567")
         current_user.phone_number = phone or None
+    nrc_input = payload.get("nrc_number")
+    if nrc_input is not None and str(nrc_input).strip():
+        nrc = clean_nrc(str(nrc_input))
+        if nrc is None:
+            raise HTTPException(status_code=422, detail="Enter your NRC number as on your card, e.g. 123456/78/1")
+        if nrc != current_user.nrc_number:
+            # Set once (accounts from before NRCs were collected). Changing it later
+            # would let someone shed the record of false reports tied to it.
+            if current_user.nrc_number:
+                raise HTTPException(status_code=422, detail="Your NRC number can only be changed by RTSA")
+            if db.query(User).filter(User.nrc_number == nrc).first():
+                raise HTTPException(status_code=422, detail="Another account already uses this NRC number")
+            current_user.nrc_number = nrc
     log_action(db, "update_profile", "user", str(current_user.id), None, current_user.id)
     db.commit()
     return profile(current_user)

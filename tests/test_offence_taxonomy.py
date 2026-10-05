@@ -28,6 +28,7 @@ Base.metadata.create_all(bind=engine)
 from app.models.enforcement import (  # noqa: E402
     BOTH_OFFENCES,
     DRIVER_OFFENCES,
+    REPORTER_OFFENCES,
     VEHICLE_OFFENCES,
     Violation,
     ViolationType,
@@ -83,11 +84,16 @@ def test_insurance_and_parking_impicate_both_parties():
 
 
 def test_every_offence_falls_in_exactly_one_category():
-    classified = DRIVER_OFFENCES | VEHICLE_OFFENCES | BOTH_OFFENCES
-    assert classified == set(ViolationType)
-    assert not (DRIVER_OFFENCES & VEHICLE_OFFENCES)
-    assert not (DRIVER_OFFENCES & BOTH_OFFENCES)
-    assert not (VEHICLE_OFFENCES & BOTH_OFFENCES)
+    groups = [DRIVER_OFFENCES, VEHICLE_OFFENCES, BOTH_OFFENCES, REPORTER_OFFENCES]
+    assert set().union(*groups) == set(ViolationType)
+    assert sum(len(g) for g in groups) == len(ViolationType)  # no offence in two groups
+
+
+def test_false_report_is_charged_to_the_reporter_not_a_vehicle_or_licence():
+    assert ViolationType.FALSE_REPORT.category == "reporter"
+    assert ViolationType.FALSE_REPORT.liable_party == "reporter"
+    assert ViolationType.FALSE_REPORT.carries_licence_consequence is False
+    assert ViolationType.FALSE_REPORT.grounds_impoundment is False
 
 
 def test_only_driver_offences_carry_licence_consequence():

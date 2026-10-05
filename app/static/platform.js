@@ -473,6 +473,7 @@ VIEWS.system = async function () {
 VIEWS.account = async function () {
   $("#content").innerHTML = '<div class="row">' +
     '<div class="card" style="flex:1;min-width:280px"><h3>Profile</h3><form id="pf-form"><div class="field"><label>Full name</label><input name="full_name"></div>' +
+    '<div class="field"><label>NRC number</label><input name="nrc_number" inputmode="numeric" maxlength="11" placeholder="123456/78/1"><p class="small muted field-hint" id="pf-nrc-hint"></p></div>' +
     '<div class="field"><label>Mobile (for SMS alerts)</label><input name="phone_number" placeholder="+260971234567"></div><button class="btn gold sm">Save</button></form>' +
     '<h4 style="margin-top:18px">Notify me by</h4><div id="np-list"></div></div>' +
     '<div class="card" style="flex:1;min-width:280px"><h3>Password</h3><form id="pw-form"><div class="field"><label>Current password</label><input type="password" name="current_password" autocomplete="current-password" required></div>' +
@@ -487,6 +488,13 @@ VIEWS.account = async function () {
       var p = await api("/api/citizen/profile");
       $("#pf-form").elements.full_name.value = p.full_name || "";
       $("#pf-form").elements.phone_number.value = p.phone_number || "";
+      var nrc = $("#pf-form").elements.nrc_number;
+      nrc.value = p.nrc_number || "";
+      // Set once: it ties road reports (and any false-report fine) to a person.
+      nrc.readOnly = !!p.nrc_number;
+      $("#pf-nrc-hint").textContent = p.nrc_number
+        ? "Contact RTSA to correct your NRC."
+        : "Needed before you can report road incidents. It can't be changed once saved.";
       renderMfa(p.mfa_enabled);
     } catch (e) { toast(e.message, "err"); }
   }
@@ -564,12 +572,13 @@ VIEWS.account = async function () {
     e.preventDefault();
     var b = {};
     $$("input", e.target).forEach(function (i) { b[i.name] = i.value; });
-    mutate("/api/citizen/profile", "PATCH", b, "Profile saved", function () { USER.full_name = b.full_name; renderNav(); });
+    mutate("/api/citizen/profile", "PATCH", b, "Profile saved", function () { USER.full_name = b.full_name; renderNav(); loadProfile(); });
   });
   $("#pw-form").addEventListener("submit", function (e) {
     e.preventDefault();
     mutate("/api/auth/change-password", "POST", formData(e.target), "Password changed", function () { e.target.reset(); loadSessions(); });
   });
+  wireNrcInput($("#pf-form").elements.nrc_number);
   loadProfile(); loadPrefs(); loadSessions(); loadDevices();
 };
 

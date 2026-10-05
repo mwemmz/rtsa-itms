@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.models.road_network import IncidentSeverity, IncidentType, RoadClass, RoadStatus
 
@@ -62,8 +63,11 @@ class IncidentCreate(BaseModel):
     severity: IncidentSeverity = IncidentSeverity.MINOR
     segment_id: uuid.UUID | None = None
     road_id: uuid.UUID | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=1000)
+    # Staff only: citizen reports are pushed to motorists once an officer confirms them.
     broadcast_alert: bool = True
+    # Citizens must declare the report true; a false one is fined to their NRC.
+    declaration: bool = False
 
 
 class IncidentResponse(BaseModel):
@@ -76,8 +80,41 @@ class IncidentResponse(BaseModel):
     starts_at: datetime
     ends_at: datetime | None
     is_active: bool
+    verification: str = "official"
+    reviewed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class MyReport(IncidentResponse):
+    """A citizen's own report, with the officer's reason if it was turned down."""
+
+    road_name: str | None = None
+    stretch: str | None = None
+    review_note: str | None = None
+
+
+ReviewReason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)]
+
+
+class IncidentDismiss(BaseModel):
+    # True: the officer found the report false and the reporter is fined.
+    # False: nothing there any more, a duplicate, can't tell - no blame.
+    false_report: bool = False
+    reason: ReviewReason
+
+
+class ReporterStanding(BaseModel):
+    can_report: bool
+    reason: str | None
+    nrc_on_file: bool
+    open_reports: int
+    max_open_reports: int
+    false_reports: int
+    strike_limit: int
+    window_days: int
+    fine_amount: int
+    suspended_until: datetime | None = None
 
 
 class RoadStatusBoardItem(BaseModel):

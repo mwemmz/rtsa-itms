@@ -49,3 +49,5 @@ class RouteAlertOut(BaseModel):
     stretch: str | None = None
     starts_at: datetime
     suggested_alternative: str | None = None
+    # "unverified" while a citizen's report waits for an officer.
+    verification: str = "official"

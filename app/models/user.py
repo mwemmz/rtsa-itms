@@ -39,6 +39,10 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     phone_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # National Registration Card number (123456/78/1). Required when a citizen
+    # signs up, so road reports - and any fine for a false one - are tied to a
+    # real person. One account per NRC. Null for staff and older accounts.
+    nrc_number: Mapped[str | None] = mapped_column(String(20), unique=True, index=True, nullable=True)
     # --- security ---
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     mfa_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)

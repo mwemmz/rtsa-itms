@@ -286,6 +286,8 @@ Alternate:     2a. Number already exists → 409, show the existing record
 | UC-C13 | Update my profile & security (MFA, password) | `PATCH /api/citizen/profile`, `/api/auth/*` | Authenticated |
 | UC-C14 | Set notification preferences | `GET/PUT /api/notifications/preferences` | Authenticated |
 | UC-C15 | View live road alerts near me | `GET /api/portal/alerts` | Authenticated |
+| UC-C16 | **Report a road incident** | `POST /api/incidents/` | NRC on the account; not suspended; declares it true |
+| UC-C17 | Track my reports | `GET /api/incidents/mine` | Authenticated |
 
 > **Corrected against the route decorators.** An earlier draft listed
 > `/api/citizen/applications` as `GET/POST` and `/api/notifications` for
@@ -311,7 +313,7 @@ Main flow:     1. System verifies vehicle ownership (403 otherwise)
                6. System queues a receipt notification
                7. System writes an audit log entry
 Postcondition: Challan is PAID; receipt visible under "Receipts"
-Alternate:     1a. Not the owner → 403 "Challan does not belong to your vehicles"
+Alternate:     1a. Not the owner → 403 "This fine is not charged to you or your vehicles"
                2a. Payment above settings.payments.max_amount → 422
 Exceptions:    Gateway timeout → payment left PENDING, reconcilable later
 ```
@@ -334,6 +336,8 @@ Exceptions:    Gateway timeout → payment left PENDING, reconcilable later
 | UC-O12 | Record a road accident | `POST /api/accidents` | |
 | UC-O13 | Report a road incident / alert | `POST /api/incidents` | Also drives the alert feed |
 | UC-O14 | View and export reports | `GET /api/reports/{key}` | Needs `reports:export` |
+| UC-O15 | Confirm a citizen road report | `POST /api/incidents/{id}/confirm` | Alerts motorists; an accident opens a case |
+| UC-O16 | Dismiss a report, or reject it as false | `POST /api/incidents/{id}/dismiss` | `false_report: true` fines the reporter |
 
 **UC-O3 in detail** — the flow that exercises the offence taxonomy:
 

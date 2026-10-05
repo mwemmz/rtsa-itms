@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import OFFICERS, get_current_user, require_role
 from app.models.driver import Driver
-from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
+from app.models.enforcement import REPORTER_OFFENCES, Challan, ChallanStatus, Violation, ViolationType
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.enforcement import (
@@ -68,6 +68,7 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
         if driver_ids
         else {}
     )
+    accounts = _account_names(db, [v.user_id for v in violations])
 
     out = []
     for v in violations:
@@ -90,9 +91,21 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
                 "owner_name": veh.owner_name if veh else None,
                 "owner_id_number": veh.owner_id_number if veh else None,
                 "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
+                "account_name": accounts.get(str(v.user_id)) if v.user_id else None,
             }
         )
     return out
+
+
+def _account_names(db: Session, user_ids: list) -> dict[str, str]:
+    """Name (and NRC) of the accounts charged directly, e.g. for a false report."""
+    ids = list({u for u in user_ids if u})
+    if not ids:
+        return {}
+    return {
+        str(u.id): u.full_name + (f" (NRC {u.nrc_number})" if u.nrc_number else "")
+        for u in db.query(User).filter(User.id.in_(ids))
+    }
 
 
 def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
@@ -109,6 +122,7 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
         if driver_ids
         else {}
     )
+    accounts = _account_names(db, [c.user_id for c in challans])
     violation_ids = list({c.violation_id for c in challans if c.violation_id})
     violations = (
         {str(x.id): x for x in db.query(Violation).filter(Violation.id.in_(violation_ids)).all()}
@@ -140,6 +154,7 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
                 "registration_number": veh.registration_number if veh else None,
                 "owner_name": veh.owner_name if veh else None,
                 "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
+                "account_name": accounts.get(str(c.user_id)) if c.user_id else None,
             }
         )
     return out
@@ -149,14 +164,20 @@ def create_challan_for_violation(
     db: Session,
     violation: Violation,
     actor_id: uuid.UUID | None,
+    penalty_amount: int | None = None,
+    due_days: int = 14,
 ) -> Challan:
     challan = Challan(
         reference=generate_challan_reference(),
         violation_id=violation.id,
         vehicle_id=violation.vehicle_id,
         driver_id=violation.driver_id,
-        penalty_amount=VIOLATION_PENALTIES.get(violation.violation_type, 100000),
-        due_date=datetime.utcnow() + timedelta(days=14),
+        user_id=violation.user_id,
+        penalty_amount=(
+            penalty_amount if penalty_amount is not None
+            else VIOLATION_PENALTIES.get(violation.violation_type, 100000)
+        ),
+        due_date=datetime.utcnow() + timedelta(days=due_days),
     )
     db.add(challan)
     db.flush()
@@ -173,6 +194,11 @@ def record_violation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*OFFICERS)),
 ):
+    if payload.violation_type in REPORTER_OFFENCES:
+        raise HTTPException(
+            status_code=422,
+            detail="False-report fines are issued by rejecting the report on the Road alerts screen",
+        )
     violation = Violation(
         vehicle_id=payload.vehicle_id,
         driver_id=payload.driver_id,

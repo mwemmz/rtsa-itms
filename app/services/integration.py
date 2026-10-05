@@ -8,7 +8,6 @@ call — inbound or outbound — is written to ``integration_logs`` so the
 integration can be monitored.
 """
 
-import re
 import secrets
 import threading
 import time
@@ -26,6 +25,7 @@ from app.core.crypto import constant_time_equals, sha256
 from app.core.database import get_db
 from app.core.timeutil import aware, utcnow
 from app.models.platform import AgencyClient, AgencyType, IntegrationLog
+from app.schemas.fields import NRC_PATTERN
 
 # What each agency type may be granted. A contract can only ever narrow this.
 SCOPES_BY_TYPE: dict[str, set[str]] = {
@@ -129,9 +129,6 @@ def agency_auth(scope: str):
 
 
 # --- outbound: national ID verification --------------------------------------------------
-
-NRC_PATTERN = re.compile(r"^\d{6}/\d{2}/\d$")
-
 
 def _log_outbound(db: Session, name: str, endpoint: str, code: int, ms: float, detail: str | None) -> None:
     db.add(IntegrationLog(agency_name=name, direction="outbound", endpoint=endpoint, status_code=code,

@@ -21,7 +21,7 @@ from app.schemas.portal import (
 )
 from app.services.audit import log_action
 from app.services.notifications import notify
-from app.services.ownership import owned_vehicles_query
+from app.services.ownership import owed_challans_query, owes_challan, owned_vehicles_query
 from app.services.payments import create_payment
 from app.services.routing import describe_place
 
@@ -36,6 +36,7 @@ def _alert_out(db: Session, inc: RoadIncident) -> RouteAlertOut:
         road_name=road_name,
         stretch=stretch,
         starts_at=inc.starts_at,
+        verification=inc.verification,
     )
 
 router = APIRouter(prefix="/api/portal", tags=["Driver Portal"])
@@ -96,15 +97,7 @@ def dashboard(
         )
 
     vehicles = _get_my_vehicles(db, current_user)
-    vehicle_ids = [v.id for v in vehicles]
-    fines = (
-        db.query(Challan)
-        .filter(
-            Challan.vehicle_id.in_(vehicle_ids) if vehicle_ids
-            else Challan.vehicle_id.is_(None)
-        )
-        .all()
-    )
+    fines = owed_challans_query(db, current_user).all()
     unpaid = [c for c in fines if c.status != ChallanStatus.PAID]
 
     alert_incidents = (
@@ -241,12 +234,7 @@ def my_fines(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    vehicles = _get_my_vehicles(db, current_user)
-    vehicle_ids = [v.id for v in vehicles]
-    query = db.query(Challan).filter(
-        Challan.vehicle_id.in_(vehicle_ids) if vehicle_ids
-        else Challan.vehicle_id.is_(None)
-    )
+    query = owed_challans_query(db, current_user)
     if not include_paid:
         query = query.filter(Challan.status != ChallanStatus.PAID)
     challans = query.order_by(Challan.created_at.desc()).all()
@@ -257,41 +245,23 @@ def my_fines(
         else {}
     )
 
-    return [
-        FineOut(
+    def _fine(c: Challan) -> FineOut:
+        # Keys are strings; look up by str(c.violation_id), not the UUID itself.
+        v = violations.get(str(c.violation_id))
+        return FineOut(
             id=c.id,
             reference=c.reference,
-            violation_type=(
-                violations[str(c.violation_id)].violation_type.value
-                if c.violation_id in violations
-                else "fine"
-            ),
-            category=(
-                violations[str(c.violation_id)].violation_type.category
-                if c.violation_id in violations
-                else "both"
-            ),
-            liable_party=(
-                violations[str(c.violation_id)].liable_party
-                if c.violation_id in violations
-                else "both"
-            ),
-            location=(
-                violations[str(c.violation_id)].location
-                if c.violation_id in violations
-                else ""
-            ),
-            recorded_at=(
-                violations[str(c.violation_id)].timestamp
-                if c.violation_id in violations
-                else c.created_at
-            ),
+            violation_type=v.violation_type.value if v else "fine",
+            category=v.violation_type.category if v else "both",
+            liable_party=v.liable_party if v else "both",
+            location=v.location if v else "",
+            recorded_at=v.timestamp if v else c.created_at,
             penalty_amount=c.penalty_amount,
             due_date=c.due_date,
             status=c.status,
         )
-        for c in challans
-    ]
+
+    return [_fine(c) for c in challans]
 
 
 @router.post("/fines/{challan_id}/pay", response_model=dict)
@@ -304,9 +274,8 @@ def pay_fine(
     if not challan:
         raise HTTPException(status_code=404, detail="Challan not found")
 
-    vehicles = _get_my_vehicles(db, current_user)
-    if challan.vehicle_id not in [v.id for v in vehicles]:
-        raise HTTPException(status_code=403, detail="Challan does not belong to your vehicles")
+    if not owes_challan(db, current_user, challan):
+        raise HTTPException(status_code=403, detail="This fine is not charged to you or your vehicles")
 
     payment, _ = create_payment(db, current_user, PaymentType.FINE, challan.id)
     db.commit()
