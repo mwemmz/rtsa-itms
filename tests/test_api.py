@@ -296,3 +296,95 @@ def test_audit_logged():
     logs = client.get("/api/admin/audit-logs", headers=headers).json()
     assert logs, "audit logs should be non-empty"
     assert any(log["entity_type"] == "vehicle" for log in logs)
+
+
+def _mk_vehicle(headers, reg: str, owner: str, id_number: str) -> str:
+    resp = client.post(
+        "/api/vehicles/",
+        json={
+            "registration_number": reg,
+            "owner_name": owner,
+            "owner_id_number": id_number,
+            "make": "Toyota",
+            "model": "Hilux",
+            "year": 2021,
+        },
+        headers=headers,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()["id"]
+
+
+def test_admin_can_record_a_violation():
+    # Admins supervise enforcement and could always POST one -- the API gate is
+    # OFFICERS = (OFFICER, ADMIN) -- but the panel hid the form from them, so
+    # this pins the endpoint contract the UI now relies on.
+    headers = _auth(_register_and_login(UserRole.ADMIN))
+    vehicle_id = _mk_vehicle(headers, "TEST 610", "Admin Owner", "610011")
+
+    created = client.post(
+        "/api/enforcement/violations",
+        json={
+            "vehicle_id": vehicle_id,
+            "violation_type": "speeding",
+            "location": "Great East Road",
+            "speed_kmh": 118.5,
+        },
+        headers=headers,
+    )
+    assert created.status_code in (200, 201), created.text
+    assert created.json()["speed_kmh"] == 118.5
+
+
+def test_violation_speed_round_trips_through_the_list():
+    headers = _auth(_register_and_login(UserRole.OFFICER))
+    vehicle_id = _mk_vehicle(headers, "TEST 611", "Speed Owner", "611122")
+
+    created = client.post(
+        "/api/enforcement/violations",
+        json={
+            "vehicle_id": vehicle_id,
+            "violation_type": "speeding",
+            "location": "Great East Road",
+            "speed_kmh": 87.5,
+        },
+        headers=headers,
+    )
+    assert created.status_code in (200, 201), created.text
+
+    listed = client.get("/api/enforcement/violations?limit=200", headers=headers).json()
+    match = [v for v in listed if v["id"] == created.json()["id"]]
+    assert match, "the recorded violation should appear in the list"
+    # Decimal precision has to survive the database round trip, not be rounded.
+    assert match[0]["speed_kmh"] == 87.5
+
+
+def test_violation_speed_is_optional_and_bounded():
+    headers = _auth(_register_and_login(UserRole.OFFICER))
+    vehicle_id = _mk_vehicle(headers, "TEST 612", "No Speed Owner", "612133")
+
+    without = client.post(
+        "/api/enforcement/violations",
+        json={
+            "vehicle_id": vehicle_id,
+            "violation_type": "no_insurance",
+            "location": "Great East Road",
+        },
+        headers=headers,
+    )
+    assert without.status_code in (200, 201), without.text
+    assert without.json()["speed_kmh"] is None
+
+    # A unit mix-up (metres, or an odometer reading pasted in) must be rejected
+    # rather than silently recorded as the speed.
+    absurd = client.post(
+        "/api/enforcement/violations",
+        json={
+            "vehicle_id": vehicle_id,
+            "violation_type": "speeding",
+            "location": "Great East Road",
+            "speed_kmh": 9000,
+        },
+        headers=headers,
+    )
+    assert absurd.status_code == 422, absurd.text

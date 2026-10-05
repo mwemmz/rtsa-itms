@@ -14,6 +14,11 @@ class ViolationCreate(BaseModel):
     # A challan may be contested, so the location has to be on the record. A bare
     # `str` in pydantic v2 accepts "", which let a challan be raised with no place.
     location: LocationStr
+    # Road speed when the offence was observed, km/h. Optional on the wire
+    # because only some offences have a meaningful reading, but bounded so a
+    # typo or a unit mix-up (metres, or a pasted odometer figure) cannot land
+    # an absurd value on the record.
+    speed_kmh: float | None = Field(default=None, ge=0, le=500)
     timestamp: datetime | None = None
     description: str | None = Field(default=None, max_length=1000)
 
@@ -36,6 +41,7 @@ class ViolationResponse(BaseModel):
     carries_licence_consequence: bool = False
     grounds_impoundment: bool = False
     location: str
+    speed_kmh: float | None = None
     timestamp: datetime
     description: str | None
     registration_number: str | None = None
