@@ -893,9 +893,9 @@ async function citizenDashboard() {
   var licence = d.licence;
   var licBlock = licence
     ? '<div><span class="pill ' + (licence.state === "expired" ? "red" : licence.state === "expiring_soon" ? "amber" : "green") + '">' + esc(licence.state) + '</span></div>' +
-      '<table><tr><td>Licence no.</td><td class="mono">' + esc(licence.licence_number) + "</td></tr>" +
+      '<div class="table-wrap"><table><tr><td>Licence no.</td><td class="mono">' + esc(licence.licence_number) + "</td></tr>" +
       '<tr><td>Class</td><td>' + esc(licence.licence_class) + '</td></tr>' +
-      '<tr><td>Expires</td><td>' + dt(licence.expiry_date) + ' (' + Number(licence.days_until_expiry) + " days)</td></tr></table>"
+      '<tr><td>Expires</td><td>' + dt(licence.expiry_date) + ' (' + Number(licence.days_until_expiry) + " days)</td></tr></table></div>"
     : '<div class="empty">No driver record linked to this account yet.</div>';
   return (
     '<div class="grid cards">' +
@@ -907,9 +907,9 @@ async function citizenDashboard() {
     '<div class="row">' +
       cars("My licence", licBlock) +
       cars("My vehicles", (d.vehicles || []).length
-        ? '<table>' + (d.vehicles.map(function (v) {
+        ? '<div class="table-wrap"><table>' + (d.vehicles.map(function (v) {
             return "<tr><td><b>" + esc(v.registration_number) + "</b><div class='small muted'>" + esc(v.make) + " " + esc(v.model) + " (" + v.year + ")</div></td><td>" + statusPill(v.status) + "</td></tr>";
-          }).join("")) + "</table>"
+          }).join("")) + "</table></div>"
         : '<div class="empty">No vehicles registered to you.</div>') +
       cars("Road alerts", (d.active_alerts || []).length
         ? d.active_alerts.map(function (a) {
@@ -932,29 +932,29 @@ function cars(title, body) {
 
 function vehicleRows(vs) {
   return vs.length
-    ? '<table><tr><th>Reg</th><th>Owner</th><th>Vehicle</th><th>Status</th></tr>' + vs.map(function (v) {
+    ? '<div class="table-wrap"><table><tr><th>Reg</th><th>Owner</th><th>Vehicle</th><th>Status</th></tr>' + vs.map(function (v) {
         return "<tr><td class='mono'><b>" + esc(v.registration_number) + "</b></td><td>" + esc(v.owner_name) + "</td><td>" + esc(v.make) + " " + esc(v.model) + "</td><td>" + statusPill(v.status) + "</td></tr>";
-      }).join("") + "</table>"
+      }).join("") + "</table></div>"
     : '<div class="empty">No vehicles found.</div>';
 }
 
 function violationRows(vs) {
   return vs.length
-    ? '<table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
         return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
-      }).join("") + "</table>"
+      }).join("") + "</table></div>"
     : '<div class="empty">No violations recorded.</div>';
 }
 
 function challanRows(cs) {
   return cs.length
-    ? '<table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+    ? '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
         var offender = c.driver_name || c.owner_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
         return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
-      }).join("") + "</table>"
+      }).join("") + "</table></div>"
     : '<div class="empty">No challans found.</div>';
 }
 
@@ -1933,9 +1933,9 @@ async function loadTollEvents() {
   try {
     var items = await api("/api/toll/transactions");
     list.innerHTML = items.length
-      ? '<table><tr><th>Plate</th><th>Gate</th><th>Result</th><th>When</th></tr>' + items.map(function (t) {
+      ? '<div class="table-wrap"><table><tr><th>Plate</th><th>Gate</th><th>Result</th><th>When</th></tr>' + items.map(function (t) {
           return "<tr><td class='mono'><b>" + esc(t.plate_number) + "</b></td><td>" + esc(t.gate_id) + "</td><td>" + (t.compliance_result === "compliant" ? '<span class="pill green">compliant</span>' : '<span class="pill red">flagged</span>') + '</td><td class="small">' + dt(t.timestamp) + "</td></tr>";
-        }).join("") + "</table>"
+        }).join("") + "</table></div>"
       : '<div class="empty">No toll events yet.</div>';
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
@@ -1982,14 +1982,14 @@ VIEWS.licence = async function () {
     var statePill = l.state === "expired" ? "red" : l.state === "expiring_soon" ? "amber" : "green";
     $("#licence-card").innerHTML =
       '<h3>My licence <span class="pill ' + statePill + '">' + esc(l.state) + "</span></h3>" +
-      '<table>' +
+      '<div class="table-wrap"><table>' +
         "<tr><td>Licence number</td><td class='mono'><b>" + esc(l.licence_number) + "</b></td></tr>" +
         "<tr><td>Class</td><td>" + esc(l.licence_class) + "</td></tr>" +
         "<tr><td>Status</td><td>" + statusPill(l.status) + "</td></tr>" +
         "<tr><td>Issue date</td><td>" + dt(l.issue_date) + "</td></tr>" +
         "<tr><td>Expiry date</td><td>" + dt(l.expiry_date) + " (" + Number(l.days_until_expiry) + " days left)</td></tr>" +
         "<tr><td>Restrictions</td><td>" + esc(l.restrictions || "None") + "</td></tr>" +
-      "</table>" +
+      "</table></div>" +
       '<div style="margin-top:14px;"><button class="btn gold" id="renew-btn">Renew now (' + money(350000) + ')</button></div>' +
       '<div class="small muted" style="margin-top:8px;">Renewal extends your licence by 5 years (sandbox payment).</div>';
     $("#renew-btn").addEventListener("click", async function () {
@@ -2488,10 +2488,10 @@ async function planRoute() {
       blocks.push('<div class="card" style="box-shadow:none;margin:10px 0 0;padding:10px;"><b>Primary route</b> · ' + r.primary_route.step_count + " steps · " +
         r.primary_route.total_distance_km + " km · ~" + r.primary_route.total_minutes + ' min' +
         (r.incidents_avoided ? ' <span class="pill amber">avoided ' + r.incidents_avoided + ' incident segment(s)</span>' : "") +
-        '<table style="margin-top:8px;"><tr><th>Road</th><th>From → To</th><th>Dist</th><th>Min</th></tr>' +
+        '<div class="table-wrap" style="margin-top:8px;"><table><tr><th>Road</th><th>From → To</th><th>Dist</th><th>Min</th></tr>' +
         r.primary_route.steps.map(function (s) {
           return "<tr><td>" + esc(s.road_name) + "</td><td class='small'>" + esc(s.from_intersection) + " → " + esc(s.to_intersection) + "</td><td>" + s.distance_km + "</td><td>" + s.travel_minutes + "</td></tr>";
-        }).join("") + "</table></div>");
+        }).join("") + "</table></div></div>");
     } else {
       blocks.push('<div class="error-box">' + (avoid && r.incidents_avoided
         ? "Every way to " + esc(to) + " is currently closed by an incident. See <a href=\"#/alerts\">road alerts</a>, or untick “Avoid incidents” to see the usual route."
@@ -2513,11 +2513,11 @@ async function loadStatusBoard() {
   try {
     var rows = await api("/api/routing/status");
     board.innerHTML = rows.length
-      ? '<table><tr><th>Road</th><th>Class</th><th>Status</th><th>Incidents</th></tr>' + rows.map(function (r) {
+      ? '<div class="table-wrap"><table><tr><th>Road</th><th>Class</th><th>Status</th><th>Incidents</th></tr>' + rows.map(function (r) {
           var cls = r.status === "closed" ? "red" : r.status === "congested" ? "amber" : "green";
           var inc = (r.active_incidents || []).map(function (i) { return i; }).join(", ");
           return "<tr><td>" + esc(r.road) + '</td><td>' + esc(r["class"]) + "</td><td><span class='pill " + cls + "'>" + esc(r.status) + "</span></td><td class='small'>" + esc(inc || "—") + "</td></tr>";
-        }).join("") + "</table>"
+        }).join("") + "</table></div>"
       : '<div class="empty">No roads in network.</div>';
   } catch (e) {
     board.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
