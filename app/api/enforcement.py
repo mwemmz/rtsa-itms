@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import secrets
 import uuid
@@ -35,6 +34,7 @@ from app.models.payment import PaymentType
 from app.services import exporters
 from app.services.audit import log_action
 from app.services.delivery import send_sms
+from app.services.evidence import MAX_PHOTOS_PER_VIOLATION, new_photo, photo_out, photo_response, read_photo
 from app.services.ownership import owner_user_id
 from app.services.payments import create_payment
 from app.services.notifications import notify
@@ -254,6 +254,17 @@ def record_violation(
             status_code=422,
             detail="False-report fines are issued by rejecting the report on the Road alerts screen",
         )
+    violation = record_violation_for(db, payload, current_user)
+    db.commit()
+    return _enrich_violations(db, [violation])[0]
+
+
+def record_violation_for(db: Session, payload: ViolationCreate, officer: User) -> Violation:
+    """Write the violation, raise its e-Challan and tell who's liable. No commit.
+
+    Shared by the officer's form and by accepting a citizen's report of a driver,
+    so a fine is raised the same way whichever route it came by.
+    """
     violation = Violation(
         vehicle_id=payload.vehicle_id,
         driver_id=payload.driver_id,
@@ -269,13 +280,13 @@ def record_violation(
         evidence_url=payload.evidence_url,
         timestamp=payload.timestamp or datetime.utcnow(),
         description=payload.description,
-        recorded_by=current_user.id,
+        recorded_by=officer.id,
         liable_party=payload.violation_type.liable_party,
     )
     db.add(violation)
     db.flush()
 
-    challan = create_challan_for_violation(db, violation, current_user.id)
+    challan = create_challan_for_violation(db, violation, officer.id)
     db.flush()
 
     # The vehicle owner hears about every fine on their vehicle; the driver
@@ -287,9 +298,7 @@ def record_violation(
     driver_id = _liable_driver_user_id(db, violation)
     if driver_id and driver_id != owner_id:
         _notify_challan(db, driver_id, challan)
-
-    db.commit()
-    return _enrich_violations(db, [violation])[0]
+    return violation
 
 
 def _notify_challan(db: Session, user_id: uuid.UUID, challan: Challan) -> None:
@@ -379,22 +388,7 @@ def identify_driver(
 
 
 # ------------------------------- photo evidence -------------------------------
-
-MAX_PHOTO_BYTES = 5 * 1024 * 1024
-MAX_PHOTOS_PER_VIOLATION = 5
-PHOTO_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-
-
-def _image_type(data: bytes) -> str | None:
-    """The image type from the file's first bytes, never its name or declared
-    type, so nothing but a photo is stored or served back."""
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
+# What a photo may be, and how it's served, is in app/services/evidence.py.
 
 
 def _violation_or_404(db: Session, violation_id: uuid.UUID) -> Violation:
@@ -404,16 +398,9 @@ def _violation_or_404(db: Session, violation_id: uuid.UUID) -> Violation:
     return violation
 
 
-def _photo_out(photo: ViolationPhoto, uploader: str | None) -> dict:
-    return {
-        "id": photo.id,
-        "violation_id": photo.violation_id,
-        "content_type": photo.content_type,
-        "size_bytes": photo.size_bytes,
-        "sha256": photo.sha256,
-        "uploaded_by_name": uploader,
-        "created_at": photo.created_at,
-    }
+def uploader_names(db: Session, photos: list[ViolationPhoto]) -> dict[str, str]:
+    ids = {p.uploaded_by for p in photos if p.uploaded_by}
+    return {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(ids))} if ids else {}
 
 
 @router.post("/violations/{violation_id}/photos", response_model=ViolationPhotoResponse,
@@ -429,28 +416,15 @@ def add_violation_photo(
     held = db.query(func.count(ViolationPhoto.id)).filter(ViolationPhoto.violation_id == violation.id).scalar()
     if held >= MAX_PHOTOS_PER_VIOLATION:
         raise HTTPException(status_code=409, detail=f"A violation can have up to {MAX_PHOTOS_PER_VIOLATION} photos")
-    data = file.file.read(MAX_PHOTO_BYTES + 1)
-    if len(data) > MAX_PHOTO_BYTES:
-        raise HTTPException(status_code=413, detail="A photo can be up to 5 MB")
-    content_type = _image_type(data)
-    if content_type is None:
-        raise HTTPException(status_code=415, detail="Only JPEG, PNG or WebP photos can be attached")
-
-    photo = ViolationPhoto(
-        violation_id=violation.id,
-        content_type=content_type,
-        size_bytes=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
-        data=data,
-        uploaded_by=current_user.id,
-    )
+    data, content_type = read_photo(file)
+    photo = new_photo(data, content_type, current_user.id, violation_id=violation.id)
     db.add(photo)
     db.flush()
     log_action(db, "add_photo", "violation", str(violation.id),
                f"Photo {photo.sha256[:16]} ({len(data)} bytes)", current_user.id)
     db.commit()
     db.refresh(photo)
-    return _photo_out(photo, current_user.full_name)
+    return photo_out(photo, current_user.full_name)
 
 
 @router.get("/violations/{violation_id}/photos", response_model=list[ViolationPhotoResponse])
@@ -466,13 +440,8 @@ def list_violation_photos(
         .order_by(ViolationPhoto.created_at)
         .all()
     )
-    uploader_ids = {p.uploaded_by for p in photos if p.uploaded_by}
-    names = (
-        {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(uploader_ids))}
-        if uploader_ids
-        else {}
-    )
-    return [_photo_out(p, names.get(str(p.uploaded_by))) for p in photos]
+    names = uploader_names(db, photos)
+    return [photo_out(p, names.get(str(p.uploaded_by))) for p in photos]
 
 
 @router.get("/violations/{violation_id}/photos/{photo_id}")
@@ -489,15 +458,7 @@ def get_violation_photo(
     )
     if photo is None:
         raise HTTPException(status_code=404, detail="Photo not found")
-    return Response(
-        photo.data,
-        media_type=photo.content_type,
-        headers={
-            "Cache-Control": "private, max-age=3600",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Disposition": f'inline; filename="evidence-{photo.id}.{PHOTO_EXTENSIONS[photo.content_type]}"',
-        },
-    )
+    return photo_response(photo)
 
 
 @router.get("/violations/summary")

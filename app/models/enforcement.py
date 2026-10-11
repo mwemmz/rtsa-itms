@@ -130,8 +130,9 @@ REPORTER_OFFENCES = frozenset({
 })
 
 # Evidence an officer can record an offence from without having seen it. No
-# source means the officer saw it themselves.
-EVIDENCE_SOURCES = ("citizen_video", "social_media", "cctv")
+# source means the officer saw it themselves. "citizen_report" is set only when
+# a fine comes from accepting a citizen's report of a driver.
+EVIDENCE_SOURCES = ("citizen_video", "social_media", "cctv", "citizen_report")
 
 
 class Violation(Base):
@@ -237,6 +238,11 @@ class ViolationPhoto(Base):
     The image is kept in the database, not on disk, because the app's host
     throws its disk away on every deploy. `sha256` is taken when the photo is
     stored, so it can later be shown that the evidence hasn't been altered.
+
+    A citizen's photos arrive with their report of a driver (`report_id`) before
+    any violation exists. If an officer accepts the report, the same rows get
+    the new `violation_id`: the evidence moves to the fine untouched, with its
+    original fingerprint and uploader.
     """
 
     __tablename__ = "violation_photos"
@@ -244,8 +250,11 @@ class ViolationPhoto(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUIDType, primary_key=True, default=uuid.uuid4
     )
-    violation_id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType, ForeignKey("violations.id"), nullable=False, index=True
+    violation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("violations.id"), nullable=True, index=True
+    )
+    report_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("driver_reports.id"), nullable=True, index=True
     )
     content_type: Mapped[str] = mapped_column(String(30), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)

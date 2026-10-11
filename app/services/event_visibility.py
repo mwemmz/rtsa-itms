@@ -38,7 +38,7 @@ STAFF_ENTITIES = {
     "vehicle", "driver", "challan", "violation", "payment", "toll_transaction",
     "toll_offline_event", "anpr_event", "inspection", "insurance",
     "licence_application", "psv_operator", "psv_permit", "accident",
-    "road", "road_segment", "intersection",
+    "road", "road_segment", "intersection", "driver_report",
 }
 
 # Administrative records: any one of the listed permissions is enough.
@@ -159,6 +159,11 @@ def _owners(db: Session, entity_type: str, eid: uuid.UUID) -> list[Any]:
 
         row = db.get(LicenceApplication, eid)
         return [row.applicant_id] if row else []
+    if entity_type == "driver_report":
+        from app.models.driver_report import DriverReport
+
+        row = db.get(DriverReport, eid)
+        return [row.reporter_id] if row else []
     if entity_type in ("session", "device"):
         from app.models.platform import Device, UserSession
 

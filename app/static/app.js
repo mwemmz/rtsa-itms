@@ -199,6 +199,7 @@ var NAV = {
     { id: "anpr", label: "ANPR" },
     { id: "accidents", label: "Accidents" },
     { id: "violations", label: "Record violation" },
+    { id: "driver_reports", label: "Driver reports" },
     { id: "challans", label: "Challans" },
     { id: "toll", label: "Toll gates" },
     { id: "alerts", label: "Road alerts" },
@@ -206,7 +207,8 @@ var NAV = {
   ],
   citizen: [
     { id: "dashboard", label: "My dashboard" },
-    { id: "report", label: "Report incident" },
+    { id: "report", label: "Report road incident" },
+    { id: "report_driver", label: "Report a driver" },
     { id: "fines", label: "Fines & payments" },
     { id: "licence", label: "My licence" },
     { id: "alerts", label: "Road alerts" },
@@ -649,13 +651,14 @@ var LIVE_VIEWS = {
   inspection: ["vehicles", "inspections"],
   insurance: ["vehicles"],
   licence_application: ["applications", "fines", "licensing", "reports"],
+  driver_report: ["driver_reports", "report_driver", "dashboard"],
   agency: ["integrations"],
   session: ["users", "account"],
   psv_operator: ["psv"],
   psv_permit: ["psv"]
 };
 // Views that hold in-progress user input: only toast, never auto-reload.
-var LIVE_FORM_VIEWS = { violations: 1, toll: 1, account: 1, licensing: 1, inspections: 1, anpr: 1 };
+var LIVE_FORM_VIEWS = { violations: 1, toll: 1, account: 1, licensing: 1, inspections: 1, anpr: 1, report_driver: 1, driver_reports: 1 };
 // Views with a form that can still refresh their data panels in place. Checked
 // before LIVE_FORM_VIEWS; the value is the refresh function.
 var LIVE_PARTIAL_VIEWS = {
@@ -900,15 +903,8 @@ async function adminDashboard() {
 // their own recent work, and one tap to every tool. The full violation and
 // challan lists are a tap away on their own screens, so they aren't repeated here.
 async function officerDashboard() {
-  // challans_by_status is an all-time, unfiltered count (see app/services/reports.py
-  // dashboard()), the only accurate source for "how many are outstanding".
-  var unpaid = "—";
-  try {
-    var stats = await api("/api/reports/dashboard");
-    var byStatus = (stats.breakdowns && stats.breakdowns.challans_by_status) || {};
-    unpaid = 0;
-    Object.keys(byStatus).forEach(function (s) { if (s !== "paid") unpaid += byStatus[s]; });
-  } catch (e) { /* tile shows a dash */ }
+  var driverReports = null;
+  try { driverReports = (await api("/api/driver-reports/?status=pending&limit=200")).length; } catch (e) { /* tile shows a dash */ }
   var recent = null;
   try { recent = await api("/api/enforcement/violations/summary"); } catch (e) { /* tile shows a dash */ }
   var incidents = [];
@@ -919,10 +915,11 @@ async function officerDashboard() {
   var toReview = incidents.filter(function (a) { return a.verification === "unverified"; }).length;
   return (
     '<div class="grid cards">' +
-      kpi("Citizen reports to review", toReview, toReview ? "Live on the planner until you review them" : "All reviewed", "#/alerts") +
+      kpi("Driver reports to review", driverReports == null ? "—" : driverReports,
+        driverReports ? "Citizens' evidence of dangerous driving" : "All reviewed", "#/driver_reports") +
+      kpi("Road reports to review", toReview, toReview ? "Live on the planner until you review them" : "All reviewed", "#/alerts") +
       kpi("Active road incidents", incidents.length, blocking + " blocking a road", "#/alerts") +
       kpi("Violations, last 24h", recent ? recent.last_24h : "—", recent ? recent.last_24h_by_me + " recorded by you" : "", "#/violations") +
-      kpi("Unpaid challans", unpaid, "Across all motorists", "#/challans") +
     "</div>" +
     '<div class="card"><h3>Tools</h3><div class="toolbar" style="margin:0;">' +
       "<a class='btn gold' href='#/violations'>Record violation</a>" +
@@ -1037,7 +1034,7 @@ async function citizenDashboard() {
       kpi("Road alerts", alerts.length, alerts.length ? "See them and plan around" : "Roads clear", "#/alerts") +
     "</div>" +
     cars("What to do next", '<ul class="todo">' + todo.join("") + "</ul>" +
-      '<div class="toolbar" style="margin:14px 0 0;"><a class="btn gold sm" href="#/report">Report a road incident</a><a class="btn sm" href="#/planner">Plan a route</a></div>')
+      '<div class="toolbar" style="margin:14px 0 0;"><a class="btn gold sm" href="#/report">Report a road incident</a><a class="btn gold sm" href="#/report_driver">Report a driver</a><a class="btn sm" href="#/planner">Plan a route</a></div>')
   );
 }
 
@@ -1093,15 +1090,21 @@ function speedCell(v) {
   return "<b>" + kmh(v.speed_kmh) + "</b> km/h" + (basis.length ? '<div class="small muted">' + basis.join("<br>") + "</div>" : "");
 }
 
-function gpsLink(v) {
+// A link to the GPS fix on a map; "" when there's no fix.
+function gpsAnchor(v) {
   var lat = Number(v.latitude), lng = Number(v.longitude);
   if (v.latitude == null || v.longitude == null || !isFinite(lat) || !isFinite(lng)) return "";
   var href = "https://www.openstreetmap.org/?mlat=" + lat.toFixed(6) + "&mlon=" + lng.toFixed(6) + "#map=17/" + lat.toFixed(6) + "/" + lng.toFixed(6);
-  return '<div class="small"><a href="' + href + '" target="_blank" rel="noopener">GPS' +
-    (v.gps_accuracy_m != null ? " ±" + Math.round(v.gps_accuracy_m) + " m" : "") + "</a></div>";
+  return '<a href="' + href + '" target="_blank" rel="noopener">GPS' +
+    (v.gps_accuracy_m != null ? " ±" + Math.round(v.gps_accuracy_m) + " m" : "") + "</a>";
 }
 
-var EVIDENCE_LABELS = { citizen_video: "Citizen's video", social_media: "Social media post", cctv: "CCTV / traffic camera" };
+function gpsLink(v) {
+  var a = gpsAnchor(v);
+  return a ? '<div class="small">' + a + "</div>" : "";
+}
+
+var EVIDENCE_LABELS = { citizen_video: "Citizen's video", social_media: "Social media post", cctv: "CCTV / traffic camera", citizen_report: "Citizen's report" };
 
 // Where the evidence came from, linked when there's footage to look at.
 function evidenceTag(v) {
@@ -1195,13 +1198,36 @@ function blobToDataUrl(blob) {
 }
 
 var PHOTO_URLS = {};
-async function photoUrl(violationId, photoId) {
+async function evidencePhoto(path, photoId) {
   if (PHOTO_URLS[photoId]) return PHOTO_URLS[photoId];
-  var res = await fetch("/api/enforcement/violations/" + violationId + "/photos/" + photoId,
-    { headers: { Authorization: "Bearer " + getToken(), "X-Device-Id": deviceId() } });
+  var res = await fetch(path, { headers: { Authorization: "Bearer " + getToken(), "X-Device-Id": deviceId() } });
   if (!res.ok) throw new Error("HTTP " + res.status);
   PHOTO_URLS[photoId] = await blobToDataUrl(await res.blob());
   return PHOTO_URLS[photoId];
+}
+
+function photoUrl(violationId, photoId) {
+  return evidencePhoto("/api/enforcement/violations/" + violationId + "/photos/" + photoId, photoId);
+}
+
+// A photo sent with a citizen's report, before (or without) it becoming a fine.
+function reportPhotoUrl(reportId, photoId) {
+  return evidencePhoto("/api/driver-reports/" + reportId + "/photos/" + photoId, photoId);
+}
+
+// One photo full size, over the page; tap outside or press Escape to close.
+function showLargePhoto(src) {
+  var viewer = document.createElement("div");
+  viewer.className = "photo-viewer";
+  viewer.innerHTML = '<div class="card" role="dialog" aria-modal="true" aria-label="Evidence photo">' +
+    '<div class="photo-viewer-head"><h3>Evidence photo</h3><button type="button" class="btn ghost sm pv-close">Close</button></div>' +
+    '<img alt="Evidence photo, full size" src="' + src + '" style="display:block;width:100%;height:auto;border-radius:var(--radius-control);"></div>';
+  document.body.appendChild(viewer);
+  function close() { viewer.remove(); document.removeEventListener("keydown", onKey); }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+  viewer.addEventListener("click", function (e) { if (e.target === viewer) close(); });
+  $(".pv-close", viewer).addEventListener("click", close);
 }
 
 // A small preview of a photo not uploaded yet (a full camera image as a data:
@@ -2070,7 +2096,8 @@ VIEWS.violations = async function () {
             '<div class="small" id="driver-hint" style="margin-top:6px;color:var(--warn);"></div></div>' +
           '<div class="field"><label>How was it seen?</label><select name="evidence_source" id="vio-source">' +
             '<option value="">Seen by me</option>' +
-            Object.keys(EVIDENCE_LABELS).map(function (k) { return '<option value="' + k + '">' + EVIDENCE_LABELS[k] + "</option>"; }).join("") +
+            // A citizen's report becomes a fine through Driver reports, not this form.
+            Object.keys(EVIDENCE_LABELS).filter(function (k) { return k !== "citizen_report"; }).map(function (k) { return '<option value="' + k + '">' + EVIDENCE_LABELS[k] + "</option>"; }).join("") +
             "</select></div>" +
           '<div class="field" id="evidence-link-field" hidden><label>Link to the footage or post<span id="link-req"> (optional)</span></label>' +
             '<input name="evidence_url" id="vio-evidence" type="url" maxlength="500" placeholder="https://…">' +
@@ -2996,6 +3023,275 @@ async function loadMyReports() {
           "</div>";
         }).join("")
       : '<div class="empty">You haven\'t reported anything yet.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+/* ---------------- citizen: report a driver ---------------- */
+
+// What a bystander can see well enough to report. Mirrors CITIZEN_REPORTABLE in
+// app/models/driver_report.py (no speeding: a fine for it needs a measured speed).
+var CITIZEN_REPORTABLE = ["reckless_driving", "running_red_light", "using_phone", "illegal_parking",
+  "overloading", "missing_number_plates", "unroadworthy", "other"];
+
+var DRIVER_REPORT_STATUS = {
+  pending: ["Waiting for review", "amber"],
+  accepted: ["Fine issued", "green"],
+  rejected: ["Closed, no action", "gray"],
+  "false": ["Found false", "red"]
+};
+
+function driverReportPill(status) {
+  var s = DRIVER_REPORT_STATUS[status] || [status, "gray"];
+  return '<span class="pill ' + s[1] + '">' + esc(s[0]) + "</span>";
+}
+
+// The browser's GPS position, or an error message saying why there isn't one.
+function gpsFix() {
+  return new Promise(function (resolve, reject) {
+    if (!window.isSecureContext || !navigator.geolocation) { reject(new Error("Location isn't available here. Type the place instead.")); return; }
+    navigator.geolocation.getCurrentPosition(function (pos) { resolve(pos.coords); }, function (err) {
+      reject(new Error(err.code === 1 ? "Location permission was refused. Type the place instead."
+        : "No GPS fix right now. Type the place instead."));
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  });
+}
+
+VIEWS.report_driver = async function () {
+  $("#content").innerHTML =
+    '<div class="row">' +
+      '<div class="card"><h3>Report a driver</h3>' +
+        '<div id="drv-standing"></div>' +
+        '<form id="drv-form">' +
+          '<div class="field"><label for="drv-plate">Number plate</label><input id="drv-plate" name="plate_number" required maxlength="20" autocomplete="off" placeholder="e.g. BAL 1234"></div>' +
+          '<div class="field"><label for="drv-type">What did they do?</label><select id="drv-type" name="violation_type">' +
+            CITIZEN_REPORTABLE.map(function (t) { return '<option value="' + t + '">' + esc(offenceTypeLabel(t)) + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label for="drv-what">What happened</label><textarea id="drv-what" name="description" rows="3" required minlength="10" maxlength="1000" placeholder="e.g. overtook on a solid line into oncoming traffic near the Arcades turn-off"></textarea></div>' +
+          '<div class="field"><label for="drv-where">Where</label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><input id="drv-where" name="location" required maxlength="200" placeholder="e.g. Great East Road near Arcades">' +
+            '<button type="button" class="btn ghost sm" id="drv-gps">Use my location</button></div>' +
+            '<div class="small muted" id="drv-gps-msg" style="margin-top:6px;"></div></div>' +
+          '<div class="field"><label for="drv-when">When</label><input id="drv-when" name="observed_at" type="datetime-local" required></div>' +
+          '<div class="field"><label for="drv-link">Link to a video (optional)</label><input id="drv-link" name="evidence_url" type="url" maxlength="500" placeholder="https://… e.g. a Facebook, TikTok or YouTube post"></div>' +
+          '<div class="field"><label>Photos (optional, up to ' + MAX_PHOTOS + ")</label>" +
+            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="drv-photos" accept="image/*" multiple hidden></label>' +
+            '<span class="small muted" id="drv-photo-count"></span></div>' +
+            '<div class="small muted" style="margin-top:6px;">A video link, photos, or both: an officer needs to see it to act on it. The plate should be readable.</div>' +
+            '<div class="photo-grid" id="drv-preview" style="margin-top:10px;"></div></div>' +
+          '<label class="declare"><input type="checkbox" id="drv-declare"> <span id="drv-declare-text">I confirm this report is true to the best of my knowledge.</span></label>' +
+          '<button class="btn gold" type="submit" id="drv-submit">Send report</button>' +
+        "</form></div>" +
+      '<div class="card"><h3>My reports of drivers</h3><div id="drv-mine"><div class="empty">Loading…</div></div></div>' +
+    "</div>";
+
+  // When: defaults to now; the API accepts up to 30 days back.
+  function local(d) { d = new Date(d); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); }
+  $("#drv-when").value = local(Date.now());
+  $("#drv-when").max = local(Date.now());
+  $("#drv-when").min = local(Date.now() - 30 * 24 * 3600 * 1000);
+
+  var gps = null;
+  $("#drv-gps").addEventListener("click", function () {
+    var msg = $("#drv-gps-msg");
+    msg.textContent = "Getting your location…";
+    gpsFix().then(function (c) {
+      gps = { latitude: c.latitude.toFixed(6), longitude: c.longitude.toFixed(6), gps_accuracy_m: Math.round(c.accuracy) };
+      if (!$("#drv-where").value.trim()) $("#drv-where").value = "GPS " + c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5);
+      msg.textContent = "Location attached (±" + Math.round(c.accuracy) + " m). Add the road name if you can.";
+    }).catch(function (e) { gps = null; msg.textContent = e.message; });
+  });
+
+  var photos = [];
+  function renderPhotos() {
+    $("#drv-preview").innerHTML = photos.map(function (f, i) {
+      return '<figure><img alt="Selected photo" data-i="' + i + '">' +
+        '<button type="button" class="btn ghost sm photo-remove" data-i="' + i + '">Remove</button><figcaption>' + esc(f.name || "Photo") + "</figcaption></figure>";
+    }).join("");
+    $("#drv-photo-count").textContent = photos.length ? photos.length + " of " + MAX_PHOTOS + " selected" : "";
+    $$("#drv-preview img").forEach(function (img) {
+      photoThumb(photos[Number(img.dataset.i)]).then(function (u) { if (u) img.src = u; else img.alt = "No preview"; });
+    });
+    $$("#drv-preview .photo-remove").forEach(function (b) {
+      b.addEventListener("click", function () { photos.splice(Number(b.dataset.i), 1); renderPhotos(); });
+    });
+  }
+  $("#drv-photos").addEventListener("change", function () {
+    var room = MAX_PHOTOS - photos.length;
+    var picked = Array.prototype.slice.call(this.files);
+    if (picked.length > room) toast("Up to " + MAX_PHOTOS + " photos — kept the first " + Math.max(room, 0) + ".", "err");
+    photos = photos.concat(picked.slice(0, Math.max(room, 0)));
+    this.value = "";
+    renderPhotos();
+  });
+
+  $("#drv-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var link = $("#drv-link").value.trim();
+    if (!link && !photos.length) { toast("Add a link to a video, at least one photo, or both", "err"); return; }
+    if (!$("#drv-declare").checked) { toast("Tick the box to confirm the report is true", "err"); $("#drv-declare").focus(); return; }
+    var body = new FormData();
+    body.append("plate_number", $("#drv-plate").value.trim());
+    body.append("violation_type", $("#drv-type").value);
+    body.append("description", $("#drv-what").value.trim());
+    body.append("location", $("#drv-where").value.trim());
+    body.append("observed_at", new Date($("#drv-when").value).toISOString());
+    body.append("declaration", "true");
+    if (link) body.append("evidence_url", link);
+    if (gps) Object.keys(gps).forEach(function (k) { body.append(k, gps[k]); });
+    var btn = $("#drv-submit");
+    btn.disabled = true;
+    btn.textContent = photos.length ? "Sending photos…" : "Sending…";
+    try {
+      for (var i = 0; i < photos.length; i++) body.append("photos", await shrinkPhoto(photos[i]), photos[i].name || "photo.jpg");
+      var r = await api("/api/driver-reports/", { method: "POST", body: body });
+      toast("Report " + r.reference + " sent. An officer will look at the evidence; you'll be told the outcome.", "ok");
+      e.target.reset();
+      photos = []; gps = null; renderPhotos();
+      $("#drv-gps-msg").textContent = "";
+      $("#drv-when").value = local(Date.now());
+      await Promise.all([loadDriverStanding(), loadMyDriverReports()]);
+    } catch (err) { toast(err.message, "err"); }
+    finally { btn.textContent = "Send report"; btn.disabled = !(REPORT_STANDING && REPORT_STANDING.can_report); }
+  });
+
+  await Promise.all([loadDriverStanding(), loadMyDriverReports()]);
+};
+
+// Same standing as road reports: NRC on file, not suspended, not too many open.
+async function loadDriverStanding() {
+  var box = $("#drv-standing");
+  if (!box) return;
+  try {
+    var st = REPORT_STANDING = await api("/api/incidents/reporting-status");
+    var fine = money(st.fine_amount);
+    box.innerHTML = st.can_report
+      ? '<div class="info-box">Saw someone driving dangerously? Send the plate and your evidence. Nothing happens to them until an officer has checked it. ' +
+        "Reports are tied to your NRC: one found to be false is fined <b>" + esc(fine) + "</b>." +
+        (st.false_reports ? " You have <b>" + Number(st.false_reports) + "</b> false report(s) on record." : "") + "</div>"
+      : '<div class="error-box">' + esc(st.reason) + (st.nrc_on_file ? "" : ' <a href="#/account">Add it now</a>') + "</div>";
+    $("#drv-declare-text").textContent = "I confirm this report is true to the best of my knowledge. I understand a false report is fined " + fine + ".";
+    $$("#drv-form input, #drv-form select, #drv-form textarea, #drv-form button").forEach(function (el) { el.disabled = !st.can_report; });
+  } catch (e) {
+    box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+async function loadMyDriverReports() {
+  var list = $("#drv-mine");
+  if (!list) return;
+  try {
+    var items = await api("/api/driver-reports/mine");
+    list.innerHTML = items.length
+      ? items.map(function (r) {
+          return '<div class="report-row"><b class="mono">' + esc(r.plate_number) + "</b> · " + esc(offenceTypeLabel(r.violation_type)) + " " + driverReportPill(r.status) +
+            '<div class="small muted">' + esc(r.reference) + " · " + dt(r.observed_at) + " · " + esc(r.location) + "</div>" +
+            '<div class="small muted">Evidence: ' + [r.evidence_url ? "video link" : "", r.photos.length ? r.photos.length + " photo" + (r.photos.length === 1 ? "" : "s") : ""].filter(Boolean).join(", ") + "</div>" +
+            (r.review_note ? '<div class="small">Officer: ' + esc(r.review_note) + "</div>" : "") +
+            (r.status === "false" ? '<div class="small"><a href="#/fines">See the fine under Fines &amp; payments</a></div>' : "") +
+          "</div>";
+        }).join("")
+      : '<div class="empty">You haven\'t reported a driver yet.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+  }
+}
+
+/* ---------------- officer: citizens' reports of drivers ---------------- */
+
+VIEWS.driver_reports = async function () {
+  $("#content").innerHTML =
+    '<div class="card"><h3>Reports of drivers from citizens</h3>' +
+      '<p class="small muted">Look at the evidence before deciding. Issuing a fine records the violation on the vehicle with the citizen\'s photos and link attached. ' +
+      "A report you find untrue can be rejected as false, which fines the reporter.</p>" +
+      '<div class="toolbar"><select id="dr-status"><option value="pending">Waiting for review</option><option value="accepted">Fine issued</option>' +
+        '<option value="rejected">Closed, no action</option><option value="false">Found false</option></select></div>' +
+      '<div id="dr-list"><div class="empty">Loading…</div></div></div>';
+  $("#dr-status").addEventListener("change", loadDriverReports);
+  await loadDriverReports();
+};
+
+// Every road offence except speeding (needs a measured speed) and false reports.
+function driverReportOffenceOptions(selected) {
+  return VO_TYPES.filter(function (t) { return t[0] !== "speeding"; }).map(function (t) {
+    return '<option value="' + t[0] + '"' + (t[0] === selected ? " selected" : "") + ">" + esc(t[1]) + "</option>";
+  }).join("");
+}
+
+async function loadDriverReports() {
+  var list = $("#dr-list");
+  var status = $("#dr-status").value;
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    var items = await api("/api/driver-reports/?status=" + status);
+    if (!items.length) { list.innerHTML = '<div class="empty">' + (status === "pending" ? "No reports waiting. " : "") + "Nothing to show.</div>"; return; }
+    list.innerHTML = items.map(function (r) {
+      var v = r.vehicle;
+      var pending = r.status === "pending";
+      var url = /^https?:\/\//i.test(r.evidence_url || "") ? r.evidence_url : "";
+      return '<div class="card dr-card" data-id="' + esc(r.id) + '" style="box-shadow:none;">' +
+        '<h3><span class="mono">' + esc(r.plate_number) + "</span> · " + esc(offenceTypeLabel(r.violation_type)) + " " + driverReportPill(r.status) + "</h3>" +
+        '<p class="small" style="margin:0 0 6px;">' + (v ? esc(v.description) + " · owner <b>" + esc(v.owner) + "</b>"
+          : '<span style="color:var(--warn);">No registered vehicle has this plate. Check it against the evidence.</span>') + "</p>" +
+        "<p style=\"margin:0 0 8px;\">" + esc(r.description) + "</p>" +
+        '<p class="small muted" style="margin:0 0 8px;">' + dt(r.observed_at) + " · " + esc(r.location) + (gpsAnchor(r) ? " · " + gpsAnchor(r) : "") + "<br>" +
+          "Reported by <b>" + esc(r.reporter_name || "—") + "</b> (NRC " + esc(r.reporter_nrc || "—") + ")" +
+          (r.reporter_false_reports ? ' · <span style="color:var(--err);">' + r.reporter_false_reports + " false report(s) on record</span>" : "") +
+          " · " + esc(r.reference) + "</p>" +
+        (url ? '<p style="margin:0 0 8px;"><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open the video link</a></p>' : "") +
+        (r.photos.length ? '<div class="photo-grid" style="margin-bottom:10px;">' + r.photos.map(function (p) {
+            return '<figure><a href="#" class="dr-photo" data-report="' + esc(r.id) + '" data-id="' + esc(p.id) + '"><img alt="Evidence photo" data-report="' + esc(r.id) + '" data-id="' + esc(p.id) + '"></a>' +
+              '<figcaption class="mono">' + esc(p.sha256.slice(0, 12)) + "…</figcaption></figure>";
+          }).join("") + "</div>" : "") +
+        (pending
+          ? '<div class="toolbar" style="margin:6px 0 0;">' +
+              '<input class="dr-plate" value="' + esc(r.plate_number) + '" aria-label="Plate" style="max-width:130px;">' +
+              '<select class="dr-type" aria-label="Offence">' + driverReportOffenceOptions(r.violation_type) + "</select>" +
+              '<button type="button" class="btn gold sm dr-accept">Issue fine</button>' +
+              '<button type="button" class="btn ghost sm dr-reject">Close, no action</button>' +
+              '<button type="button" class="btn ghost sm dr-false" style="color:var(--err);">Reject as false</button></div>'
+          : (r.review_note ? '<p class="small">Officer: ' + esc(r.review_note) + "</p>" : "") +
+            (r.challan_reference ? '<p class="small">e-Challan <span class="mono">' + esc(r.challan_reference) + "</span></p>" : "")) +
+        "</div>";
+    }).join("");
+
+    $$("#dr-list img[data-id]").forEach(function (img) {
+      reportPhotoUrl(img.dataset.report, img.dataset.id).then(function (u) { img.src = u; }).catch(function () { img.alt = "Couldn't load photo"; });
+    });
+    $$("#dr-list .dr-photo").forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        reportPhotoUrl(a.dataset.report, a.dataset.id).then(function (u) { showLargePhoto(u); });
+      });
+    });
+    $$("#dr-list .dr-card").forEach(function (card) {
+      var id = card.dataset.id;
+      function act(path, body, done) {
+        $$("button", card).forEach(function (b) { b.disabled = true; });
+        api("/api/driver-reports/" + id + "/" + path, { method: "POST", body: JSON.stringify(body) })
+          .then(function (r) { toast(done(r), "ok"); loadDriverReports(); refreshBell(); })
+          .catch(function (e) { toast(e.message, "err"); $$("button", card).forEach(function (b) { b.disabled = false; }); });
+      }
+      var accept = $(".dr-accept", card);
+      if (!accept) return;
+      accept.addEventListener("click", function () {
+        var plate = $(".dr-plate", card).value.trim(), type = $(".dr-type", card).value;
+        if (!confirm("Issue a " + offenceTypeLabel(type) + " fine to " + plate + "?")) return;
+        act("accept", { plate_number: plate, violation_type: type }, function (r) { return "Fine issued: " + r.challan_reference; });
+      });
+      $(".dr-reject", card).addEventListener("click", function () {
+        var reason = prompt("Why is it being closed? The reporter will see this (e.g. plate not readable in the video).");
+        if (!reason || !reason.trim()) return;
+        act("reject", { reason: reason.trim(), false_report: false }, function () { return "Report closed"; });
+      });
+      $(".dr-false", card).addEventListener("click", function () {
+        var reason = prompt("Why is it false? The reporter will be fined and will see this.");
+        if (!reason || !reason.trim()) return;
+        if (!confirm("Fine the reporter for a false report?")) return;
+        act("reject", { reason: reason.trim(), false_report: true }, function () { return "Rejected as false; the reporter has been fined"; });
+      });
+    });
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }

@@ -1,8 +1,13 @@
-"""Citizen road reports: who may report, and what a false report costs.
+"""Citizen reports: who may report, and what a false report costs.
 
-A citizen's report goes on the live feed - and closes its stretch in the route
-planner - the moment it is made, marked unverified until an officer reviews it.
-What keeps that honest is accountability rather than a waiting room:
+Two kinds of report share these rules: road reports (an accident, a closure)
+and reports of a driver (dangerous driving, with photo or video evidence). A
+false one of either kind is a strike, and both count towards the open limit.
+
+A citizen's road report goes on the live feed - and closes its stretch in the
+route planner - the moment it is made, marked unverified until an officer
+reviews it. A driver report does nothing until an officer accepts it. What
+keeps both honest is accountability:
 
 * citizens sign up with their NRC number, so every report is traceable to a person;
 * an officer who finds a report false fines the reporter's account (an e-Challan
@@ -22,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.api.enforcement import create_challan_for_violation
 from app.core.timeutil import aware, utcnow
+from app.models.driver_report import DriverReport, DriverReportStatus
 from app.models.enforcement import Challan, Violation, ViolationType
 from app.models.road_network import IncidentVerification, RoadIncident
 from app.models.user import STAFF_ROLES, User
@@ -48,7 +54,7 @@ class Standing:
 
 
 def false_report_times(db: Session, user_id, since: datetime) -> list[datetime]:
-    """When this user's reports were found false, newest first, back to ``since``."""
+    """When this user's reports (road or driver) were found false, newest first, back to ``since``."""
     rows = (
         db.query(RoadIncident.reviewed_at)
         .filter(
@@ -57,13 +63,21 @@ def false_report_times(db: Session, user_id, since: datetime) -> list[datetime]:
             RoadIncident.reviewed_at.isnot(None),
         )
         .all()
+    ) + (
+        db.query(DriverReport.reviewed_at)
+        .filter(
+            DriverReport.reporter_id == user_id,
+            DriverReport.status == DriverReportStatus.FALSE.value,
+            DriverReport.reviewed_at.isnot(None),
+        )
+        .all()
     )
     times = [aware(r[0]) for r in rows]
     return sorted((t for t in times if t >= since), reverse=True)
 
 
 def open_report_count(db: Session, user_id) -> int:
-    return (
+    road = (
         db.query(RoadIncident)
         .filter(
             RoadIncident.reported_by == user_id,
@@ -72,6 +86,12 @@ def open_report_count(db: Session, user_id) -> int:
         )
         .count()
     )
+    drivers = (
+        db.query(DriverReport)
+        .filter(DriverReport.reporter_id == user_id, DriverReport.status == DriverReportStatus.PENDING.value)
+        .count()
+    )
+    return road + drivers
 
 
 def reporter_standing(db: Session, user: User) -> Standing:
@@ -111,37 +131,51 @@ def reporter_standing(db: Session, user: User) -> Standing:
     return standing
 
 
-def issue_false_report_fine(db: Session, incident: RoadIncident, place: str, officer: User) -> Challan | None:
-    """Fine the reporter of a report found false. None if there is nobody to charge."""
-    reporter = db.get(User, incident.reported_by) if incident.reported_by else None
-    if reporter is None:
-        return None
+def fine_false_report(db: Session, reporter: User, when: datetime, place: str, what: str,
+                      officer: User) -> Challan:
+    """Charge ``reporter`` the false-report fine: a violation on their account and its e-Challan."""
     violation = Violation(
         user_id=reporter.id,
         violation_type=ViolationType.FALSE_REPORT,
         location=place[:200],
-        timestamp=incident.starts_at or datetime.utcnow(),
-        description=f"False road report: {incident.review_note}"[:1000],
+        timestamp=when or datetime.utcnow(),
+        description=what[:1000],
         recorded_by=officer.id,
         liable_party=ViolationType.FALSE_REPORT.liable_party,
     )
     db.add(violation)
     db.flush()
     log_action(db, "create", "violation", str(violation.id),
-               f"False road report by {reporter.full_name}", officer.id)
-    challan = create_challan_for_violation(
+               f"False report by {reporter.full_name}", officer.id)
+    return create_challan_for_violation(
         db, violation, officer.id,
         penalty_amount=runtime_settings.get(db, "road_reports.false_report_fine"),
         due_days=runtime_settings.get(db, "enforcement.challan_due_days"),
     )
+
+
+def false_report_notice(db: Session, reporter: User, challan: Challan) -> dict:
+    """The fine and strike count to tell a reporter whose report was found false."""
     standing = reporter_standing(db, reporter)
-    notify(db, reporter.id, "road_report_false", {
+    return {
         "reference": challan.reference,
         "amount": challan.penalty_amount,
         "due_date": challan.due_date.strftime("%Y-%m-%d"),
-        "place": place,
-        "reason": incident.review_note or "",
         "strikes": standing.false_reports,
         "strike_limit": standing.strike_limit,
+    }
+
+
+def issue_false_report_fine(db: Session, incident: RoadIncident, place: str, officer: User) -> Challan | None:
+    """Fine the reporter of a road report found false. None if there is nobody to charge."""
+    reporter = db.get(User, incident.reported_by) if incident.reported_by else None
+    if reporter is None:
+        return None
+    challan = fine_false_report(db, reporter, incident.starts_at, place,
+                                f"False road report: {incident.review_note}", officer)
+    notify(db, reporter.id, "road_report_false", {
+        **false_report_notice(db, reporter, challan),
+        "place": place,
+        "reason": incident.review_note or "",
     })
     return challan

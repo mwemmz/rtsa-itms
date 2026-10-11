@@ -31,7 +31,7 @@ from app.api import (
 )
 from app.api import integration, lookup, reports, system
 from app.api.health import router as health_router
-from app.api import incidents, portal, road_network, routing
+from app.api import driver_reports, incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
 from app.core import metrics
 from app.core.config import settings
@@ -97,6 +97,7 @@ app.include_router(notifications.router)
 app.include_router(admin.router)
 app.include_router(road_network.router)
 app.include_router(incidents.router)
+app.include_router(driver_reports.router)
 app.include_router(routing.router)
 app.include_router(portal.router)
 app.include_router(reports.router)

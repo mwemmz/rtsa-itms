@@ -118,6 +118,30 @@ DEFAULT_RULES = [
         "title_template": "Fine for a false road report",
         "body_template": "An officer found your road report on {place} to be false ({reason}). e-Challan {reference} for {amount} is due by {due_date}. False reports so far: {strikes} of {strike_limit} before reporting is suspended.",
     },
+    {
+        "trigger_event": "driver_report_received",
+        "channels": "in_app",
+        "title_template": "Driver report to review: {plate}",
+        "body_template": "{reporter} reported {plate} for {offence} at {place}. Look at the evidence under Driver reports.",
+    },
+    {
+        "trigger_event": "driver_report_accepted",
+        "channels": "in_app",
+        "title_template": "Your report led to a fine",
+        "body_template": "An officer reviewed your report {report} of {plate} ({offence}) and issued a fine. Thank you for helping keep the roads safe.",
+    },
+    {
+        "trigger_event": "driver_report_rejected",
+        "channels": "in_app",
+        "title_template": "Your driver report was closed",
+        "body_template": "An officer closed your report {report} of {plate}: {reason}. No action is taken against you.",
+    },
+    {
+        "trigger_event": "driver_report_false",
+        "channels": "in_app,email",
+        "title_template": "Fine for a false report",
+        "body_template": "An officer found your report {report} of {plate} to be false ({reason}). e-Challan {reference} for {amount} is due by {due_date}. False reports so far: {strikes} of {strike_limit} before reporting is suspended.",
+    },
 ]
 
 
