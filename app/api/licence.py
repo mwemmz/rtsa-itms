@@ -36,6 +36,19 @@ def apply_for_licence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # A citizen applies for themselves: the NRC must be the one on their account.
+    if current_user.role == UserRole.CITIZEN and current_user.nrc_number and payload.id_number != current_user.nrc_number:
+        raise HTTPException(status_code=422, detail="Apply with the NRC number on your account")
+    open_app = (
+        db.query(LicenceApplication)
+        .filter(
+            LicenceApplication.applicant_id == current_user.id,
+            LicenceApplication.status.notin_([LicenceApplicationStatus.ISSUED, LicenceApplicationStatus.REJECTED]),
+        )
+        .first()
+    )
+    if open_app is not None:
+        raise HTTPException(status_code=409, detail="You already have an application in progress")
     app = LicenceApplication(
         applicant_id=current_user.id,
         first_name=payload.first_name,

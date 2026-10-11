@@ -7,6 +7,7 @@ from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, VehicleStatus
 from app.schemas.vehicle import VehicleCreate, VehicleResponse, VehicleUpdate
 from app.services.audit import log_action
+from app.services.plates import find_vehicle_by_plate
 
 router = APIRouter(prefix="/api/vehicles", tags=["Vehicles"])
 
@@ -72,9 +73,8 @@ def get_vehicle_by_registration(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
-    vehicle = db.query(Vehicle).filter(
-        Vehicle.registration_number == registration_number
-    ).first()
+    # "BAL 1234", "bal1234" and "BAL  1234" are the same plate.
+    vehicle = find_vehicle_by_plate(db, registration_number)
     if not vehicle:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
     return vehicle

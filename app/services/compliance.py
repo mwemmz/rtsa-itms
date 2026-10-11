@@ -56,7 +56,7 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
         result.checks.append({
             "check": "insurance",
             "status": "pass",
-            "detail": f"Valid until {active_insurance.end_date}",
+            "detail": f"Valid until {active_insurance.end_date:%d %b %Y}",
         })
 
     # 4. Fitness certificate
@@ -81,7 +81,7 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
         result.checks.append({
             "check": "fitness",
             "status": "pass",
-            "detail": f"Valid until {fitness.expiry_date}",
+            "detail": f"Valid until {fitness.expiry_date:%d %b %Y}",
         })
 
     # 5. Outstanding fines/challans
@@ -119,7 +119,7 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
         result.checks.append({
             "check": "psv_permit",
             "status": "pass",
-            "detail": f"Permit {psv_permit.permit_number} valid until {psv_permit.expiry_date}",
+            "detail": f"Permit {psv_permit.permit_number} valid until {psv_permit.expiry_date:%d %b %Y}",
         })
     else:
         # Only flag if the vehicle appears PSV-related (has a permit record historically)

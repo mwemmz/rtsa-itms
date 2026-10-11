@@ -9,7 +9,6 @@ is safe to run as often as needed. Each lookup is written to the audit log
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -17,17 +16,13 @@ from app.core.security import require_role
 from app.models.driver import Driver
 from app.models.enforcement import Challan, ChallanStatus, Violation
 from app.models.user import User, UserRole
-from app.models.vehicle import Vehicle
 from app.services.audit import log_action
 from app.services.compliance import check_vehicle_compliance
+from app.services.plates import UNREGISTERED_REASON, find_vehicle_by_plate, normalise_plate
 
 router = APIRouter(prefix="/api/toll", tags=["Toll"])
 
 OPEN_STATUSES = (ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED)
-
-
-def _normalise(plate: str) -> str:
-    return "".join(plate.split()).upper()
 
 
 @router.get("/lookup/{plate}")
@@ -37,20 +32,16 @@ def lookup_plate(
     current_user: User = Depends(require_role(UserRole.OFFICER, UserRole.TOLL_OPERATOR, UserRole.ADMIN)),
 ):
     """Look a vehicle up by plate ("BAL 1234" and "bal1234" both match)."""
-    key = _normalise(plate)
+    key = normalise_plate(plate)
     if len(key) < 3:
         raise HTTPException(status_code=422, detail="Enter at least 3 characters of the plate")
-    vehicle = (
-        db.query(Vehicle)
-        .filter(func.replace(func.upper(Vehicle.registration_number), " ", "") == key)
-        .first()
-    )
+    vehicle = find_vehicle_by_plate(db, key)
     log_action(db, "plate_lookup", "vehicle", str(vehicle.id) if vehicle else None,
                f"{key}: {'found' if vehicle else 'not registered'}", current_user.id)
     db.commit()
     if vehicle is None:
         return {"found": False, "plate": key, "decision": "stop",
-                "reasons": ["No vehicle is registered with this plate"], "offences": [], "total_owed": 0}
+                "reasons": [UNREGISTERED_REASON], "offences": [], "total_owed": 0}
 
     now = datetime.utcnow()
     compliance = check_vehicle_compliance(db, vehicle)

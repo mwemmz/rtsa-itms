@@ -29,6 +29,14 @@ function dt(v) {
   return d.toLocaleString("en-ZM", { dateStyle: "short", timeStyle: "short" });
 }
 
+// For days, not moments: due dates, expiry dates. A time on those is noise.
+function dday(v) {
+  if (!v) return "";
+  var d = utcDate(v);
+  if (isNaN(d.getTime())) return v;
+  return d.toLocaleDateString("en-ZM", { dateStyle: "medium" });
+}
+
 function toast(msg, type) {
   var box = document.createElement("div");
   box.className = "toast " + (type || "");
@@ -837,8 +845,12 @@ function categoryPill(category) {
   return '<span class="pill ' + CATEGORY_CLASSES[key] + '">' + esc(CATEGORY_LABELS[key]) + "</span>";
 }
 
+// The offence's name as the form lists it ("Reckless / dangerous driving"),
+// so every screen calls it the same thing.
 function offenceTypeLabel(violationType) {
-  return String(violationType == null ? "" : violationType).replace(/_/g, " ");
+  if (violationType === "false_report") return "False report";
+  var hit = VO_TYPES.filter(function (t) { return t[0] === violationType; })[0];
+  return hit ? hit[1] : String(violationType == null ? "" : violationType).replace(/_/g, " ");
 }
 
 // Driver offences can add licence points or lead to a ban; vehicle offences
@@ -858,6 +870,7 @@ VIEWS.dashboard = async function () {
   else if (USER.role === "officer") out = await officerDashboard();
   else out = await citizenDashboard();
   $("#content").innerHTML = out;
+  if (USER.role === "officer") wireMyRecent();
 };
 
 async function adminDashboard() {
@@ -883,81 +896,168 @@ async function adminDashboard() {
   );
 }
 
+// The officer's home: what needs them now (reports to review, blocked roads),
+// their own recent work, and one tap to every tool. The full violation and
+// challan lists are a tap away on their own screens, so they aren't repeated here.
 async function officerDashboard() {
-  var violations = await api("/api/enforcement/violations?limit=6");
-  var challans = await api("/api/enforcement/challans?limit=6");
   // challans_by_status is an all-time, unfiltered count (see app/services/reports.py
-  // dashboard()) -- unlike the 6-row lists above, it isn't capped, so it's the only
-  // accurate source for "how many challans are actually outstanding".
-  var unpaid = 0;
+  // dashboard()), the only accurate source for "how many are outstanding".
+  var unpaid = "—";
   try {
     var stats = await api("/api/reports/dashboard");
     var byStatus = (stats.breakdowns && stats.breakdowns.challans_by_status) || {};
+    unpaid = 0;
     Object.keys(byStatus).forEach(function (s) { if (s !== "paid") unpaid += byStatus[s]; });
-  } catch (e) {
-    unpaid = challans.filter(function (c) { return c.status !== "paid"; }).length;
-  }
-  // Counted by the API: the 6-row list above can't say how many there were.
+  } catch (e) { /* tile shows a dash */ }
   var recent = null;
   try { recent = await api("/api/enforcement/violations/summary"); } catch (e) { /* tile shows a dash */ }
   var incidents = [];
   try { incidents = await api("/api/incidents/alerts"); } catch (e) { /* board still renders */ }
+  var mine = null;
+  try { mine = await api("/api/enforcement/violations?mine=true&limit=10"); } catch (e) { /* card shows the error */ }
   var blocking = incidents.filter(function (a) { return a.blocking; }).length;
   var toReview = incidents.filter(function (a) { return a.verification === "unverified"; }).length;
   return (
     '<div class="grid cards">' +
-      kpi("Active challans", unpaid) +
-      kpi("Violations, last 24h", recent ? recent.last_24h : "—", recent ? recent.last_24h_by_me + " recorded by you" : "") +
-      kpi("Active road incidents", "<a href='#/alerts'>" + incidents.length + "</a>", blocking + " blocking a road") +
-      kpi("Citizen reports to review", "<a href='#/alerts'>" + toReview + "</a>", toReview ? "Live on the planner until reviewed" : "All reviewed") +
-      kpi("Tools", "<div><a class='btn gold sm' href='#/violations'>Record violation</a> <a class='btn sm' href='#/accidents'>Report accident</a> <a class='btn sm' href='#/toll'>Toll gate</a></div>") +
+      kpi("Citizen reports to review", toReview, toReview ? "Live on the planner until you review them" : "All reviewed", "#/alerts") +
+      kpi("Active road incidents", incidents.length, blocking + " blocking a road", "#/alerts") +
+      kpi("Violations, last 24h", recent ? recent.last_24h : "—", recent ? recent.last_24h_by_me + " recorded by you" : "", "#/violations") +
+      kpi("Unpaid challans", unpaid, "Across all motorists", "#/challans") +
     "</div>" +
-    '<div class="row">' +
-      cars("Recent violations", violationRows(violations)) +
-      cars("Recent challans", challanRows(challans)) +
-    "</div>"
+    '<div class="card"><h3>Tools</h3><div class="toolbar" style="margin:0;">' +
+      "<a class='btn gold' href='#/violations'>Record violation</a>" +
+      "<a class='btn' href='#/toll'>Check a plate</a>" +
+      "<a class='btn' href='#/accidents'>Report accident</a>" +
+      "<a class='btn' href='#/anpr'>ANPR</a>" +
+    "</div></div>" +
+    cars("Recorded by you", '<div id="my-recent">' + (mine ? myViolationRows(mine) : '<div class="error-box">Couldn\'t load what you recorded.</div>') + "</div>")
   );
+}
+
+// The officer's own recent work: reprint or text a ticket, or name the driver
+// once the owner has said who it was.
+function myViolationRows(vs) {
+  if (!vs.length) return '<div class="empty">Nothing recorded by you yet. <a href="#/violations">Record a violation</a></div>';
+  return '<div class="table-wrap"><table class="stack"><tr><th>Offence</th><th>Vehicle / offender</th><th>When</th><th>e-Challan</th><th></th></tr>' +
+    vs.map(function (v) {
+      var who = v.registration_number || v.driver_name || v.account_name || "—";
+      var c = v.challan;
+      return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(v.violation_type)) + "</b>" + evidenceTag(v) + "</td>" +
+        '<td data-label="Vehicle / offender"><span class="mono">' + esc(who) + "</span>" + (v.driver_name && v.registration_number ? "<div class='small muted'>" + esc(v.driver_name) + "</div>" : "") +
+          (driverMissing(v) ? "<div class='small' style='color:var(--warn);'>Driver not named yet</div>" : "") + "</td>" +
+        '<td data-label="When" class="small">' + dt(v.timestamp) + "</td>" +
+        '<td data-label="e-Challan">' + (c ? "<span class='mono small'>" + esc(c.reference) + "</span> " + statusPill(c.status) : "—") + "</td>" +
+        // A false-report fine is charged to an account, not handed over at the roadside.
+        '<td><div class="toolbar" style="margin:0;">' + (v.category === "reporter" ? "" : ticketActions(c)) +
+          ' <button type="button" class="btn ghost sm photo-link" data-id="' + esc(v.id) + '">' + photoButtonLabel(v.photo_count) + "</button>" +
+          (driverMissing(v) ? ' <button type="button" class="btn gold sm name-driver" data-id="' + esc(v.id) + '">Name driver</button>' : "") +
+        "</div></td></tr>";
+    }).join("") + "</table></div>";
+}
+
+function wireMyRecent() {
+  var box = $("#my-recent");
+  if (!box) return;
+  wireTicketActions(box);
+  $$(".name-driver", box).forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var licence = prompt("Licence number of the driver the owner named:");
+      if (!licence || !licence.trim()) return;
+      b.disabled = true;
+      try {
+        var v = await api("/api/enforcement/violations/" + b.dataset.id + "/driver", { method: "POST", body: JSON.stringify({ licence_number: licence.trim() }) });
+        toast(v.driver_name + " is now charged with this offence", "ok");
+        box.innerHTML = myViolationRows(await api("/api/enforcement/violations?mine=true&limit=10"));
+        wireMyRecent();
+      } catch (e) { toast(e.message, "err"); b.disabled = false; }
+    });
+  });
 }
 
 async function citizenDashboard() {
   var d = await api("/api/portal/dashboard");
+  var s = await api("/api/citizen/summary");
   var licence = d.licence;
-  var licBlock = licence
-    ? '<div><span class="pill ' + (licence.state === "expired" ? "red" : licence.state === "expiring_soon" ? "amber" : "green") + '">' + esc(licence.state) + '</span></div>' +
-      '<div class="table-wrap"><table><tr><td>Licence no.</td><td class="mono">' + esc(licence.licence_number) + "</td></tr>" +
-      '<tr><td>Class</td><td>' + esc(licence.licence_class) + '</td></tr>' +
-      '<tr><td>Expires</td><td>' + dt(licence.expiry_date) + ' (' + Number(licence.days_until_expiry) + " days)</td></tr></table></div>"
-    : '<div class="empty">No driver record linked to this account yet.</div>';
+  var vehicles = d.vehicles || [];
+  var alerts = d.active_alerts || [];
+  // Each vehicle's own compliance, so a missing insurance shows up here, not
+  // only when an officer stops the car.
+  var checks = await Promise.all(vehicles.map(function (v) {
+    return api("/api/citizen/vehicles/" + v.id).catch(function () { return null; });
+  }));
+  var vehicleProblems = [];
+  checks.forEach(function (c) {
+    if (!c) return;
+    c.checks.forEach(function (ch) {
+      // Unpaid fines have their own line below.
+      if (ch.status === "fail" && ch.check !== "outstanding_fines") {
+        vehicleProblems.push({ plate: c.vehicle.registration_number, what: ch.detail || CHECK_LABELS[ch.check] || ch.check });
+      }
+    });
+  });
+  var needAttention = checks.filter(function (c) { return c && !c.compliant; }).length;
+
+  var todo = [];
+  function item(text, label, href, urgent) {
+    todo.push("<li><span" + (urgent ? ' style="color:var(--err);"' : "") + ">" + text + "</span>" +
+      (label ? '<a class="btn ' + (urgent ? "gold" : "ghost") + ' sm" href="' + href + '">' + esc(label) + "</a>" : "") + "</li>");
+  }
+  if (s.overdue_fines) item("<b>" + s.overdue_fines + " overdue fine" + (s.overdue_fines === 1 ? "" : "s") + "</b> to pay", "Pay", "#/fines", true);
+  else if (s.unpaid_fines) item(s.unpaid_fines + " fine" + (s.unpaid_fines === 1 ? "" : "s") + " to pay, " + money(s.amount_due), "Pay", "#/fines");
+  if (licence) {
+    if (licence.status === "suspended" || licence.status === "disqualified") item("Your licence is <b>" + esc(licence.status) + "</b>. Contact RTSA.", "", "", true);
+    else if (licence.state === "expired") item("Your licence <b>expired</b> on " + dday(licence.expiry_date), "Renew", "#/licence", true);
+    else if (licence.can_renew) item("Your licence expires on " + dday(licence.expiry_date) + " (" + licence.days_until_expiry + " days)", "Renew", "#/licence");
+  } else if (s.open_applications) {
+    item("Your licence application is in progress", "Track", "#/applications");
+  } else {
+    item("No driving licence is linked to this account", "Apply", "#/applications");
+  }
+  vehicleProblems.forEach(function (p) { item("<b class='mono'>" + esc(p.plate) + "</b>: " + esc(p.what), "View", "#/vehicles", true); });
+  (s.expiring_soon || []).forEach(function (x) {
+    if (x.type === "licence") return;  // covered above
+    item(esc(CHECK_LABELS[x.type] || x.type) + " for <b class='mono'>" + esc(x.ref) + "</b> " +
+      (x.days_left < 0 ? "has expired" : "expires in " + x.days_left + " days"), "View", "#/vehicles");
+  });
+  if (!USER.nrc_number) item("Add your NRC number to report road incidents and apply for a licence", "Add", "#/account");
+  if (!todo.length) todo.push('<li><span class="todo-done">Nothing needs your attention. Drive safe.</span></li>');
+
+  var lic = licenceState(licence);
   return (
     '<div class="grid cards">' +
-      kpi("Unread notifications", d.unread_notifications) +
-      kpi("My vehicles", (d.vehicles || []).length) +
-      kpi("Outstanding fines", money(d.total_outstanding)) +
-      kpi("Active road alerts", (d.active_alerts || []).length) +
+      kpi("Fines to pay", money(s.amount_due),
+        s.unpaid_fines ? s.unpaid_fines + " unpaid" + (s.overdue_fines ? " · " + s.overdue_fines + " overdue" : "") : "Nothing to pay", "#/fines") +
+      kpi("My licence", '<span class="pill ' + lic[1] + '">' + esc(lic[0]) + "</span>",
+        !licence ? (s.open_applications ? "Application in progress" : "Apply for one")
+          : licence.state === "expired" ? "Expired " + dday(licence.expiry_date)
+          : licence.days_until_expiry + " days left",
+        licence ? "#/licence" : "#/applications") +
+      kpi("My vehicles", vehicles.length,
+        !vehicles.length ? "None linked yet" : needAttention ? needAttention + " need attention" : "All in order", "#/vehicles") +
+      kpi("Road alerts", alerts.length, alerts.length ? "See them and plan around" : "Roads clear", "#/alerts") +
     "</div>" +
-    '<div class="row">' +
-      cars("My licence", licBlock) +
-      cars("My vehicles", (d.vehicles || []).length
-        ? '<div class="table-wrap"><table>' + (d.vehicles.map(function (v) {
-            return "<tr><td><b>" + esc(v.registration_number) + "</b><div class='small muted'>" + esc(v.make) + " " + esc(v.model) + " (" + v.year + ")</div></td><td>" + statusPill(v.status) + "</td></tr>";
-          }).join("")) + "</table></div>"
-        : '<div class="empty">No vehicles registered to you.</div>') +
-      cars("Road alerts", ((d.active_alerts || []).length
-        ? d.active_alerts.map(function (a) {
-            return '<div class="small" style="padding:6px 0;border-bottom:1px solid var(--line);"><b>' + esc(INCIDENT_TYPE_LABELS[a.incident_type] || a.incident_type) + "</b> · " + esc(a.severity) +
-              (a.verification === "unverified" ? " " + verificationPill(a.verification) : "") +
-              (a.road_name ? ' on <b>' + esc(a.road_name) + "</b>" : "") +
-              (a.stretch ? '<div class="muted">' + esc(a.stretch) + "</div>" : "") +
-              (a.description ? "<div>" + esc(a.description) + "</div>" : "") + "</div>";
-          }).join("") + '<p class="small" style="margin:10px 0 0;"><a href="#/planner">Plan a route around these</a></p>'
-        : '<div class="empty">No active alerts.</div>') +
-        '<p style="margin:12px 0 0;"><a class="btn gold sm" href="#/report">Report an incident</a></p>') +
-    "</div>"
+    cars("What to do next", '<ul class="todo">' + todo.join("") + "</ul>" +
+      '<div class="toolbar" style="margin:14px 0 0;"><a class="btn gold sm" href="#/report">Report a road incident</a><a class="btn sm" href="#/planner">Plan a route</a></div>')
   );
 }
 
-function kpi(label, value, sub) {
-  return '<div class="kpi"><div class="kpi-label">' + esc(label) + '</div><div class="kpi-value">' + value + '</div>' + (sub ? '<div class="kpi-sub">' + esc(sub) + "</div>" : "") + "</div>";
+// Names for the vehicle checks and expiring items, in place of their API keys.
+var CHECK_LABELS = {
+  registration_status: "Registration", blacklist: "Not blacklisted", insurance: "Insurance",
+  fitness: "Fitness certificate", outstanding_fines: "Unpaid fines", psv_permit: "PSV permit", licence: "Licence"
+};
+
+// [label, pill colour] for a licence: a suspension outranks the expiry date.
+function licenceState(licence) {
+  if (!licence) return ["None", "gray"];
+  if (licence.status === "suspended" || licence.status === "disqualified") return [licence.status === "suspended" ? "Suspended" : "Disqualified", "red"];
+  return { valid: ["Valid", "green"], expiring_soon: ["Expiring soon", "amber"], expired: ["Expired", "red"] }[licence.state] || [licence.state, "gray"];
+}
+
+// With href the whole tile is a link to the screen where you act on it.
+function kpi(label, value, sub, href) {
+  var inner = '<div class="kpi-label">' + esc(label) + '</div><div class="kpi-value">' + value + '</div>' + (sub ? '<div class="kpi-sub">' + esc(sub) + "</div>" : "");
+  return href ? '<a class="kpi kpi-link" href="' + esc(href) + '">' + inner + "</a>" : '<div class="kpi">' + inner + "</div>";
 }
 function cars(title, body) {
   return '<div class="card"><h3>' + esc(title) + "</h3>" + body + "</div>";
@@ -973,10 +1073,11 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<div class="table-wrap"><table class="stack"><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || v.account_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
-        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + speedCell(v) + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + gpsLink(v) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+        if (driverMissing(v)) vehicle += "<div class='small' style='color:var(--warn);'>Driver not named yet</div>";
+        return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(v.violation_type)) + "</b>" + evidenceTag(v) + photoLink(v) + '</td><td data-label="Category">' + categoryPill(v.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + '</td><td data-label="Speed">' + speedCell(v) + '</td><td data-label="Consequence">' + (consequenceTags(v) || '<span class="small muted">—</span>') + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Location">' + esc(v.location) + gpsLink(v) + '</td><td data-label="When" class="small">' + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No violations recorded.</div>';
 }
@@ -1000,12 +1101,212 @@ function gpsLink(v) {
     (v.gps_accuracy_m != null ? " ±" + Math.round(v.gps_accuracy_m) + " m" : "") + "</a></div>";
 }
 
+var EVIDENCE_LABELS = { citizen_video: "Citizen's video", social_media: "Social media post", cctv: "CCTV / traffic camera" };
+
+// Where the evidence came from, linked when there's footage to look at.
+function evidenceTag(v) {
+  if (!v.evidence_source) return "";
+  var label = esc(EVIDENCE_LABELS[v.evidence_source] || v.evidence_source);
+  var url = /^https?:\/\//i.test(v.evidence_url || "") ? v.evidence_url : "";
+  return '<div class="small">' + (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + label + "</a>" : label) + "</div>";
+}
+
+// A driver offence recorded from the plate alone: the owner still has to say who drove.
+function driverMissing(v) {
+  return (v.liable_party === "driver" || v.liable_party === "both") && !v.driver_name && !!v.registration_number;
+}
+
+// Print or text the motorist's ticket. Wired by wireTicketActions.
+function ticketActions(challan) {
+  if (!challan) return "";
+  return '<button type="button" class="btn ghost sm tk-pdf" data-id="' + esc(challan.id) + '" data-ref="' + esc(challan.reference) + '">Ticket PDF</button> ' +
+    '<button type="button" class="btn ghost sm tk-sms" data-id="' + esc(challan.id) + '">Send by SMS</button>';
+}
+
+function wireTicketActions(root) {
+  $$(".tk-pdf", root).forEach(function (b) {
+    b.addEventListener("click", function () {
+      download("/api/enforcement/challans/" + b.dataset.id + "/ticket.pdf", "ticket-" + b.dataset.ref + ".pdf")
+        .catch(function (e) { toast(e.message, "err"); });
+    });
+  });
+  $$(".tk-sms", root).forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var phone = prompt("Motorist's phone number (e.g. 0977123456):");
+      if (!phone || !phone.trim()) return;
+      b.disabled = true;
+      try {
+        var r = await api("/api/enforcement/challans/" + b.dataset.id + "/sms", { method: "POST", body: JSON.stringify({ phone_number: phone.trim() }) });
+        toast("Ticket sent to " + r.to, "ok");
+      } catch (e) { toast(e.message, "err"); }
+      finally { b.disabled = false; }
+    });
+  });
+}
+
+/* ---- photo evidence ---- */
+
+var MAX_PHOTOS = 5;          // per violation; the API enforces the same
+var PHOTO_EDGE = 1600;       // longest side kept, px: plenty to read a plate
+
+// Phone cameras produce 3-8 MB images. Shrink to a JPEG that still shows the
+// plate before uploading over a roadside connection. Anything the browser
+// can't decode goes up as it is and the API decides.
+async function shrinkPhoto(file) {
+  try {
+    var bmp = await createImageBitmap(file);
+    var scale = Math.min(1, PHOTO_EDGE / Math.max(bmp.width, bmp.height));
+    if (scale === 1 && file.type === "image/jpeg" && file.size < 600 * 1024) return file;
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    return await new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.82);
+    });
+  } catch (e) {
+    return file;
+  }
+}
+
+// Uploads one at a time so one bad photo doesn't sink the rest.
+async function uploadPhotos(violationId, files) {
+  var done = 0, errors = [];
+  for (var i = 0; i < files.length; i++) {
+    var body = new FormData();
+    body.append("file", await shrinkPhoto(files[i]), files[i].name || "photo.jpg");
+    try {
+      await api("/api/enforcement/violations/" + violationId + "/photos", { method: "POST", body: body });
+      done++;
+    } catch (e) { errors.push((files[i].name || "Photo " + (i + 1)) + ": " + e.message); }
+  }
+  return { done: done, errors: errors };
+}
+
+// Photos need the sign-in header, so they're fetched rather than linked, and
+// shown as data: URLs because the page's CSP allows data: images but not blob:.
+function blobToDataUrl(blob) {
+  return new Promise(function (resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function () { resolve(reader.result); };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+var PHOTO_URLS = {};
+async function photoUrl(violationId, photoId) {
+  if (PHOTO_URLS[photoId]) return PHOTO_URLS[photoId];
+  var res = await fetch("/api/enforcement/violations/" + violationId + "/photos/" + photoId,
+    { headers: { Authorization: "Bearer " + getToken(), "X-Device-Id": deviceId() } });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  PHOTO_URLS[photoId] = await blobToDataUrl(await res.blob());
+  return PHOTO_URLS[photoId];
+}
+
+// A small preview of a photo not uploaded yet (a full camera image as a data:
+// URL would be megabytes). Null when the browser can't decode it.
+async function photoThumb(file) {
+  try {
+    var bmp = await createImageBitmap(file);
+    var scale = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.7);
+  } catch (e) {
+    return null;
+  }
+}
+
+function photoButtonLabel(n) { return n ? "Photos (" + n + ")" : "Add photos"; }
+
+// A due date, flagged when it has passed and the fine is still open.
+function dueCell(c) {
+  var late = c.status !== "paid" && utcDate(c.due_date) < new Date();
+  return dday(c.due_date) + (late ? ' <span class="pill red">overdue</span>' : "");
+}
+
+function photoLink(v) {
+  return v.photo_count
+    ? '<div class="small"><a href="#" class="photo-link" data-id="' + esc(v.id) + '">' + v.photo_count + " photo" + (v.photo_count === 1 ? "" : "s") + "</a></div>"
+    : "";
+}
+
+// Shows a violation's photos, and lets field staff add more up to the limit.
+async function openPhotos(violationId) {
+  var viewer = document.createElement("div");
+  viewer.className = "photo-viewer";
+  viewer.innerHTML = '<div class="card" role="dialog" aria-modal="true" aria-label="Photo evidence">' +
+    '<div class="photo-viewer-head"><h3>Photo evidence</h3><button type="button" class="btn ghost sm pv-close">Close</button></div>' +
+    '<div class="pv-body"><div class="empty">Loading…</div></div></div>';
+  document.body.appendChild(viewer);
+  function close() { viewer.remove(); document.removeEventListener("keydown", onKey); }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+  viewer.addEventListener("click", function (e) { if (e.target === viewer) close(); });
+  $(".pv-close", viewer).addEventListener("click", close);
+
+  async function render() {
+    var body = $(".pv-body", viewer);
+    var photos;
+    try { photos = await api("/api/enforcement/violations/" + violationId + "/photos"); }
+    catch (e) { body.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; return; }
+    var canAdd = (USER.role === "officer" || USER.role === "admin") && photos.length < MAX_PHOTOS;
+    // Keep any "Photos (n)" button behind the viewer in step.
+    $$('button.photo-link[data-id="' + violationId + '"]').forEach(function (b) { b.textContent = photoButtonLabel(photos.length); });
+    body.innerHTML = (photos.length
+      ? '<div class="photo-grid">' + photos.map(function (p) {
+          return '<figure><a href="#" class="pv-open" data-id="' + esc(p.id) + '"><img alt="Evidence photo" data-id="' + esc(p.id) + '"></a>' +
+            "<figcaption>" + esc(p.uploaded_by_name || "Unknown") + " · " + dt(p.created_at) + " · " + Math.round(p.size_bytes / 1024) + " KB" +
+            '<br><span class="mono" title="SHA-256 fingerprint taken when stored">' + esc(p.sha256.slice(0, 16)) + "…</span></figcaption></figure>";
+        }).join("") + "</div>"
+      : '<div class="empty">No photos yet.</div>') +
+      (canAdd ? '<div class="toolbar" style="margin:14px 0 0;"><label class="btn gold sm">Add photos<input type="file" accept="image/*" multiple hidden class="pv-add"></label>' +
+        '<span class="small muted">' + (MAX_PHOTOS - photos.length) + " more allowed</span></div>" : "");
+    $$("img[data-id]", body).forEach(function (img) {
+      photoUrl(violationId, img.dataset.id).then(function (u) { img.src = u; }).catch(function () { img.alt = "Couldn't load photo"; });
+    });
+    // Full size inside the viewer: a new tab can't show a data: URL.
+    $$(".pv-open", body).forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        photoUrl(violationId, a.dataset.id).then(function (u) {
+          body.innerHTML = '<img alt="Evidence photo, full size" src="' + u + '" style="display:block;width:100%;height:auto;border-radius:var(--radius-control);">' +
+            '<div class="toolbar" style="margin:12px 0 0;"><button type="button" class="btn ghost sm pv-back">Back to all photos</button></div>';
+          $(".pv-back", body).addEventListener("click", render);
+        });
+      });
+    });
+    var add = $(".pv-add", body);
+    if (add) add.addEventListener("change", async function () {
+      var files = Array.prototype.slice.call(add.files, 0, MAX_PHOTOS - photos.length);
+      if (!files.length) return;
+      body.insertAdjacentHTML("beforeend", '<p class="small muted">Uploading ' + files.length + "…</p>");
+      var r = await uploadPhotos(violationId, files);
+      if (r.done) toast(r.done + " photo" + (r.done === 1 ? "" : "s") + " attached", "ok");
+      if (r.errors.length) toast(r.errors.join(" · "), "err");
+      render();
+    });
+  }
+  render();
+}
+
+// One listener serves every photo link, wherever a list is drawn.
+document.addEventListener("click", function (e) {
+  var link = e.target.closest && e.target.closest(".photo-link");
+  if (!link) return;
+  e.preventDefault();
+  openPhotos(link.dataset.id);
+});
+
 function challanRows(cs) {
   return cs.length
-    ? '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+    ? '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
         var offender = c.driver_name || c.owner_name || c.account_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + esc(offender) + vehicle + "</td><td>" + money(c.penalty_amount) + "</td><td class='small'>" + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td></tr>";
+        return '<tr><td data-label="Ref" class="mono">' + esc(c.reference) + '</td><td data-label="Category">' + categoryPill(c.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Amount">' + money(c.penalty_amount) + '</td><td data-label="Due" class="small">' + dueCell(c) + '</td><td data-label="Status">' + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No challans found.</div>';
 }
@@ -1192,11 +1493,11 @@ async function loadLicenceApplications() {
     var items = await api("/api/licence-applications/");
     if (status) items = items.filter(function (a) { return a.status === status; });
     if (!items.length) { table.innerHTML = '<div class="empty">No applications found.</div>'; return; }
-    table.innerHTML = '<div class="table-wrap"><table><tr><th>Applicant</th><th>NRC</th><th>Class</th><th>Status</th><th>Theory</th><th>Practical</th><th>Licence no.</th><th></th></tr>' +
+    table.innerHTML = '<div class="table-wrap"><table class="stack"><tr><th>Applicant</th><th>NRC</th><th>Class</th><th>Status</th><th>Theory</th><th>Practical</th><th>Licence no.</th><th></th></tr>' +
       items.map(function (a) {
-        return "<tr><td>" + esc(a.first_name) + " " + esc(a.last_name) + '</td><td class="mono">' + esc(a.id_number) + "</td><td>" + esc(a.requested_class) + "</td><td>" +
-          esc(LICENCE_STATUS_LABELS[a.status] || a.status) + "</td><td>" + (a.theory_score == null ? "—" : a.theory_score) + "</td><td>" +
-          (a.practical_score == null ? "—" : a.practical_score) + '</td><td class="mono">' + esc(a.issued_licence_number || "—") + "</td><td>" + licenceAction(a) + "</td></tr>";
+        return '<tr><td data-label="Applicant"><b>' + esc(a.first_name) + " " + esc(a.last_name) + '</b></td><td data-label="NRC" class="mono">' + esc(a.id_number) + '</td><td data-label="Class">' + esc(a.requested_class) + '</td><td data-label="Status">' +
+          esc(LICENCE_STATUS_LABELS[a.status] || a.status) + '</td><td data-label="Theory">' + (a.theory_score == null ? "—" : a.theory_score) + '</td><td data-label="Practical">' +
+          (a.practical_score == null ? "—" : a.practical_score) + '</td><td data-label="Licence no." class="mono">' + esc(a.issued_licence_number || "—") + "</td><td>" + licenceAction(a) + "</td></tr>";
       }).join("") + "</table></div>";
 
     $$("#la-table .la-theory").forEach(function (btn) {
@@ -1282,18 +1583,24 @@ async function loadChallans() {
   try {
     var items = await api("/api/enforcement/challans?limit=100" + (status ? "&status=" + status : ""));
     if (!items.length) { table.innerHTML = '<div class="empty">No challans found.</div>'; return; }
-    table.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    table.innerHTML = '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Offender</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (c) {
+        // Same wording as the plate check: staff record a payment they received.
         var pay = c.status !== "paid"
-          ? '<button class="btn gold sm pay" data-id="' + esc(c.id) + '" data-ref="' + esc(c.reference) + '">Mark paid</button>'
+          ? '<button class="btn gold sm pay" data-id="' + esc(c.id) + '" data-ref="' + esc(c.reference) + '">Record payment</button>'
           : "";
-        return "<tr><td class='mono'>" + esc(c.reference) + "</td><td>" + categoryPill(c.category) + "</td><td>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</td><td>" + money(c.penalty_amount) + '</td><td class="small">' + dt(c.due_date) + "</td><td>" + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
+        var offender = c.driver_name || c.owner_name || c.account_name || "Unknown offender";
+        var vehicle = c.registration_number ? "<div class='small muted mono'>" + esc(c.registration_number) + "</div>" : "";
+        return '<tr><td data-label="Ref" class="mono">' + esc(c.reference) + '</td><td data-label="Offender">' + esc(offender) + vehicle +
+          '</td><td data-label="Category">' + categoryPill(c.category) + " <span class='small muted'>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</span>" +
+          '</td><td data-label="Amount">' + money(c.penalty_amount) + '</td><td data-label="Due" class="small">' + dueCell(c) +
+          '</td><td data-label="Status">' + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
     $$("#challan-table .pay").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        if (!confirm("Record " + btn.dataset.ref + " as paid?")) return;
+        if (!confirm("Record a payment received for " + btn.dataset.ref + "?")) return;
         api("/api/enforcement/challans/" + btn.dataset.id + "/pay", { method: "POST" })
-          .then(function () { toast(btn.dataset.ref + " marked as paid", "ok"); loadChallans(); })
+          .then(function () { toast(btn.dataset.ref + " paid", "ok"); loadChallans(); })
           .catch(function (e) { toast(e.message, "err"); });
       });
     });
@@ -1633,7 +1940,7 @@ VIEWS.anpr = async function () {
           '<button class="btn gold" type="submit">Record sighting</button>' +
         "</form></div>" +
       '<div class="card"><h3>Recent sightings</h3>' +
-        '<div class="toolbar"><input type="text" id="anpr-filter" placeholder="Exact plate number…">' +
+        '<div class="toolbar"><input type="text" id="anpr-filter" placeholder="Plate number…">' +
         '<button class="btn ghost sm" id="anpr-filter-go">Filter</button></div>' +
         '<div id="anpr-list"><div class="empty">Loading…</div></div></div>' +
     "</div>";
@@ -1644,8 +1951,9 @@ VIEWS.anpr = async function () {
     if (data.confidence) data.confidence = Number(data.confidence);
     if (data.timestamp) data.timestamp = new Date(data.timestamp).toISOString();
     try {
-      await api("/api/anpr/events", { method: "POST", body: JSON.stringify(data) });
-      toast("ANPR sighting recorded", "ok");
+      var seen = await api("/api/anpr/events", { method: "POST", body: JSON.stringify(data) });
+      if (seen.decision === "stop") toast("STOP " + seen.plate_number + ": " + seen.reasons.join(" · "), "err");
+      else toast(seen.plate_number + " is clear", "ok");
       e.target.reset();
       await loadAnprEvents();
     } catch (err) { toast(err.message, "err"); }
@@ -1657,6 +1965,16 @@ VIEWS.anpr = async function () {
   await loadAnprEvents();
 };
 
+// Reads below this confidence are flagged for the officer to confirm by eye.
+var ANPR_SURE = 0.8;
+
+function anprAlert(a) {
+  if (a.decision === "stop") {
+    return '<span class="pill red">Stop</span><div class="small">' + (a.reasons || []).map(esc).join("<br>") + "</div>";
+  }
+  return a.decision === "allow" ? '<span class="pill green">Clear</span>' : "—";
+}
+
 async function loadAnprEvents() {
   var list = $("#anpr-list");
   list.innerHTML = '<div class="empty">Loading…</div>';
@@ -1664,12 +1982,15 @@ async function loadAnprEvents() {
   try {
     var items = await api("/api/anpr/events" + (plate ? "?plate_number=" + encodeURIComponent(plate) : ""));
     if (!items.length) { list.innerHTML = '<div class="empty">No ANPR sightings recorded yet.</div>'; return; }
-    list.innerHTML = '<div class="table-wrap"><table><tr><th>Plate</th><th>Matched vehicle</th><th>Location</th><th>Camera</th><th>Confidence</th><th>When</th></tr>' +
+    list.innerHTML = '<div class="table-wrap"><table><tr><th>Plate</th><th>Alert</th><th>Matched vehicle</th><th>Location</th><th>Camera</th><th>Confidence</th><th>When</th></tr>' +
       items.map(function (a) {
-        return "<tr><td class='mono'><b>" + esc(a.plate_number) + "</b></td><td>" +
+        // A low-confidence read may be the wrong car: check it by eye before acting.
+        var shaky = a.confidence != null && a.confidence < ANPR_SURE;
+        return "<tr><td class='mono'><b>" + esc(a.plate_number) + "</b></td><td>" + anprAlert(a) + "</td><td>" +
           (a.vehicle_id ? '<span class="pill green">known</span>' : '<span class="pill gray">unregistered</span>') + "</td><td>" +
           esc(a.location) + "</td><td>" + esc(a.camera_id || "—") + "</td><td>" +
-          (a.confidence == null ? "—" : Math.round(a.confidence * 100) + "%") + '</td><td class="small">' + dt(a.timestamp) + "</td></tr>";
+          (a.confidence == null ? "—" : Math.round(a.confidence * 100) + "%" + (shaky ? ' <span class="pill amber">check plate</span>' : "")) +
+          '</td><td class="small">' + dt(a.timestamp) + "</td></tr>";
       }).join("") + "</table></div>";
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
@@ -1686,11 +2007,6 @@ var CHECK_OFFENCES = {
   fitness: "expired_fitness",
   psv_permit: "no_psv_permit"
 };
-
-function voLabel(type) {
-  var hit = VO_TYPES.filter(function (t) { return t[0] === type; })[0];
-  return hit ? hit[1] : offenceTypeLabel(type);
-}
 
 // What GET /api/toll/lookup knows about a plate, laid out for the roadside.
 function roadsideCheckHtml(r) {
@@ -1712,7 +2028,7 @@ function roadsideCheckHtml(r) {
     .map(function (c) { return CHECK_OFFENCES[c.check]; });
   if (charges.length) {
     html += '<div class="toolbar" style="margin:4px 0 0;"><span class="small muted">Charge:</span>' +
-      charges.map(function (t) { return '<button type="button" class="btn ghost sm charge" data-type="' + esc(t) + '">' + esc(voLabel(t)) + "</button>"; }).join("") +
+      charges.map(function (t) { return '<button type="button" class="btn ghost sm charge" data-type="' + esc(t) + '">' + esc(offenceTypeLabel(t)) + "</button>"; }).join("") +
       "</div>";
   }
   return html + "</div>";
@@ -1727,6 +2043,7 @@ VIEWS.violations = async function () {
   $("#content").innerHTML =
     '<div class="row">' +
       (canRecord ? '<div class="card"><h3>Record a violation</h3>' +
+        '<div id="vio-done"></div>' +
         '<form id="vio-form">' +
           '<div class="field"><label>Vehicle plate</label>' +
             '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="plate-lookup" placeholder="e.g. BAK 123" autocomplete="off">' +
@@ -1749,7 +2066,15 @@ VIEWS.violations = async function () {
               VO_BOTH_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
             "</optgroup>" +
             "</select>" +
-            '<div class="small muted" id="vio-hint" style="margin-top:6px;"></div></div>' +
+            '<div class="small muted" id="vio-hint" style="margin-top:6px;"></div>' +
+            '<div class="small" id="driver-hint" style="margin-top:6px;color:var(--warn);"></div></div>' +
+          '<div class="field"><label>How was it seen?</label><select name="evidence_source" id="vio-source">' +
+            '<option value="">Seen by me</option>' +
+            Object.keys(EVIDENCE_LABELS).map(function (k) { return '<option value="' + k + '">' + EVIDENCE_LABELS[k] + "</option>"; }).join("") +
+            "</select></div>" +
+          '<div class="field" id="evidence-link-field" hidden><label>Link to the footage or post<span id="link-req"> (optional)</span></label>' +
+            '<input name="evidence_url" id="vio-evidence" type="url" maxlength="500" placeholder="https://…">' +
+            '<div class="small muted" style="margin-top:6px;">So the fine can be traced back to the evidence if it\'s disputed.</div></div>' +
           '<div class="field"><label>Location</label>' +
             '<div class="toolbar" style="margin-bottom:0;"><input name="location" id="vio-location" placeholder="e.g. Great East Road, toll gate 3" required>' +
             '<button type="button" class="btn ghost sm" id="gps-go">Use my location</button></div>' +
@@ -1765,6 +2090,11 @@ VIEWS.violations = async function () {
           '<div class="field"><label>Date &amp; time (optional, defaults to now)</label><input name="timestamp" id="vio-time" type="datetime-local">' +
             '<div class="small" id="time-hint" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Description<span id="desc-req"> (optional)</span></label><textarea name="description" id="vio-desc" rows="2" maxlength="1000"></textarea></div>' +
+          '<div class="field"><label>Photos (optional, up to ' + MAX_PHOTOS + ")</label>" +
+            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="vio-photos" accept="image/*" multiple hidden></label>' +
+            '<span class="small muted" id="photo-count"></span></div>' +
+            '<div class="small muted" style="margin-top:6px;">The scene, the plate, the reading on the speed device. Photos are evidence: once attached they can\'t be removed.</div>' +
+            '<div class="photo-grid" id="photo-preview" style="margin-top:10px;"></div></div>' +
           '<button class="btn gold" type="submit" id="vio-save">Record &amp; generate e-challan</button>' +
         "</form></div>" : "") +
       '<div class="card"><h3>' + (canRecord ? "Recent violations" : "All recorded violations") + "</h3>" +
@@ -1777,8 +2107,17 @@ VIEWS.violations = async function () {
   // match first, so an ID from an earlier lookup can't end up on this
   // violation. The counters drop a slow reply to a lookup already superseded.
   var plateSeq = 0, licenceSeq = 0;
-  function forgetPlate() { plateSeq++; $("#vio-vehicle").value = ""; $("#plate-result").innerHTML = ""; }
-  function forgetLicence() { licenceSeq++; $("#vio-driver").value = ""; $("#licence-result").innerHTML = ""; }
+  function forgetPlate() { plateSeq++; $("#vio-vehicle").value = ""; $("#plate-result").innerHTML = ""; refreshDriverHint(); }
+  function forgetLicence() { licenceSeq++; $("#vio-driver").value = ""; $("#licence-result").innerHTML = ""; refreshDriverHint(); }
+
+  // A driver offence charged from the plate alone (typical of a video case).
+  function refreshDriverHint() {
+    var type = $("#vio-type").value;
+    var driverOffence = VO_IMPOUND_TYPES.indexOf(type) === -1;
+    $("#driver-hint").textContent = driverOffence && $("#vio-vehicle").value && !$("#vio-driver").value
+      ? "No driver attached: the owner is charged until they name who was driving. You can name the driver later from your dashboard."
+      : "";
+  }
 
   async function checkPlate() {
     var plate = $("#plate-lookup").value.trim();
@@ -1792,6 +2131,7 @@ VIEWS.violations = async function () {
       if (seq !== plateSeq) return;
       if (r.found) $("#vio-vehicle").value = r.vehicle.id;
       out.innerHTML = roadsideCheckHtml(r);
+      refreshDriverHint();
       $$("#plate-result .charge").forEach(function (b) {
         b.addEventListener("click", function () {
           $("#vio-type").value = b.dataset.type;
@@ -1815,6 +2155,7 @@ VIEWS.violations = async function () {
       var d = await api("/api/drivers/by-licence/" + encodeURIComponent(licence));
       if (seq !== licenceSeq) return;
       $("#vio-driver").value = d.id;
+      refreshDriverHint();
       var lapsed = d.status === "active" && utcDate(d.licence_expiry_date) < new Date();
       out.innerHTML = 'Found <b>' + esc(d.first_name) + " " + esc(d.last_name) + "</b> · " + statusPill(lapsed ? "expired" : d.status) +
         " · expires " + dt(d.licence_expiry_date);
@@ -1849,9 +2190,22 @@ VIEWS.violations = async function () {
     $("#speed-hint").textContent = speeding
       ? "A speeding ticket needs the reading, the posted limit and the device that took the reading, or it won't stand if disputed."
       : "Optional for this offence. Record a reading whenever one was taken, e.g. for reckless driving.";
+    refreshDriverHint();
   }
   $("#vio-type").addEventListener("change", refreshOffence);
   refreshOffence();
+
+  function refreshEvidence() {
+    var source = $("#vio-source").value;
+    var link = $("#vio-evidence");
+    $("#evidence-link-field").hidden = !source;
+    if (!source) link.value = "";
+    // A post that can't be found again proves nothing.
+    link.required = source === "social_media";
+    $("#link-req").textContent = link.required ? " — required" : " (optional)";
+  }
+  $("#vio-source").addEventListener("change", refreshEvidence);
+  refreshEvidence();
 
   // The latest time the picker allows, in the officer's local time.
   function localNow() {
@@ -1911,6 +2265,61 @@ VIEWS.violations = async function () {
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   });
 
+  // Photos picked before the violation exists; uploaded once it's recorded.
+  var pendingPhotos = [];
+  function renderPendingPhotos() {
+    $("#photo-preview").innerHTML = pendingPhotos.map(function (f, i) {
+      return '<figure><img alt="Selected photo" data-i="' + i + '">' +
+        '<button type="button" class="btn ghost sm photo-remove" data-i="' + i + '" aria-label="Remove photo">Remove</button>' +
+        "<figcaption>" + esc(f.name || "Photo") + "</figcaption></figure>";
+    }).join("");
+    $("#photo-count").textContent = pendingPhotos.length ? pendingPhotos.length + " of " + MAX_PHOTOS + " selected" : "";
+    $$("#photo-preview img").forEach(function (img) {
+      var file = pendingPhotos[Number(img.dataset.i)];
+      photoThumb(file).then(function (u) { if (u) img.src = u; else img.alt = "No preview"; });
+    });
+    $$("#photo-preview .photo-remove").forEach(function (b) {
+      b.addEventListener("click", function () { pendingPhotos.splice(Number(b.dataset.i), 1); renderPendingPhotos(); });
+    });
+  }
+  $("#vio-photos").addEventListener("change", function () {
+    var picked = Array.prototype.slice.call(this.files);
+    var room = MAX_PHOTOS - pendingPhotos.length;
+    if (picked.length > room) toast("Only " + MAX_PHOTOS + " photos per violation — kept the first " + Math.max(room, 0) + ".", "err");
+    pendingPhotos = pendingPhotos.concat(picked.slice(0, Math.max(room, 0)));
+    this.value = "";  // so choosing the same photo again still fires change
+    renderPendingPhotos();
+  });
+
+  // The violation is already recorded; a failed photo is reported, not fatal,
+  // and can be added again from the dashboard.
+  async function attachPhotos(violationId, photos) {
+    var box = $("#vio-done .info-box");
+    var line = document.createElement("div");
+    line.className = "small";
+    line.style.marginTop = "6px";
+    line.textContent = "Uploading " + photos.length + " photo" + (photos.length === 1 ? "" : "s") + "…";
+    if (box) box.insertBefore(line, box.querySelector(".toolbar"));
+    var r = await uploadPhotos(violationId, photos);
+    line.innerHTML = (r.done ? r.done + " photo" + (r.done === 1 ? "" : "s") + " attached. " : "") +
+      (r.errors.length ? '<span style="color:var(--err);">' + esc(r.errors.join(" · ")) + "</span> Add them again from your dashboard." : "");
+    loadViolations();
+  }
+
+  // What the officer hands over: the reference, the fine, and the ticket.
+  function showTicket(v) {
+    var c = v.challan, box = $("#vio-done");
+    if (!c) { box.innerHTML = ""; return; }
+    box.innerHTML = '<div class="info-box"><b>Recorded.</b> e-Challan <span class="mono">' + esc(c.reference) + "</span> · " +
+      money(c.penalty_amount) + ", pay by " + esc(dt(c.due_date).split(",")[0]) +
+      (v.registration_number ? " · " + esc(v.registration_number) : "") +
+      '<div class="toolbar" style="margin:8px 0 0;">' + ticketActions(c) +
+      ' <button type="button" class="btn ghost sm" id="vio-done-close">Done</button></div></div>';
+    wireTicketActions(box);
+    $("#vio-done-close").addEventListener("click", function () { box.innerHTML = ""; });
+    box.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   $("#vio-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     var data = formData(e.target);
@@ -1933,14 +2342,20 @@ VIEWS.violations = async function () {
     var btn = $("#vio-save");
     btn.disabled = true;
     try {
-      await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(data) });
+      var created = await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(data) });
       toast("Violation recorded — challan generated", "ok");
+      showTicket(created);
+      var photos = pendingPhotos;
+      pendingPhotos = [];
+      renderPendingPhotos();
+      if (photos.length) attachPhotos(created.id, photos);
       // reset() leaves hidden inputs alone, so the matches and GPS are cleared by hand.
       e.target.reset();
       forgetPlate();
       forgetLicence();
       forgetGps();
       refreshOffence();
+      refreshEvidence();
       refreshTime();
       loadViolations();
     } catch (err) { toast(err.message, "err"); }
@@ -2170,15 +2585,32 @@ VIEWS.fines = async function () {
     var items = await api("/api/portal/fines?include_paid=true");
     var list = $("#fine-list");
     if (!items.length) { list.innerHTML = '<div class="empty">You have no fines.</div>'; return; }
-    list.innerHTML = '<div class="table-wrap"><table><tr><th>Ref</th><th>Type</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    // Open fines first, the most overdue at the top; paid ones after, as a record.
+    items.sort(function (a, b) {
+      if ((a.status === "paid") !== (b.status === "paid")) return a.status === "paid" ? 1 : -1;
+      return utcDate(a.due_date) - utcDate(b.due_date);
+    });
+    var open = items.filter(function (f) { return f.status !== "paid"; });
+    var total = open.reduce(function (sum, f) { return sum + f.penalty_amount; }, 0);
+    list.innerHTML = (open.length
+        ? '<p style="margin:0 0 12px;">' + open.length + " to pay, <b>" + money(total) + "</b> in total. Paid fines stay below as a record; receipts are in <a href=\"#/receipts\">Payment history</a>.</p>"
+        : '<p class="muted" style="margin:0 0 12px;">All paid. Receipts are in <a href="#/receipts">Payment history</a>.</p>') +
+      '<div class="table-wrap"><table class="stack"><tr><th>Offence</th><th>When &amp; where</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (f) {
         var pay = f.status !== "paid"
-          ? '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '">Pay now</button>'
+          ? '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '" data-amount="' + f.penalty_amount + '">Pay now</button>'
           : "";
-        return "<tr><td class='mono'>" + esc(f.reference) + "</td><td>" + esc(offenceTypeLabel(f.violation_type)) + "</td><td>" + categoryPill(f.category) + "</td><td>" + money(f.penalty_amount) + '</td><td class="small">' + dt(f.due_date) + "</td><td>" + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
+        return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(f.violation_type)) + "</b>" +
+            (f.registration_number ? " <span class='mono small'>" + esc(f.registration_number) + "</span>" : "") +
+            "<div class='small muted mono'>" + esc(f.reference) + "</div></td>" +
+          '<td data-label="When &amp; where" class="small">' + dt(f.recorded_at) + (f.location ? "<div class='muted'>" + esc(f.location) + "</div>" : "") + "</td>" +
+          '<td data-label="Amount">' + money(f.penalty_amount) + "</td>" +
+          '<td data-label="Due" class="small">' + dueCell(f) + "</td>" +
+          '<td data-label="Status">' + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
     $$("#fine-list .finpay").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (!confirm("Pay " + money(Number(btn.dataset.amount)) + " for " + btn.dataset.ref + "?")) return;
         api("/api/portal/fines/" + btn.dataset.id + "/pay", { method: "POST" })
           .then(function (r) {
             toast("Paid — " + r.payment_reference + ". Receipt in notifications.", "ok");
@@ -2199,20 +2631,24 @@ VIEWS.licence = async function () {
   $("#content").innerHTML = '<div class="card" id="licence-card"><div class="empty">Loading…</div></div>';
   try {
     var l = await api("/api/portal/licence");
-    var statePill = l.state === "expired" ? "red" : l.state === "expiring_soon" ? "amber" : "green";
+    var st = licenceState(l);
+    var days = Number(l.days_until_expiry);
+    var renewal = l.can_renew
+      ? '<div style="margin-top:14px;"><button class="btn gold" id="renew-btn">Renew for 5 years (' + money(350000) + ")</button></div>" +
+        '<div class="small muted" style="margin-top:8px;">Paid through the sandbox gateway; the receipt goes to your notifications.</div>'
+      : '<p class="small muted" style="margin:14px 0 0;">' + (l.status === "suspended" || l.status === "disqualified"
+          ? "Renewal isn't available while your licence is " + esc(l.status) + ". Contact RTSA."
+          : "You can renew from " + esc(dday(l.renewal_opens)) + ", 90 days before it expires.") + "</p>";
     $("#licence-card").innerHTML =
-      '<h3>My licence <span class="pill ' + statePill + '">' + esc(l.state) + "</span></h3>" +
+      '<h3>My licence <span class="pill ' + st[1] + '">' + esc(st[0]) + "</span></h3>" +
       '<div class="table-wrap"><table>' +
         "<tr><td>Licence number</td><td class='mono'><b>" + esc(l.licence_number) + "</b></td></tr>" +
         "<tr><td>Class</td><td>" + esc(l.licence_class) + "</td></tr>" +
-        "<tr><td>Status</td><td>" + statusPill(l.status) + "</td></tr>" +
-        "<tr><td>Issue date</td><td>" + dt(l.issue_date) + "</td></tr>" +
-        "<tr><td>Expiry date</td><td>" + dt(l.expiry_date) + " (" + Number(l.days_until_expiry) + " days left)</td></tr>" +
+        "<tr><td>Issued</td><td>" + dday(l.issue_date) + "</td></tr>" +
+        "<tr><td>Expires</td><td>" + dday(l.expiry_date) + " (" + (days < 0 ? Math.abs(days) + " days ago" : days + " days left") + ")</td></tr>" +
         "<tr><td>Restrictions</td><td>" + esc(l.restrictions || "None") + "</td></tr>" +
-      "</table></div>" +
-      '<div style="margin-top:14px;"><button class="btn gold" id="renew-btn">Renew now (' + money(350000) + ')</button></div>' +
-      '<div class="small muted" style="margin-top:8px;">Renewal extends your licence by 5 years (sandbox payment).</div>';
-    $("#renew-btn").addEventListener("click", async function () {
+      "</table></div>" + renewal;
+    if ($("#renew-btn")) $("#renew-btn").addEventListener("click", async function () {
       if (!confirm("Renew your licence for 5 years for " + money(350000) + "?")) return;
       try {
         await api("/api/portal/licence/renew", { method: "POST" });
@@ -2222,7 +2658,15 @@ VIEWS.licence = async function () {
       } catch (e) { toast(e.message, "err"); }
     });
   } catch (e) {
-    $("#licence-card").innerHTML = '<div class="error-box">' + esc(e.message) + '</div><div class="card">Your account is not linked to a driver record yet. Use the RTSA registration portal or ask an officer/admin to create one.</div>';
+    if (!/no driver record/i.test(e.message)) {
+      $("#licence-card").innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
+      return;
+    }
+    // No licence on this account yet: say what to do, not what went wrong.
+    $("#licence-card").innerHTML = "<h3>My licence</h3>" +
+      '<p class="muted">No driving licence is linked to this account. Apply here and RTSA will book your theory and practical tests; the licence appears on this page once it\'s issued.</p>' +
+      '<a class="btn gold" href="#/applications">Apply for a licence</a>' +
+      '<p class="small muted" style="margin:12px 0 0;">Already hold a licence? Ask at any RTSA office to link it to this account.</p>';
   }
 };
 

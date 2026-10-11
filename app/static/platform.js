@@ -473,7 +473,8 @@ VIEWS.system = async function () {
 VIEWS.account = async function () {
   $("#content").innerHTML = '<div class="row">' +
     '<div class="card" style="flex:1;min-width:280px"><h3>Profile</h3><form id="pf-form"><div class="field"><label>Full name</label><input name="full_name"></div>' +
-    '<div class="field"><label>NRC number</label><input name="nrc_number" inputmode="numeric" maxlength="11" placeholder="123456/78/1"><p class="small muted field-hint" id="pf-nrc-hint"></p></div>' +
+    // The NRC ties a citizen's road reports and licence applications to them; staff don't need it.
+    '<div class="field"' + (USER.role === "citizen" ? "" : " hidden") + '><label>NRC number</label><input name="nrc_number" inputmode="numeric" maxlength="11" placeholder="123456/78/1"><p class="small muted field-hint" id="pf-nrc-hint"></p></div>' +
     '<div class="field"><label>Mobile (for SMS alerts)</label><input name="phone_number" placeholder="+260971234567"></div><button class="btn gold sm">Save</button></form>' +
     '<h4 style="margin-top:18px">Notify me by</h4><div id="np-list"></div></div>' +
     '<div class="card" style="flex:1;min-width:280px"><h3>Password</h3><form id="pw-form"><div class="field"><label>Current password</label><input type="password" name="current_password" autocomplete="current-password" required></div>' +
@@ -494,7 +495,7 @@ VIEWS.account = async function () {
       nrc.readOnly = !!p.nrc_number;
       $("#pf-nrc-hint").textContent = p.nrc_number
         ? "Contact RTSA to correct your NRC."
-        : "Needed before you can report road incidents. It can't be changed once saved.";
+        : "Needed to report road incidents and apply for a licence. It can't be changed once saved.";
       renderMfa(p.mfa_enabled);
     } catch (e) { toast(e.message, "err"); }
   }
@@ -587,31 +588,37 @@ VIEWS.account = async function () {
 var baseVehicles = VIEWS.vehicles;
 VIEWS.vehicles = async function () {
   if (USER.role !== "citizen") return baseVehicles(); // staff keep the register view from app.js
-  $("#content").innerHTML = '<div id="cv-sum"></div><div id="cv-list"><div class="empty">Loading…</div></div>';
+  // The totals (fines due, what's expiring) live on the dashboard; this page is
+  // each vehicle's checks, the same ones an officer runs at the roadside.
+  $("#content").innerHTML = '<div id="cv-list"><div class="empty">Loading…</div></div>';
   try {
-    var s = await api("/api/citizen/summary");
-    $("#cv-sum").innerHTML = '<div class="grid cards">' + kpi("Vehicles", s.vehicles) + kpi("Amount due", money(s.amount_due), s.unpaid_fines + " unpaid" + (s.overdue_fines ? ", " + s.overdue_fines + " overdue" : "")) +
-      kpi("Open applications", s.open_applications) +
-      kpi("Expiring within 60 days", s.expiring_soon.length ? s.expiring_soon.map(function (x) { return esc(x.type + " " + x.ref) + " — " + (x.days_left < 0 ? "expired" : x.days_left + "d"); }).join("<br>") : "Nothing") + "</div>";
     var vs = await api("/api/citizen/my-vehicles");
-    if (!vs.length) { $("#cv-list").innerHTML = '<div class="card"><div class="empty">No vehicles are linked to your account yet.</div></div>'; return; }
+    if (!vs.length) {
+      $("#cv-list").innerHTML = '<div class="card"><h3>My vehicles</h3><p class="muted">No vehicles are linked to this account yet. ' +
+        "Vehicles registered under your NRC appear here once your driving licence is on this account; otherwise ask at any RTSA office to link them.</p></div>";
+      return;
+    }
     var details = await Promise.all(vs.map(function (v) { return api("/api/citizen/vehicles/" + v.id); }));
     $("#cv-list").innerHTML = details.map(function (d) {
       var v = d.vehicle;
-      return '<div class="card"><h3>' + esc(v.registration_number) + " " + pill(d.compliant ? "compliant" : "action needed", d.compliant ? "green" : "amber") + "</h3>" +
+      return '<div class="card"><h3><span class="mono">' + esc(v.registration_number) + "</span> " + pill(d.compliant ? "All in order" : "Needs attention", d.compliant ? "green" : "amber") + "</h3>" +
         '<p class="muted">' + esc(v.year + " " + v.make + " " + v.model) + "</p>" +
         tbl(["Check", "Result", "Detail"], d.checks.map(function (c) {
-          return [esc(c.check.replace(/_/g, " ")), pill(c.status, c.status === "pass" ? "green" : "red"), '<span class="small">' + esc(c.detail || "") + "</span>"];
+          return [esc(CHECK_LABELS[c.check] || c.check.replace(/_/g, " ")), pill(c.status === "pass" ? "OK" : "Problem", c.status === "pass" ? "green" : "red"),
+            '<span class="small">' + esc(c.detail || "") + "</span>" + (c.check === "outstanding_fines" && c.status === "fail" ? ' <a class="small" href="#/fines">Pay</a>' : "")];
         })) + "</div>";
     }).join("");
   } catch (e) { fail("#cv-list", e); }
 };
 
 VIEWS.applications = async function () {
-  $("#content").innerHTML = '<div id="ap-list"><div class="empty">Loading…</div></div>';
+  $("#content").innerHTML = '<div id="ap-new"></div><div id="ap-list"><div class="empty">Loading…</div></div>';
   try {
     var apps = await api("/api/citizen/applications");
-    if (!apps.length) { $("#ap-list").innerHTML = '<div class="card"><div class="empty">You have not applied for anything yet.</div></div>'; return; }
+    var inProgress = apps.some(function (a) { return a.status !== "issued" && a.status !== "rejected"; });
+    // One application at a time (the API refuses a second); the form returns once it's decided.
+    if (!inProgress) renderApplyForm(apps.length > 0);
+    if (!apps.length) { $("#ap-list").innerHTML = ""; return; }
     $("#ap-list").innerHTML = apps.map(function (a) {
       return '<div class="card"><h3>Class ' + esc(a.requested_class) + " licence · " + esc(a.reference) + "</h3>" +
         '<div class="steps">' + a.steps.map(function (st) {
@@ -624,6 +631,39 @@ VIEWS.applications = async function () {
     }).join("");
   } catch (e) { fail("#ap-list", e); }
 };
+
+// The citizen's half of licensing: apply here, and an officer books and scores
+// the tests under Licensing and issues the licence, which then appears in My licence.
+function renderApplyForm(hasHistory) {
+  var names = String(USER.full_name || "").trim().split(/\s+/);
+  var nrc = USER.nrc_number || "";
+  $("#ap-new").innerHTML = '<div class="card"><h3>' + (hasHistory ? "Apply for another licence" : "Apply for a driving licence") + "</h3>" +
+    '<p class="small muted">RTSA books your theory test, then your practical test. You can follow each step below once you\'ve applied.</p>' +
+    '<form id="ap-form">' +
+      '<div class="field"><label>First name</label><input name="first_name" required maxlength="100" value="' + esc(names[0] || "") + '"></div>' +
+      '<div class="field"><label>Last name</label><input name="last_name" required maxlength="100" value="' + esc(names.slice(1).join(" ")) + '"></div>' +
+      '<div class="field"><label>NRC number</label><input name="id_number" required inputmode="numeric" maxlength="11" placeholder="123456/78/1" value="' + esc(nrc) + '"' + (nrc ? " readonly" : "") + ">" +
+        (nrc ? '<p class="small muted field-hint">From your account.</p>' : "") + "</div>" +
+      '<div class="field"><label>Date of birth</label><input name="dob" type="date" required max="' + new Date().toISOString().slice(0, 10) + '"></div>' +
+      '<div class="field"><label>Licence class</label><select name="requested_class">' +
+        ["A", "B", "C", "D", "E", "F"].map(function (c) { return '<option value="' + c + '"' + (c === "B" ? " selected" : "") + ">Class " + c + "</option>"; }).join("") +
+      "</select></div>" +
+      '<button class="btn gold">Submit application</button></form></div>';
+  if (!nrc && typeof wireNrcInput === "function") wireNrcInput($("#ap-form").elements.id_number);
+  $("#ap-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var f = e.target.elements;
+    var body = {
+      first_name: f.first_name.value, last_name: f.last_name.value, id_number: f.id_number.value,
+      date_of_birth: f.dob.value + "T00:00:00", requested_class: f.requested_class.value
+    };
+    try {
+      await api("/api/licence-applications/", { method: "POST", body: JSON.stringify(body) });
+      toast("Application submitted. RTSA will book your theory test.", "ok");
+      VIEWS.applications();
+    } catch (err) { toast(err.message, "err"); }
+  });
+}
 
 VIEWS.receipts = async function () {
   $("#content").innerHTML = '<div class="card"><h3>Payment history</h3><div id="rc-list"><div class="empty">Loading…</div></div></div>';

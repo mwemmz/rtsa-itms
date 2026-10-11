@@ -8,7 +8,7 @@ from app.core.security import get_current_user
 from app.services.auth import authenticate
 from app.models.driver import Driver, DriverStatus
 from app.models.enforcement import Challan, ChallanStatus, Violation
-from app.models.notification import Notification
+from app.models.notification import Notification, NotificationChannel
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.road_network import Road, RoadIncident
 from app.models.user import User
@@ -42,6 +42,8 @@ def _alert_out(db: Session, inc: RoadIncident) -> RouteAlertOut:
 router = APIRouter(prefix="/api/portal", tags=["Driver Portal"])
 
 LICENCE_RENEWAL_FEE = 350000
+# A licence can be renewed from this many days before it expires (or once expired).
+RENEWAL_WINDOW_DAYS = 90
 EXPIRY_WARNING_DAYS = 30
 
 
@@ -56,6 +58,25 @@ def _licence_state(driver: Driver) -> tuple[str, int]:
     else:
         state = "valid"
     return state, days_left
+
+
+def _licence_out(driver: Driver) -> LicenceStatusOut:
+    state, days = _licence_state(driver)
+    opens = driver.licence_expiry_date - timedelta(days=RENEWAL_WINDOW_DAYS)
+    return LicenceStatusOut(
+        licence_number=driver.licence_number,
+        licence_class=driver.licence_class,
+        status=driver.status,
+        issue_date=driver.licence_issue_date,
+        expiry_date=driver.licence_expiry_date,
+        days_until_expiry=days,
+        state=state,
+        restrictions=driver.restrictions,
+        # Same rules as renew_licence, so the portal only offers what will work.
+        can_renew=driver.status not in (DriverStatus.SUSPENDED, DriverStatus.DISQUALIFIED)
+        and datetime.utcnow() >= opens,
+        renewal_opens=opens,
+    )
 
 
 def _get_my_licence(db: Session, user: User) -> Driver | None:
@@ -84,17 +105,7 @@ def dashboard(
     driver = _get_my_licence(db, current_user)
     licence = None
     if driver:
-        state, days = _licence_state(driver)
-        licence = LicenceStatusOut(
-            licence_number=driver.licence_number,
-            licence_class=driver.licence_class,
-            status=driver.status,
-            issue_date=driver.licence_issue_date,
-            expiry_date=driver.licence_expiry_date,
-            days_until_expiry=days,
-            state=state,
-            restrictions=driver.restrictions,
-        )
+        licence = _licence_out(driver)
 
     vehicles = _get_my_vehicles(db, current_user)
     fines = owed_challans_query(db, current_user).all()
@@ -111,7 +122,13 @@ def dashboard(
 
     unread = (
         db.query(Notification)
-        .filter(Notification.user_id == current_user.id, Notification.read == False)
+        # In-app only, like the bell: email and SMS copies of the same event
+        # would otherwise count it two or three times.
+        .filter(
+            Notification.user_id == current_user.id,
+            Notification.channel == NotificationChannel.IN_APP,
+            Notification.read == False,  # noqa: E712
+        )
         .count()
     )
 
@@ -169,17 +186,7 @@ def my_licence(
     current_user: User = Depends(get_current_user),
 ):
     driver = _ensure_driver_registered(db, current_user)
-    state, days = _licence_state(driver)
-    return LicenceStatusOut(
-        licence_number=driver.licence_number,
-        licence_class=driver.licence_class,
-        status=driver.status,
-        issue_date=driver.licence_issue_date,
-        expiry_date=driver.licence_expiry_date,
-        days_until_expiry=days,
-        state=state,
-        restrictions=driver.restrictions,
-    )
+    return _licence_out(driver)
 
 
 @router.post("/licence/renew", response_model=LicenceStatusOut)
@@ -189,11 +196,22 @@ def renew_licence(
 ):
     """Renew (or reinstate) a licence and charge the renewal fee via sandbox gateway."""
     driver = _ensure_driver_registered(db, current_user)
-
+    if driver.status in (DriverStatus.SUSPENDED, DriverStatus.DISQUALIFIED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Your licence is {driver.status.value}. Renewing can't lift that: contact RTSA.",
+        )
     old_expiry = driver.licence_expiry_date
+    opens = old_expiry - timedelta(days=RENEWAL_WINDOW_DAYS)
+    if datetime.utcnow() < opens:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Your licence is valid until {old_expiry:%d %b %Y}. Renewal opens on {opens:%d %b %Y}.",
+        )
+
     base = max(old_expiry, datetime.utcnow())
     driver.licence_expiry_date = base + timedelta(days=365 * 5)
-    if driver.status in (DriverStatus.EXPIRED, DriverStatus.SUSPENDED):
+    if driver.status == DriverStatus.EXPIRED:
         driver.status = DriverStatus.ACTIVE
 
     create_payment(
@@ -215,17 +233,7 @@ def renew_licence(
     db.commit()
     db.refresh(driver)
 
-    state, days = _licence_state(driver)
-    return LicenceStatusOut(
-        licence_number=driver.licence_number,
-        licence_class=driver.licence_class,
-        status=driver.status,
-        issue_date=driver.licence_issue_date,
-        expiry_date=driver.licence_expiry_date,
-        days_until_expiry=days,
-        state=state,
-        restrictions=driver.restrictions,
-    )
+    return _licence_out(driver)
 
 
 @router.get("/fines", response_model=list[FineOut])
@@ -244,6 +252,12 @@ def my_fines(
         if challans
         else {}
     )
+    vehicle_ids = {c.vehicle_id for c in challans if c.vehicle_id}
+    plates = (
+        {str(v.id): v.registration_number for v in db.query(Vehicle).filter(Vehicle.id.in_(vehicle_ids))}
+        if vehicle_ids
+        else {}
+    )
 
     def _fine(c: Challan) -> FineOut:
         # Keys are strings; look up by str(c.violation_id), not the UUID itself.
@@ -256,6 +270,7 @@ def my_fines(
             liable_party=v.liable_party if v else "both",
             location=v.location if v else "",
             recorded_at=v.timestamp if v else c.created_at,
+            registration_number=plates.get(str(c.vehicle_id)) if c.vehicle_id else None,
             penalty_amount=c.penalty_amount,
             due_date=c.due_date,
             status=c.status,

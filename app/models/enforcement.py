@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -129,6 +129,10 @@ REPORTER_OFFENCES = frozenset({
     ViolationType.FALSE_REPORT,
 })
 
+# Evidence an officer can record an offence from without having seen it. No
+# source means the officer saw it themselves.
+EVIDENCE_SOURCES = ("citizen_video", "social_media", "cctv")
+
 
 class Violation(Base):
     __tablename__ = "violations"
@@ -165,6 +169,10 @@ class Violation(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     gps_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Where the evidence came from when the officer didn't see the offence
+    # themselves (one of EVIDENCE_SOURCES), and a link to it.
+    evidence_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    evidence_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), nullable=False
     )
@@ -218,6 +226,34 @@ class Challan(Base):
     due_date: Mapped[datetime] = mapped_column(nullable=False)
     status: Mapped[ChallanStatus] = mapped_column(
         Enum(ChallanStatus), default=ChallanStatus.UNPAID, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+class ViolationPhoto(Base):
+    """A photo backing up a violation: the scene, the plate, a frame of a video.
+
+    The image is kept in the database, not on disk, because the app's host
+    throws its disk away on every deploy. `sha256` is taken when the photo is
+    stored, so it can later be shown that the evidence hasn't been altered.
+    """
+
+    __tablename__ = "violation_photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, primary_key=True, default=uuid.uuid4
+    )
+    violation_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("violations.id"), nullable=False, index=True
+    )
+    content_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Deferred so listing a violation's photos doesn't pull every image along.
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("users.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

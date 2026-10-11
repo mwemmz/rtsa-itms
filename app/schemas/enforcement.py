@@ -1,9 +1,12 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.models.enforcement import ChallanStatus, ViolationType
+from app.models.enforcement import EVIDENCE_SOURCES, ChallanStatus, ViolationType
 from app.schemas.fields import LocationStr
 
 # Allowance for a phone clock running a little ahead of the server's.
@@ -31,8 +34,23 @@ class ViolationCreate(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     gps_accuracy_m: float | None = Field(default=None, ge=0, le=100000)
+    # Set when the officer didn't see it themselves: a citizen's video, a
+    # social media post, CCTV. evidence_url links to the footage or post.
+    evidence_source: Literal[EVIDENCE_SOURCES] | None = None
+    evidence_url: str | None = Field(default=None, max_length=500)
     timestamp: datetime | None = None
     description: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _evidence_is_traceable(self):
+        if self.evidence_url is not None:
+            self.evidence_url = self.evidence_url.strip() or None
+        if self.evidence_url and urlparse(self.evidence_url).scheme not in ("http", "https"):
+            raise ValueError("The evidence link must be a web address starting with http:// or https://")
+        # A post is only evidence if it can be found again.
+        if self.evidence_source == "social_media" and not self.evidence_url:
+            raise ValueError("Add the link to the social media post")
+        return self
 
     @model_validator(mode="after")
     def _require_an_offender(self):
@@ -87,6 +105,16 @@ class ViolationCreate(BaseModel):
         return self
 
 
+class ChallanBrief(BaseModel):
+    id: uuid.UUID
+    reference: str
+    penalty_amount: int
+    due_date: datetime
+    status: ChallanStatus
+
+    model_config = {"from_attributes": True}
+
+
 class ViolationResponse(BaseModel):
     id: uuid.UUID
     vehicle_id: uuid.UUID | None
@@ -103,6 +131,8 @@ class ViolationResponse(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     gps_accuracy_m: float | None = None
+    evidence_source: str | None = None
+    evidence_url: str | None = None
     timestamp: datetime
     description: str | None
     registration_number: str | None = None
@@ -111,8 +141,39 @@ class ViolationResponse(BaseModel):
     driver_name: str | None = None
     # Set when the violation is charged to an account rather than a vehicle or driver.
     account_name: str | None = None
+    # The e-Challan raised for it, so the officer can hand over a ticket.
+    challan: ChallanBrief | None = None
+    photo_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class ViolationPhotoResponse(BaseModel):
+    id: uuid.UUID
+    violation_id: uuid.UUID
+    content_type: str
+    size_bytes: int
+    sha256: str
+    uploaded_by_name: str | None = None
+    created_at: datetime
+
+
+class IdentifyDriver(BaseModel):
+    """The driver an owner named for an offence recorded against their vehicle."""
+    licence_number: str = Field(min_length=1, max_length=50)
+
+
+class TicketSms(BaseModel):
+    phone_number: str
+
+    @field_validator("phone_number")
+    @classmethod
+    def _looks_like_a_phone(cls, value: str) -> str:
+        # People type numbers with spaces and dashes; keep the digits and a leading +.
+        cleaned = re.sub(r"[\s\-()]", "", value)
+        if not re.fullmatch(r"\+?\d{9,15}", cleaned):
+            raise ValueError("Enter a phone number, e.g. 0977123456 or +260977123456")
+        return cleaned
 
 
 class ChallanResponse(BaseModel):
