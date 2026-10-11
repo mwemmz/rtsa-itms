@@ -288,6 +288,8 @@ Alternate:     2a. Number already exists → 409, show the existing record
 | UC-C15 | View live road alerts near me | `GET /api/portal/alerts` | Authenticated |
 | UC-C16 | **Report a road incident** | `POST /api/incidents/` | NRC on the account; not suspended; declares it true |
 | UC-C17 | Track my reports | `GET /api/incidents/mine` | Authenticated |
+| UC-C18 | **Report a dangerous driver** | `POST /api/driver-reports/` (multipart) | NRC on the account; video link and/or up to 5 photos; within 30 days; declares it true |
+| UC-C19 | Track my reports of drivers | `GET /api/driver-reports/mine` | Authenticated |
 
 > **Corrected against the route decorators.** An earlier draft listed
 > `/api/citizen/applications` as `GET/POST` and `/api/notifications` for
@@ -329,6 +331,7 @@ Exceptions:    Gateway timeout → payment left PENDING, reconcilable later
 | UC-O4a | Print or text the motorist's ticket | `GET /api/enforcement/challans/{id}/ticket.pdf`, `POST …/sms` | SMS goes straight to the number given; audit-logged, number masked |
 | UC-O4b | Name the driver of a camera/video case | `POST /api/enforcement/violations/{id}/driver` | Charges and notifies the driver; refuses if one is already attached |
 | UC-O4c | Attach photo evidence | `POST /api/enforcement/violations/{id}/photos` (multipart) | JPEG/PNG/WebP by content, ≤ 5 MB, ≤ 5 per violation; SHA-256 kept; can't be removed |
+| UC-O4d | Review citizens' reports of drivers | `GET /api/driver-reports/`, `POST …/{id}/accept`, `POST …/{id}/reject` | Accept raises the violation and fine with the citizen's photos; reject as false fines the reporter |
 | UC-O5 | View and filter challans | `GET /api/enforcement/challans` | Filter by status |
 | UC-O6 | Mark a challan paid | `POST /api/enforcement/challans/{id}/pay` | |
 | UC-O7 | Record an inspection & issue fitness cert | `/api/inspections` | |

@@ -21,7 +21,7 @@ from app.core.database import Base, engine  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
 
-from app.api.enforcement import MAX_PHOTO_BYTES  # noqa: E402
+from app.services.evidence import MAX_PHOTO_BYTES  # noqa: E402
 from main import app  # noqa: E402
 from tests.conftest import create_user  # noqa: E402
 
