@@ -957,6 +957,20 @@ tbody tr:last-child td { border-bottom: 0; }
   line-height: 1.45;
 }
 
+/* violation form: roadside check of the plate */
+.roadside {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--radius-control);
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.roadside.clear { border-left-color: var(--ok); }
+.roadside.stop { border-left-color: var(--err); }
+
 /* citizen incident report: type choice + declaration */
 .choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .choice-row .btn[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }

@@ -198,6 +198,8 @@ def test_violation_list_identifies_offender():
         json={
             "vehicle_id": vehicle["id"],
             "violation_type": "speeding",
+            "speed_kmh": 98,
+            "speed_limit_kmh": 80,
             "location": "Great East Road",
         },
         headers=headers,
@@ -259,7 +261,7 @@ def test_payment_flow():
     vehicle_id = resp.json()["id"]
     client.post(
         "/api/enforcement/violations",
-        json={"vehicle_id": vehicle_id, "violation_type": "speeding", "location": "Kafue Road"},
+        json={"vehicle_id": vehicle_id, "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "Kafue Road"},
         headers=headers,
     )
     challan = client.get("/api/enforcement/challans", headers=headers).json()[0]
@@ -327,6 +329,7 @@ def test_admin_can_record_a_violation():
         json={
             "vehicle_id": vehicle_id,
             "violation_type": "speeding",
+            "speed_limit_kmh": 80,
             "location": "Great East Road",
             "speed_kmh": 118.5,
         },
@@ -345,6 +348,7 @@ def test_violation_speed_round_trips_through_the_list():
         json={
             "vehicle_id": vehicle_id,
             "violation_type": "speeding",
+            "speed_limit_kmh": 80,
             "location": "Great East Road",
             "speed_kmh": 87.5,
         },
@@ -382,6 +386,7 @@ def test_violation_speed_is_optional_and_bounded():
         json={
             "vehicle_id": vehicle_id,
             "violation_type": "speeding",
+            "speed_limit_kmh": 80,
             "location": "Great East Road",
             "speed_kmh": 9000,
         },

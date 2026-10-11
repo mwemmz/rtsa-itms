@@ -155,6 +155,16 @@ class Violation(Base):
     # because most offences have no meaningful speed reading, but a speeding
     # ticket is worthless without it, so the form prompts for it on those.
     speed_kmh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The posted limit where the reading was taken and the radar or camera that
+    # took it. A speed on its own doesn't show an offence; speed over the limit,
+    # from a named device, does.
+    speed_limit_kmh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speed_device: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Where the officer's phone put them when the violation was recorded. The
+    # free-text location stays the human description of the place.
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gps_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), nullable=False
     )

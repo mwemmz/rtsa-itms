@@ -15,12 +15,16 @@ function money(n) {
   return Number(n || 0).toLocaleString("en-ZM") + " ZMW";
 }
 
+function utcDate(v) {
+  // The API stores naive UTC; without a zone marker the browser would read it
+  // as local time and land hours off.
+  if (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(v)) v += "Z";
+  return new Date(v);
+}
+
 function dt(v) {
   if (!v) return "";
-  // The API stores naive UTC; without a zone marker the browser would read it
-  // as local time and show it hours off.
-  if (typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(v)) v += "Z";
-  var d = new Date(v);
+  var d = utcDate(v);
   if (isNaN(d.getTime())) return v;
   return d.toLocaleString("en-ZM", { dateStyle: "short", timeStyle: "short" });
 }
@@ -893,6 +897,9 @@ async function officerDashboard() {
   } catch (e) {
     unpaid = challans.filter(function (c) { return c.status !== "paid"; }).length;
   }
+  // Counted by the API: the 6-row list above can't say how many there were.
+  var recent = null;
+  try { recent = await api("/api/enforcement/violations/summary"); } catch (e) { /* tile shows a dash */ }
   var incidents = [];
   try { incidents = await api("/api/incidents/alerts"); } catch (e) { /* board still renders */ }
   var blocking = incidents.filter(function (a) { return a.blocking; }).length;
@@ -900,7 +907,7 @@ async function officerDashboard() {
   return (
     '<div class="grid cards">' +
       kpi("Active challans", unpaid) +
-      kpi("Recent violations", violations.length) +
+      kpi("Violations, last 24h", recent ? recent.last_24h : "—", recent ? recent.last_24h_by_me + " recorded by you" : "") +
       kpi("Active road incidents", "<a href='#/alerts'>" + incidents.length + "</a>", blocking + " blocking a road") +
       kpi("Citizen reports to review", "<a href='#/alerts'>" + toReview + "</a>", toReview ? "Live on the planner until reviewed" : "All reviewed") +
       kpi("Tools", "<div><a class='btn gold sm' href='#/violations'>Record violation</a> <a class='btn sm' href='#/accidents'>Report accident</a> <a class='btn sm' href='#/toll'>Toll gate</a></div>") +
@@ -969,9 +976,28 @@ function violationRows(vs) {
     ? '<div class="table-wrap"><table><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || v.account_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
-        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + (v.speed_kmh == null ? '<span class="small muted">—</span>' : "<b>" + esc(String(v.speed_kmh).replace(/\.0$/, "")) + "</b> km/h") + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
+        return "<tr><td>" + esc(offenceTypeLabel(v.violation_type)) + "</td><td>" + categoryPill(v.category) + "</td><td>" + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + "</td><td>" + speedCell(v) + "</td><td>" + (consequenceTags(v) || '<span class="small muted">—</span>') + "</td><td>" + esc(offender) + vehicle + "</td><td>" + esc(v.location) + gpsLink(v) + "</td><td class='small'>" + dt(v.timestamp) + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No violations recorded.</div>';
+}
+
+function kmh(n) { return esc(String(n).replace(/\.0$/, "")); }
+
+// The reading, and under it the limit and device that make it evidence.
+function speedCell(v) {
+  if (v.speed_kmh == null) return '<span class="small muted">—</span>';
+  var basis = [];
+  if (v.speed_limit_kmh != null) basis.push("limit " + kmh(v.speed_limit_kmh));
+  if (v.speed_device) basis.push(esc(v.speed_device));
+  return "<b>" + kmh(v.speed_kmh) + "</b> km/h" + (basis.length ? '<div class="small muted">' + basis.join("<br>") + "</div>" : "");
+}
+
+function gpsLink(v) {
+  var lat = Number(v.latitude), lng = Number(v.longitude);
+  if (v.latitude == null || v.longitude == null || !isFinite(lat) || !isFinite(lng)) return "";
+  var href = "https://www.openstreetmap.org/?mlat=" + lat.toFixed(6) + "&mlon=" + lng.toFixed(6) + "#map=17/" + lat.toFixed(6) + "/" + lng.toFixed(6);
+  return '<div class="small"><a href="' + href + '" target="_blank" rel="noopener">GPS' +
+    (v.gps_accuracy_m != null ? " ±" + Math.round(v.gps_accuracy_m) + " m" : "") + "</a></div>";
 }
 
 function challanRows(cs) {
@@ -1652,6 +1678,46 @@ async function loadAnprEvents() {
 
 /* ---------------- officer: violations ---------------- */
 
+// Failed roadside checks that are offences in their own right, so the officer
+// can charge one with a tap. Values are ViolationType members.
+var CHECK_OFFENCES = {
+  blacklist: "blacklisted_vehicle",
+  insurance: "no_insurance",
+  fitness: "expired_fitness",
+  psv_permit: "no_psv_permit"
+};
+
+function voLabel(type) {
+  var hit = VO_TYPES.filter(function (t) { return t[0] === type; })[0];
+  return hit ? hit[1] : offenceTypeLabel(type);
+}
+
+// What GET /api/toll/lookup knows about a plate, laid out for the roadside.
+function roadsideCheckHtml(r) {
+  if (!r.found) {
+    return '<div class="roadside stop"><div><span class="pill red">Not registered</span> ' + esc(r.reasons[0] || "") +
+      ". You can still record the offence against the driver's licence.</div></div>";
+  }
+  var v = r.vehicle, clear = r.decision === "allow";
+  var html = '<div class="roadside ' + (clear ? "clear" : "stop") + '">' +
+    "<div><b>" + esc(r.plate) + "</b> · " + esc(v.year + " " + v.make + " " + v.model) + (v.colour ? " · " + esc(v.colour) : "") +
+      " · owner <b>" + esc(r.owner) + "</b> " + statusPill(v.status) + "</div>" +
+    "<div>" + (clear ? '<span class="pill green">All checks pass</span>' : '<span class="pill red">Stop</span> ' + r.reasons.map(esc).join(" · ")) + "</div>";
+  if (r.offence_count) {
+    html += "<div>" + r.offence_count + " unpaid fine" + (r.offence_count === 1 ? "" : "s") + ", " + money(r.total_owed) +
+      (r.overdue_count ? " · <b>" + r.overdue_count + " overdue</b>" : "") + "</div>";
+  }
+  var charges = r.checks
+    .filter(function (c) { return c.status === "fail" && CHECK_OFFENCES[c.check]; })
+    .map(function (c) { return CHECK_OFFENCES[c.check]; });
+  if (charges.length) {
+    html += '<div class="toolbar" style="margin:4px 0 0;"><span class="small muted">Charge:</span>' +
+      charges.map(function (t) { return '<button type="button" class="btn ghost sm charge" data-type="' + esc(t) + '">' + esc(voLabel(t)) + "</button>"; }).join("") +
+      "</div>";
+  }
+  return html + "</div>";
+}
+
 VIEWS.violations = async function () {
   // Officers issue violations, and so do admins -- the API has always allowed
   // both (OFFICERS = (OFFICER, ADMIN) in app/core/security.py), so gating the
@@ -1662,16 +1728,16 @@ VIEWS.violations = async function () {
     '<div class="row">' +
       (canRecord ? '<div class="card"><h3>Record a violation</h3>' +
         '<form id="vio-form">' +
-          '<div class="field"><label>Vehicle plate (lookup)</label>' +
-            '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="plate-lookup" placeholder="e.g. BAK 123">' +
-            '<button type="button" class="btn ghost sm" id="plate-go">Look up</button></div>' +
-            '<div class="small muted" id="plate-result" style="margin-top:6px;"></div></div>' +
-          '<div class="field"><label>Vehicle ID (auto-filled by lookup)</label><input name="vehicle_id" id="vio-vehicle" placeholder="UUID or leave empty"></div>' +
-          '<div class="field"><label>Driver licence number (lookup)</label>' +
-            '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="licence-lookup" placeholder="e.g. DL-2024-00123">' +
-            '<button type="button" class="btn ghost sm" id="licence-go">Look up</button></div>' +
-            '<div class="small muted" id="licence-result" style="margin-top:6px;"></div></div>' +
-          '<div class="field"><label>Driver ID (auto-filled by lookup)</label><input name="driver_id" id="vio-driver" placeholder="UUID or leave empty"></div>' +
+          '<div class="field"><label>Vehicle plate</label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="plate-lookup" placeholder="e.g. BAK 123" autocomplete="off">' +
+            '<button type="button" class="btn ghost sm" id="plate-go">Check</button></div>' +
+            '<div id="plate-result" style="margin-top:6px;"></div>' +
+            '<input type="hidden" name="vehicle_id" id="vio-vehicle"></div>' +
+          '<div class="field"><label>Driver licence number</label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="licence-lookup" placeholder="e.g. DL-2024-00123" autocomplete="off">' +
+            '<button type="button" class="btn ghost sm" id="licence-go">Check</button></div>' +
+            '<div class="small muted" id="licence-result" style="margin-top:6px;"></div>' +
+            '<input type="hidden" name="driver_id" id="vio-driver"></div>' +
           '<div class="field"><label>Violation type</label><select name="violation_type" id="vio-type">' +
             '<optgroup label="Driver offence — liable to the driver, licence at risk">' +
               VO_DRIVER_TYPES.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + "</option>"; }).join("") +
@@ -1684,12 +1750,21 @@ VIEWS.violations = async function () {
             "</optgroup>" +
             "</select>" +
             '<div class="small muted" id="vio-hint" style="margin-top:6px;"></div></div>' +
-          '<div class="field"><label>Location</label><input name="location" placeholder="e.g. Great East Road, toll gate 3" required></div>' +
-          '<div class="field"><label>Speed at the time (km/h)</label>' +
-            '<input name="speed_kmh" type="number" inputmode="decimal" step="0.1" min="0" max="500" placeholder="e.g. 112.5">' +
-            '<div class="small muted" style="margin-top:6px;">Optional, but record it whenever it was measured — a speeding ticket is not defensible without the reading.</div></div>' +
-          '<div class="field"><label>Date &amp; time (optional)</label><input name="timestamp" type="datetime-local"></div>' +
-          '<div class="field"><label>Description (optional)</label><textarea name="description" rows="2"></textarea></div>' +
+          '<div class="field"><label>Location</label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><input name="location" id="vio-location" placeholder="e.g. Great East Road, toll gate 3" required>' +
+            '<button type="button" class="btn ghost sm" id="gps-go">Use my location</button></div>' +
+            '<div class="small muted" id="gps-status" style="margin-top:6px;"></div>' +
+            '<input type="hidden" name="latitude" id="vio-lat"><input type="hidden" name="longitude" id="vio-lng"><input type="hidden" name="gps_accuracy_m" id="vio-acc"></div>' +
+          '<div class="field"><label>Measured speed (km/h)<span id="speed-req"></span></label>' +
+            '<input name="speed_kmh" id="vio-speed" type="number" inputmode="decimal" step="0.1" min="0" max="500" placeholder="e.g. 112.5"></div>' +
+          '<div class="field"><label>Speed limit there (km/h)<span id="limit-req"></span></label>' +
+            '<input name="speed_limit_kmh" id="vio-limit" type="number" inputmode="numeric" step="1" min="5" max="200" placeholder="e.g. 80"></div>' +
+          '<div class="field"><label>Speed device</label>' +
+            '<input name="speed_device" id="vio-device" maxlength="100" placeholder="Radar or camera ID, e.g. RADAR-LSK-07">' +
+            '<div class="small muted" id="speed-hint" style="margin-top:6px;"></div></div>' +
+          '<div class="field"><label>Date &amp; time (optional, defaults to now)</label><input name="timestamp" id="vio-time" type="datetime-local">' +
+            '<div class="small" id="time-hint" style="margin-top:6px;"></div></div>' +
+          '<div class="field"><label>Description<span id="desc-req"> (optional)</span></label><textarea name="description" id="vio-desc" rows="2" maxlength="1000"></textarea></div>' +
           '<button class="btn gold" type="submit" id="vio-save">Record &amp; generate e-challan</button>' +
         "</form></div>" : "") +
       '<div class="card"><h3>' + (canRecord ? "Recent violations" : "All recorded violations") + "</h3>" +
@@ -1698,37 +1773,68 @@ VIEWS.violations = async function () {
     "</div>";
 
   if (canRecord) {
-  $("#plate-go").addEventListener("click", async function () {
+  // Every check, and every edit of the plate or licence, forgets the last
+  // match first, so an ID from an earlier lookup can't end up on this
+  // violation. The counters drop a slow reply to a lookup already superseded.
+  var plateSeq = 0, licenceSeq = 0;
+  function forgetPlate() { plateSeq++; $("#vio-vehicle").value = ""; $("#plate-result").innerHTML = ""; }
+  function forgetLicence() { licenceSeq++; $("#vio-driver").value = ""; $("#licence-result").innerHTML = ""; }
+
+  async function checkPlate() {
     var plate = $("#plate-lookup").value.trim();
     var out = $("#plate-result");
+    forgetPlate();
+    var seq = plateSeq;
     if (!plate) return;
+    out.innerHTML = '<span class="small muted">Checking…</span>';
     try {
-      var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(plate));
-      $("#vio-vehicle").value = v.id;
-      out.innerHTML = 'Found <b>' + esc(v.registration_number) + "</b> (" + esc(v.make) + " " + esc(v.model) + ") · " + statusPill(v.status);
+      var r = await api("/api/toll/lookup/" + encodeURIComponent(plate));
+      if (seq !== plateSeq) return;
+      if (r.found) $("#vio-vehicle").value = r.vehicle.id;
+      out.innerHTML = roadsideCheckHtml(r);
+      $$("#plate-result .charge").forEach(function (b) {
+        b.addEventListener("click", function () {
+          $("#vio-type").value = b.dataset.type;
+          refreshOffence();
+        });
+      });
     } catch (e) {
-      out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+      if (seq !== plateSeq) return;
+      out.innerHTML = '<span class="small" style="color:var(--err);">' + esc(e.message) + "</span>";
     }
-  });
+  }
 
-  $("#licence-go").addEventListener("click", async function () {
+  async function checkLicence() {
     var licence = $("#licence-lookup").value.trim();
     var out = $("#licence-result");
+    forgetLicence();
+    var seq = licenceSeq;
     if (!licence) return;
+    out.innerHTML = "Checking…";
     try {
       var d = await api("/api/drivers/by-licence/" + encodeURIComponent(licence));
+      if (seq !== licenceSeq) return;
       $("#vio-driver").value = d.id;
-      out.innerHTML = 'Found <b>' + esc(d.first_name) + " " + esc(d.last_name) + "</b> · " + statusPill(d.status);
+      var lapsed = d.status === "active" && utcDate(d.licence_expiry_date) < new Date();
+      out.innerHTML = 'Found <b>' + esc(d.first_name) + " " + esc(d.last_name) + "</b> · " + statusPill(lapsed ? "expired" : d.status) +
+        " · expires " + dt(d.licence_expiry_date);
     } catch (e) {
-      out.innerHTML = '<span class="err" style="color:var(--err);">' + esc(e.message) + "</span>";
+      if (seq !== licenceSeq) return;
+      out.innerHTML = '<span style="color:var(--err);">' + esc(e.message) + "</span>";
     }
-  });
+  }
 
-  function refreshOffenceHint() {
-    var sel = $("#vio-type");
+  [["#plate-lookup", checkPlate, forgetPlate], ["#licence-lookup", checkLicence, forgetLicence]].forEach(function (x) {
+    // Enter checks the plate rather than submitting the whole form.
+    $(x[0]).addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); x[1](); } });
+    $(x[0]).addEventListener("input", x[2]);
+  });
+  $("#plate-go").addEventListener("click", checkPlate);
+  $("#licence-go").addEventListener("click", checkLicence);
+
+  function refreshOffence() {
+    var value = $("#vio-type").value;
     var hint = $("#vio-hint");
-    if (!sel || !hint) return;
-    var value = sel.value;
     if (VO_LICENCE_TYPES.indexOf(value) !== -1) {
       hint.innerHTML = "Driver offence: liable to the driver. Counts towards licence points, endorsement or disqualification.";
     } else if (VO_IMPOUND_TYPES.indexOf(value) !== -1) {
@@ -1736,24 +1842,106 @@ VIEWS.violations = async function () {
     } else {
       hint.innerHTML = "Overlapping offence: both the driver and the owner can be held liable.";
     }
+    var speeding = value === "speeding";
+    $("#vio-speed").required = speeding;
+    $("#vio-limit").required = speeding;
+    $("#speed-req").textContent = $("#limit-req").textContent = speeding ? " — required" : "";
+    $("#speed-hint").textContent = speeding
+      ? "A speeding ticket needs the reading, the posted limit and the device that took the reading, or it won't stand if disputed."
+      : "Optional for this offence. Record a reading whenever one was taken, e.g. for reckless driving.";
   }
+  $("#vio-type").addEventListener("change", refreshOffence);
+  refreshOffence();
 
-  $("#vio-type").addEventListener("change", refreshOffenceHint);
-  refreshOffenceHint();
+  // The latest time the picker allows, in the officer's local time.
+  function localNow() {
+    var d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  }
+  function refreshTime() {
+    var t = $("#vio-time");
+    t.max = localNow();
+    var old = !!t.value && Date.now() - new Date(t.value).getTime() > 24 * 3600 * 1000;
+    var desc = $("#vio-desc");
+    desc.required = old;
+    if (old) desc.setAttribute("minlength", "10"); else desc.removeAttribute("minlength");
+    $("#desc-req").textContent = old ? " — required" : " (optional)";
+    $("#time-hint").innerHTML = old
+      ? '<span style="color:var(--warn);">More than a day ago. Say in the description how it was observed, e.g. "citizen video, link: …".</span>'
+      : "";
+  }
+  $("#vio-time").addEventListener("input", refreshTime);
+  $("#vio-time").addEventListener("focus", refreshTime);
+  refreshTime();
+
+  function forgetGps() {
+    ["#vio-lat", "#vio-lng", "#vio-acc"].forEach(function (s) { $(s).value = ""; });
+    $("#gps-status").innerHTML = "";
+  }
+  $("#gps-go").addEventListener("click", function () {
+    var out = $("#gps-status");
+    var btn = this;
+    if (!window.isSecureContext || !navigator.geolocation) {
+      out.innerHTML = '<span style="color:var(--err);">' + (window.isSecureContext
+        ? "This device can't share its location. Type the place instead."
+        : "Location only works when the site is opened over HTTPS. Type the place instead.") + "</span>";
+      return;
+    }
+    btn.disabled = true;
+    out.textContent = "Getting a GPS fix…";
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      btn.disabled = false;
+      var c = pos.coords, acc = Math.round(c.accuracy);
+      $("#vio-lat").value = c.latitude.toFixed(6);
+      $("#vio-lng").value = c.longitude.toFixed(6);
+      $("#vio-acc").value = acc;
+      var loc = $("#vio-location");
+      if (!loc.value.trim()) loc.value = "GPS " + c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5);
+      out.innerHTML = "GPS attached: " + c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) + " (±" + acc + " m)" +
+        (acc > 100 ? ' <span style="color:var(--warn);">· weak fix, name the road too</span>' : "") +
+        ' <button type="button" class="btn ghost sm" id="gps-clear">Remove</button>';
+      $("#gps-clear").addEventListener("click", forgetGps);
+    }, function (err) {
+      btn.disabled = false;
+      var msg = err.code === 1 ? "Location permission was refused. Allow it in the browser to attach GPS, or type the place."
+        : err.code === 3 ? "No GPS fix in time. Try again in the open, or type the place."
+        : "Location isn't available right now. Type the place instead.";
+      out.innerHTML = '<span style="color:var(--err);">' + esc(msg) + "</span>";
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  });
 
   $("#vio-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     var data = formData(e.target);
+    if ($("#plate-lookup").value.trim() && !data.vehicle_id) {
+      toast("Press Check on the plate first, or clear it — it isn't attached yet.", "err");
+      return;
+    }
+    if ($("#licence-lookup").value.trim() && !data.driver_id) {
+      toast("Press Check on the licence first, or clear it — it isn't attached yet.", "err");
+      return;
+    }
     if (!data.vehicle_id && !data.driver_id) {
-      toast("Look up a vehicle plate or a driver licence first — a violation needs at least one.", "err");
+      toast("Check a vehicle plate or a driver licence first — a violation needs at least one.", "err");
+      return;
+    }
+    if (data.violation_type === "speeding" && Number(data.speed_kmh) <= Number(data.speed_limit_kmh)) {
+      toast(data.speed_kmh + " km/h is not over the " + data.speed_limit_kmh + " km/h limit.", "err");
       return;
     }
     var btn = $("#vio-save");
     btn.disabled = true;
     try {
-      var created = await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(data) });
+      await api("/api/enforcement/violations", { method: "POST", body: JSON.stringify(data) });
       toast("Violation recorded — challan generated", "ok");
+      // reset() leaves hidden inputs alone, so the matches and GPS are cleared by hand.
       e.target.reset();
+      forgetPlate();
+      forgetLicence();
+      forgetGps();
+      refreshOffence();
+      refreshTime();
       loadViolations();
     } catch (err) { toast(err.message, "err"); }
     finally { btn.disabled = false; }

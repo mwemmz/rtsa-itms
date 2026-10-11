@@ -107,6 +107,7 @@ CITIZEN_FORBIDDEN = [
     ("get", "/api/drivers/"),
     ("post", "/api/enforcement/violations"),
     ("get", "/api/enforcement/violations"),
+    ("get", "/api/enforcement/violations/summary"),
     ("get", "/api/enforcement/challans"),
     ("post", "/api/inspections/"),
     ("post", "/api/insurance/"),
@@ -149,7 +150,7 @@ def test_toll_operator_can_work_the_gate_but_not_edit_registries():
     assert client.get("/api/toll/transactions", headers=h).status_code == 200
     assert client.get(f"/api/vehicles/by-registration/{plate}", headers=h).status_code == 200
     assert client.post("/api/enforcement/violations", headers=h,
-                       json={"violation_type": "speeding", "location": "x"}).status_code == 403
+                       json={"violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "x"}).status_code == 403
     assert client.post("/api/vehicles/", headers=h, json={}).status_code == 403
 
 
@@ -157,7 +158,7 @@ def test_officer_keeps_full_operational_access():
     h, _ = _headers("officer")
     vid, _ = _vehicle()
     r = client.post("/api/enforcement/violations", headers=h,
-                    json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "Great East Rd"})
+                    json={"vehicle_id": str(vid), "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "Great East Rd"})
     assert r.status_code == 201, r.text
     assert client.get("/api/enforcement/challans", headers=h).status_code == 200
 
@@ -173,7 +174,7 @@ def test_fine_notifies_the_owner_not_a_stranger_with_the_same_name():
     _link_driver(owner_id, nrc)
     vid, _ = _vehicle(nrc=nrc, owner_name="Mary Banda")
     r = client.post("/api/enforcement/violations", headers=officer,
-                    json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "Kafue Rd"})
+                    json={"vehicle_id": str(vid), "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "Kafue Rd"})
     assert r.status_code == 201, r.text
     assert _notifications(owner_id, "challan_created") == 1
     assert _notifications(stranger_id, "challan_created") == 0
@@ -186,7 +187,7 @@ def test_portal_shows_fines_on_vehicles_linked_by_national_id():
     _link_driver(cid, nrc)
     vid, _ = _vehicle(nrc=nrc)
     client.post("/api/enforcement/violations", headers=officer,
-                json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "Cairo Rd"})
+                json={"vehicle_id": str(vid), "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "Cairo Rd"})
     fines = client.get("/api/portal/fines", headers=citizen).json()
     assert len(fines) == 1
     pay = client.post(f"/api/portal/fines/{fines[0]['id']}/pay", headers=citizen)
@@ -216,7 +217,7 @@ def test_unpaid_fine_alone_stops_the_vehicle_but_is_not_fined_again():
     officer, _ = _headers("officer")
     vid, plate = _vehicle(insured=True, fit=True)
     client.post("/api/enforcement/violations", headers=officer,
-                json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "x"})
+                json={"vehicle_id": str(vid), "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "x"})
     before = _challans(vid)
     r = client.post("/api/toll/events", json={"plate_number": plate, "gate_id": "G9"}, headers=op).json()
     assert r["compliance_result"] == "flagged" and r["challan_created"] is False
@@ -358,7 +359,7 @@ def test_live_updates_reach_owners_linked_by_national_id():
     _link_driver(owner_id, nrc)
     vid, _ = _vehicle(nrc=nrc)  # registered at an office: no direct account link
     r = client.post("/api/enforcement/violations", headers=officer,
-                    json={"vehicle_id": str(vid), "violation_type": "speeding", "location": "Lumumba Rd"})
+                    json={"vehicle_id": str(vid), "violation_type": "speeding", "speed_kmh": 98, "speed_limit_kmh": 80, "location": "Lumumba Rd"})
     assert r.status_code == 201, r.text
     db = SessionLocal()
     try:

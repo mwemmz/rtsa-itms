@@ -322,7 +322,7 @@ Exceptions:    Gateway timeout → payment left PENDING, reconcilable later
 
 | ID | Use case | Endpoint | Notes |
 |---|---|---|---|
-| UC-O1 | Search vehicle records by plate | `GET /api/vehicles/by-registration/{plate}` | Fills the violation form |
+| UC-O1 | Roadside check of a plate | `GET /api/toll/lookup/{plate}` | Fills the violation form; shows compliance, unpaid fines, one-tap charges |
 | UC-O2 | Register a vehicle | `POST /api/vehicles/` | |
 | UC-O3 | **Record a traffic violation** | `POST /api/enforcement/violations` | See UC-O3 detail |
 | UC-O4 | View recent violations | `GET /api/enforcement/violations` | `require_role(*OFFICERS)` |
@@ -347,21 +347,29 @@ Name:          Record a traffic violation
 Actor:         Officer
 Precondition:  Officer authenticated + MFA enrolled
 Trigger:       Officer submits the violation form
-Main flow:     1. Officer looks up the vehicle by plate (auto-fills vehicle_id)
+Main flow:     1. Officer checks the plate (auto-fills vehicle_id) and sees the
+                  roadside result: compliance, unpaid fines, failed checks
+                  that can be charged with one tap
                2. Officer picks an offence type from a dropdown grouped by
                   category: Driver / Vehicle / Both
                3. System shows a live hint: who is liable and what the
                   consequence is (licence risk vs impoundable)
-               4. System derives liable_party from the offence type
+               4. Officer may attach a GPS fix ("Use my location")
+               5. System validates the evidence: speeding needs the speed and
+                  the limit, with the speed over the limit; the offence time
+                  can't be in the future; older than 24 h needs a description
+                  of how it was observed
+               6. System derives liable_party from the offence type
                   (driver / owner / both) and stores it on the violation
-               5. System writes the violation
-               6. System generates an e-Challan with a unique reference
+               7. System writes the violation
+               8. System generates an e-Challan with a unique reference
                   CH-YYYYMMDD-XXXXXX
-               7. System resolves the owner and queues a notification
-               8. System writes an audit log entry
+               9. System resolves the owner and queues a notification
+              10. System writes an audit log entry
 Postcondition: Violation + Challan exist; owner notified
 Alternate:     2a. "Both" category → hint says driver and owner may both be liable
 Exceptions:    Notification provider down → logged, does not roll back the challan
+               5a. Evidence rule fails → 422 with the reason; nothing is written
 ```
 
 ### 2.4 Admin use cases
