@@ -5,7 +5,7 @@ from app.models.audit_log import AuditLog
 from app.models.inspection import Inspection, FitnessCertificate
 from app.models.insurance import Insurance
 from app.models.licence import LicenceApplication
-from app.models.enforcement import Violation, Challan
+from app.models.enforcement import Violation, Challan, ViolationPhoto
 from app.models.anpr import ANPREvent
 from app.models.toll import TollTransaction
 from app.models.toll_offline import OfflineTollEvent
@@ -43,6 +43,7 @@ __all__ = [
     "LicenceApplication",
     "Violation",
     "Challan",
+    "ViolationPhoto",
     "ANPREvent",
     "TollTransaction",
     "OfflineTollEvent",

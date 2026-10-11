@@ -16,6 +16,8 @@ class LicenceStatusOut(BaseModel):
     days_until_expiry: int
     state: str  # valid | expiring_soon | expired
     restrictions: str | None = None
+    can_renew: bool = False
+    renewal_opens: datetime | None = None
 
 
 class FineOut(BaseModel):
@@ -26,6 +28,8 @@ class FineOut(BaseModel):
     liable_party: str = "both"
     location: str
     recorded_at: datetime
+    # Which of the citizen's vehicles it was, when it was a vehicle.
+    registration_number: str | None = None
     penalty_amount: int
     due_date: datetime
     status: ChallanStatus

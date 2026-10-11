@@ -9,7 +9,7 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, A5, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -153,6 +153,30 @@ def receipt_pdf(receipt: dict) -> bytes:
     story += [table, Spacer(1, 12),
               Paragraph("This receipt was generated electronically and is valid without a signature.",
                         styles["Italic"])]
+    doc.build(story)
+    return out.getvalue()
+
+
+def ticket_pdf(reference: str, lines: list[tuple[str, str]]) -> bytes:
+    """The roadside ticket (e-Challan) handed to a motorist. A5 so it prints
+    on whatever the officer has to hand."""
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(out, pagesize=A5, leftMargin=12 * mm, rightMargin=12 * mm,
+                            topMargin=12 * mm, bottomMargin=12 * mm, title=f"Ticket {reference}")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Road Transport &amp; Safety Agency", styles["Title"]),
+        Paragraph("Traffic Offence Ticket (e-Challan)", styles["Heading2"]),
+        Spacer(1, 6),
+    ]
+    table = Table([[Paragraph(f"<b>{_esc(a)}</b>", styles["BodyText"]), Paragraph(_esc(b), styles["BodyText"])]
+                   for a, b in lines], colWidths=[32 * mm, 92 * mm])
+    table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                               ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+                               ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story += [table, Spacer(1, 10),
+              Paragraph("Issued electronically by RTSA. Keep this ticket until the fine is paid. "
+                        "To dispute it, contact RTSA quoting the reference.", styles["Italic"])]
     doc.build(story)
     return out.getvalue()
 

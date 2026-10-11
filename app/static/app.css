@@ -728,7 +728,9 @@ header .user-chip { font-size: 13px; color: var(--ink-2); font-weight: 500; }
 .grid { display: grid; gap: 16px; }
 .grid.cards { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 16px; }
 .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-.row > * { flex: 1 1 340px; }
+/* min-width: 0 lets a card shrink to the screen and its table scroll inside it,
+   instead of a wide table stretching the whole page sideways on a phone. */
+.row > * { flex: 1 1 340px; min-width: 0; }
 .planner-layout { width: 100%; }
 .planner-top > * { flex: 1 1 340px; }
 .planner-map-card { width: 100%; }
@@ -779,6 +781,10 @@ header .user-chip { font-size: 13px; color: var(--ink-2); font-weight: 500; }
 }
 .kpi .kpi-value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); margin-top: 5px; line-height: 1.15; }
 .kpi .kpi-sub { font-size: 12px; color: var(--ink-3); margin-top: 3px; }
+/* A tile that takes you to where you act on it. */
+a.kpi-link { display: block; color: inherit; text-decoration: none; transition: border-color 0.15s ease; }
+a.kpi-link:hover, a.kpi-link:focus-visible { border-color: var(--gold); }
+a.kpi-link .kpi-sub::after { content: " \203A"; }
 
 /* ---------- tables ---------- */
 .table-wrap { overflow-x: auto; border-radius: 10px; }
@@ -970,6 +976,48 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .roadside.clear { border-left-color: var(--ok); }
 .roadside.stop { border-left-color: var(--err); }
+
+/* violation photo evidence: picker thumbnails and the viewer */
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.photo-grid figure { margin: 0; position: relative; }
+.photo-grid img {
+  display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
+  border-radius: var(--radius-control); border: 1px solid var(--line); background: var(--slate-soft);
+}
+.photo-grid figcaption { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; line-height: 1.35; overflow-wrap: anywhere; }
+.photo-grid .photo-remove { position: absolute; top: 6px; right: 6px; }
+.photo-viewer {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(10, 13, 16, 0.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: calc(env(safe-area-inset-top) + 24px) 16px 24px;
+  overflow-y: auto;
+  animation: fadein 0.2s ease;
+}
+.photo-viewer .card { width: 100%; max-width: 760px; margin: 0; }
+.photo-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.photo-viewer-head h3 { margin: 0; }
+
+/* What needs doing, one line each with its action (citizen dashboard). */
+.todo { list-style: none; margin: 0; padding: 0; }
+.todo li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; line-height: 1.4; }
+.todo li:last-child { border-bottom: 0; }
+.todo li .btn { flex: none; }
+.todo .todo-done { color: var(--ink-3); }
+
+/* On a phone, a table marked .stack shows each row as a block with its
+   column names as labels, so actions are in reach without scrolling sideways. */
+@media (max-width: 640px) {
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack tr:has(> th) { display: none; }
+  table.stack tr { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 6px 12px; margin-bottom: 10px; }
+  table.stack td { border: 0; padding: 5px 0; }
+  table.stack td[data-label]::before {
+    content: attr(data-label); display: block;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+  }
+  table.stack td:empty { display: none; }
+}
 
 /* citizen incident report: type choice + declaration */
 .choice-row { display: flex; flex-wrap: wrap; gap: 8px; }

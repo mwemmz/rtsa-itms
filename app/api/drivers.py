@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -74,7 +75,8 @@ def get_driver_by_licence(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
-    driver = db.query(Driver).filter(Driver.licence_number == licence_number).first()
+    # Typed off a card at the roadside: ignore case and stray spaces.
+    driver = db.query(Driver).filter(func.upper(Driver.licence_number) == licence_number.strip().upper()).first()
     if not driver:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver not found")
     return driver

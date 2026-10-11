@@ -276,11 +276,11 @@ Alternate:     2a. Number already exists → 409, show the existing record
 | UC-C3 | View my dashboard (vehicles, licence, fines) | `GET /api/citizen/dashboard` | Authenticated citizen |
 | UC-C4 | View my vehicles | `GET /api/citizen/my-vehicles` | Authenticated |
 | UC-C5 | View a vehicle's compliance status | `GET /api/citizen/vehicles/{id}` | Owns the vehicle |
-| UC-C6 | View my outstanding fines | `GET /api/portal/fines` | Owns the vehicle |
-| UC-C7 | **Pay a fine** | `POST /api/portal/fines/{id}/pay` | Owns the vehicle; not already paid |
+| UC-C6 | View my outstanding fines | `GET /api/portal/fines` | Owns the vehicle, or was the liable driver |
+| UC-C7 | **Pay a fine** | `POST /api/portal/fines/{id}/pay` | Listed as theirs in UC-C6; not already paid |
 | UC-C8 | View my driver licence | `GET /api/portal/licence` | Linked driver record |
-| UC-C9 | Renew my licence | `POST /api/portal/licence/renew` | Licence exists |
-| UC-C10 | View my licence applications | `GET /api/citizen/applications` | Authenticated |
+| UC-C9 | Renew my licence | `POST /api/portal/licence/renew` | Within 90 days of expiry, or expired; not suspended or disqualified |
+| UC-C10 | Apply for a licence, view my applications | `POST /api/licence-applications/`, `GET /api/citizen/applications` | Own NRC; one open application at a time |
 | UC-C11 | Track an application | `GET /api/citizen/applications/{id}` | Owns the application |
 | UC-C12 | View my payments / receipts | `GET /api/citizen/payments` | Authenticated |
 | UC-C13 | Update my profile & security (MFA, password) | `PATCH /api/citizen/profile`, `/api/auth/*` | Authenticated |
@@ -325,12 +325,15 @@ Exceptions:    Gateway timeout → payment left PENDING, reconcilable later
 | UC-O1 | Roadside check of a plate | `GET /api/toll/lookup/{plate}` | Fills the violation form; shows compliance, unpaid fines, one-tap charges |
 | UC-O2 | Register a vehicle | `POST /api/vehicles/` | |
 | UC-O3 | **Record a traffic violation** | `POST /api/enforcement/violations` | See UC-O3 detail |
-| UC-O4 | View recent violations | `GET /api/enforcement/violations` | `require_role(*OFFICERS)` |
+| UC-O4 | View recent violations | `GET /api/enforcement/violations` | `?mine=true` lists the caller's own, newest recording first |
+| UC-O4a | Print or text the motorist's ticket | `GET /api/enforcement/challans/{id}/ticket.pdf`, `POST …/sms` | SMS goes straight to the number given; audit-logged, number masked |
+| UC-O4b | Name the driver of a camera/video case | `POST /api/enforcement/violations/{id}/driver` | Charges and notifies the driver; refuses if one is already attached |
+| UC-O4c | Attach photo evidence | `POST /api/enforcement/violations/{id}/photos` (multipart) | JPEG/PNG/WebP by content, ≤ 5 MB, ≤ 5 per violation; SHA-256 kept; can't be removed |
 | UC-O5 | View and filter challans | `GET /api/enforcement/challans` | Filter by status |
 | UC-O6 | Mark a challan paid | `POST /api/enforcement/challans/{id}/pay` | |
 | UC-O7 | Record an inspection & issue fitness cert | `/api/inspections` | |
 | UC-O8 | Issue a driver licence | `POST /api/licence-applications/{id}/issue` | After theory + practical |
-| UC-O9 | Record an ANPR sighting | `POST /api/anpr/events` | |
+| UC-O9 | Record an ANPR sighting | `POST /api/anpr/events` | Matches plates ignoring spaces/case; returns a stop/allow alert with reasons |
 | UC-O10 | Post a toll-gate event | `POST /api/toll/events` | Runs the compliance engine |
 | UC-O11 | Sync offline toll events | `POST /api/toll/offline/sync` | Idempotent on `device_event_id` |
 | UC-O12 | Record a road accident | `POST /api/accidents` | |
@@ -354,7 +357,9 @@ Main flow:     1. Officer checks the plate (auto-fills vehicle_id) and sees the
                   category: Driver / Vehicle / Both
                3. System shows a live hint: who is liable and what the
                   consequence is (licence risk vs impoundable)
-               4. Officer may attach a GPS fix ("Use my location")
+               4. Officer may attach a GPS fix ("Use my location"), and says
+                  how it was seen: in person, a citizen's video, a social
+                  media post (link required) or CCTV
                5. System validates the evidence: speeding needs the speed and
                   the limit, with the speed over the limit; the offence time
                   can't be in the future; older than 24 h needs a description
@@ -364,12 +369,17 @@ Main flow:     1. Officer checks the plate (auto-fills vehicle_id) and sees the
                7. System writes the violation
                8. System generates an e-Challan with a unique reference
                   CH-YYYYMMDD-XXXXXX
-               9. System resolves the owner and queues a notification
+               9. System notifies the owner, and the driver too when the
+                  offence is one the driver is liable for
               10. System writes an audit log entry
-Postcondition: Violation + Challan exist; owner notified
+              11. Officer prints the ticket or texts it to the motorist
+Postcondition: Violation + Challan exist; owner (and liable driver) notified
 Alternate:     2a. "Both" category → hint says driver and owner may both be liable
+               2b. Driver offence from the plate alone → owner charged until
+                   they name the driver; officer attaches them later (UC-O4b)
 Exceptions:    Notification provider down → logged, does not roll back the challan
                5a. Evidence rule fails → 422 with the reason; nothing is written
+               11a. SMS gateway down → 502; officer prints the ticket instead
 ```
 
 ### 2.4 Admin use cases
