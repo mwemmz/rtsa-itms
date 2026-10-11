@@ -458,6 +458,9 @@ def seed_demo_portal() -> None:
                 violation_type=ViolationType.SPEEDING,
                 location="Great East Road - Lumumba Checkpoint",
                 timestamp=datetime.utcnow() - timedelta(days=6),
+                speed_kmh=98,
+                speed_limit_kmh=80,
+                speed_device="RADAR-LSK-07",
                 description="Travelling at 98 km/h in an 80 km/h zone.",
             )
             db.add(violation)

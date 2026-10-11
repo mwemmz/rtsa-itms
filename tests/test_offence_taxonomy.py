@@ -139,6 +139,8 @@ def test_api_records_liability_and_consequences():
         json={
             "vehicle_id": vehicle["id"],
             "violation_type": "speeding",
+            "speed_kmh": 98,
+            "speed_limit_kmh": 80,
             "location": "Great East Road",
         },
         headers=headers,

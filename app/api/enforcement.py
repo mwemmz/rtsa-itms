@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -86,6 +87,11 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
                 "grounds_impoundment": v.violation_type.grounds_impoundment,
                 "location": v.location,
                 "speed_kmh": v.speed_kmh,
+                "speed_limit_kmh": v.speed_limit_kmh,
+                "speed_device": v.speed_device,
+                "latitude": v.latitude,
+                "longitude": v.longitude,
+                "gps_accuracy_m": v.gps_accuracy_m,
                 "timestamp": v.timestamp,
                 "description": v.description,
                 "registration_number": veh.registration_number if veh else None,
@@ -206,6 +212,11 @@ def record_violation(
         violation_type=payload.violation_type,
         location=payload.location,
         speed_kmh=payload.speed_kmh,
+        speed_limit_kmh=payload.speed_limit_kmh,
+        speed_device=payload.speed_device,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        gps_accuracy_m=payload.gps_accuracy_m,
         timestamp=payload.timestamp or datetime.utcnow(),
         description=payload.description,
         recorded_by=current_user.id,
@@ -250,6 +261,24 @@ def list_violations(
         query = query.filter(Violation.vehicle_id == vehicle_id)
     violations = query.order_by(Violation.timestamp.desc()).offset(skip).limit(limit).all()
     return _enrich_violations(db, violations)
+
+
+@router.get("/violations/summary")
+def violations_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """Violations recorded in the last 24 hours, in total and by the caller.
+
+    The dashboard used to count the rows of a 6-item list, so it never showed
+    more than 6. This counts in the database instead.
+    """
+    since = datetime.utcnow() - timedelta(hours=24)
+    recent = db.query(func.count(Violation.id)).filter(Violation.created_at >= since)
+    return {
+        "last_24h": recent.scalar(),
+        "last_24h_by_me": recent.filter(Violation.recorded_by == current_user.id).scalar(),
+    }
 
 
 @router.get("/challans", response_model=list[ChallanResponse])

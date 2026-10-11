@@ -32,9 +32,10 @@ MAX = 200
 
 def _violation(location: str) -> ViolationCreate:
     # vehicle_id is only here to satisfy ViolationCreate's "needs an offender"
-    # rule -- these tests are about the location field, not who's charged.
+    # rule -- these tests are about the location field, not who's charged. The
+    # offence is one with no speed evidence rule, for the same reason.
     return ViolationCreate(
-        violation_type=ViolationType.SPEEDING, location=location, vehicle_id=uuid.uuid4()
+        violation_type=ViolationType.ILLEGAL_PARKING, location=location, vehicle_id=uuid.uuid4()
     )
 
 
