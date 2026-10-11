@@ -671,7 +671,9 @@ VIEWS.receipts = async function () {
     var items = await api("/api/citizen/payments?limit=100");
     $("#rc-list").innerHTML = tbl(["Date", "Description", "Amount", "Status", "Receipt", ""], items.map(function (p) {
       var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : p.status === "refunded" ? "amber" : "gray";
-      return [dt(p.paid_at || p.created_at), esc(p.description || p.payment_type), money(p.amount), pill(p.status, cls), esc(p.receipt_number || "—"),
+      // The payment reference is what the receipt notification quotes.
+      return [dt(p.paid_at || p.created_at), esc(p.description || p.payment_type) + '<div class="small muted mono">' + esc(p.reference) + "</div>",
+        money(p.amount), pill(p.status, cls), esc(p.receipt_number || "—"),
         p.receipt_number ? '<button class="btn ghost sm rc" data-id="' + esc(p.id) + '">Download PDF</button>' : ""];
     }));
     $$("#rc-list .rc").forEach(function (b) {

@@ -934,6 +934,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .drawer .n-title { font-weight: 600; color: var(--ink); }
 .drawer .n-body { color: var(--ink-2); margin-top: 2px; }
 .drawer .n-time { color: var(--ink-3); font-size: 11.5px; margin-top: 5px; display: flex; align-items: center; gap: 7px; }
+/* Where tapping the notification takes you. */
+.drawer .n-go { margin-left: auto; color: var(--gold-strong); font-weight: 600; white-space: nowrap; }
+.drawer .item:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.drawer .notif-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -4px 0 6px; }
+
+/* The item a notification opened: a brief highlight so the eye lands on it. */
+@keyframes flash-in { 0%, 60% { box-shadow: 0 0 0 2px var(--gold); background: color-mix(in srgb, var(--gold) 14%, transparent); } 100% { box-shadow: 0 0 0 2px transparent; background: transparent; } }
+.flash { animation: flash-in 2.4s ease-out; border-radius: var(--radius-control); }
 
 /* ---------- misc ---------- */
 .empty {

@@ -802,6 +802,84 @@ async function refreshBell() {
   } catch (e) { /* ignore */ }
 }
 
+// Where each kind of notification takes you: the first of these screens the
+// reader's role has. `focus` says what in the message names the exact item to
+// scroll to: a reference (fine CH-…, report DR-…, receipt RCT-…) or a plate.
+var NOTIFICATION_TARGETS = {
+  challan_created: { views: ["fines", "challans"], focus: "ref" },
+  toll_flagged: { views: ["fines", "challans", "toll"], focus: "plate" },
+  payment_receipt: { views: ["receipts", "payments", "challans"], focus: "ref" },
+  payment_failed: { views: ["receipts", "fines", "payments"], focus: "ref" },
+  refund_issued: { views: ["receipts", "payments"], focus: "ref" },
+  licence_expiring: { views: ["licence"] },
+  licence_issued: { views: ["licence"] },
+  licence_renewed: { views: ["licence"] },
+  insurance_expiring: { views: ["vehicles"], focus: "plate" },
+  fitness_expiring: { views: ["vehicles"], focus: "plate" },
+  psv_permit_expiring: { views: ["vehicles"], focus: "plate" },
+  road_alert: { views: ["alerts"] },
+  new_device_login: { views: ["account"] },
+  road_report_received: { views: ["alerts"] },
+  road_report_confirmed: { views: ["report"] },
+  road_report_dismissed: { views: ["report"] },
+  road_report_false: { views: ["fines"], focus: "ref" },
+  driver_report_received: { views: ["driver_reports"], focus: "ref" },
+  driver_report_accepted: { views: ["report_driver"], focus: "ref" },
+  driver_report_rejected: { views: ["report_driver"], focus: "ref" },
+  driver_report_false: { views: ["fines"], focus: "ref" }
+};
+
+function notificationTarget(n) {
+  var t = NOTIFICATION_TARGETS[n.trigger_event];
+  if (!t) return null;  // e.g. a rule an admin added: nothing specific to open
+  var nav = NAV[USER.role] || [];
+  var view = t.views.filter(function (id) { return nav.some(function (x) { return x.id === id; }); })[0];
+  if (!view) return null;
+  var text = n.title + " " + n.body, ref = null;
+  if (t.focus === "ref") {
+    // A fine first: a false-report notice names both the report and its fine.
+    var m = /\bCH-[0-9A-Z]+(?:-[0-9A-Z]+)*/.exec(text) || /\b(?:DR|RCT|PAY)-[0-9A-Z]+(?:-[0-9A-Z]+)*/.exec(text);
+    if (t.views[0] === "report_driver" || t.views[0] === "driver_reports") m = /\bDR-[0-9A-F]{8}\b/.exec(text) || m;
+    ref = m ? m[0] : null;
+  } else if (t.focus === "plate") {
+    var p = /\b[A-Z]{2,3} ?\d{1,4}[A-Z]?\b/.exec(text);
+    ref = p ? p[0] : null;
+  }
+  var label = (nav.filter(function (x) { return x.id === view; })[0] || {}).label;
+  return { view: view, label: label, ref: ref };
+}
+
+// Scroll to the item a notification is about and flash it. The screen may still
+// be loading its list, so keep looking for a few seconds.
+async function focusReference(ref) {
+  for (var tries = 0; tries < 20; tries++) {
+    var walker = document.createTreeWalker($("#content"), NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue.indexOf(ref) === -1) continue;
+      var target = node.parentElement.closest("tr, li, .report-row, .dr-card, .card") || node.parentElement;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("flash");
+      void target.offsetWidth;  // restart the animation if it's flashed before
+      target.classList.add("flash");
+      return true;
+    }
+    await new Promise(function (r) { setTimeout(r, 200); });
+  }
+  return false;
+}
+
+async function openNotification(n) {
+  // Opening it is reading it; the drawer isn't needed while you look.
+  if (!n.read) api("/api/notifications/" + n.id + "/read", { method: "POST" }).then(refreshBell).catch(function () {});
+  var target = notificationTarget(n);
+  if (!target) { openNotifs(); return; }
+  $("#notif-drawer").classList.add("hidden");
+  if (location.hash === "#/" + target.view) await go(target.view);
+  else location.hash = "#/" + target.view;  // the router renders it
+  if (target.ref) focusReference(target.ref);
+}
+
 async function openNotifs() {
   var drawer = $("#notif-drawer");
   drawer.classList.remove("hidden");
@@ -810,19 +888,26 @@ async function openNotifs() {
   try {
     var items = await api("/api/notifications/?unread_only=false");
     if (!items.length) { list.innerHTML = '<div class="empty">No notifications yet.</div>'; return; }
-    list.innerHTML = items.map(function (n) {
-      var read = n.read ? "gray" : "blue";
-      return '<div class="item' + (n.read ? "" : " unread") + '" data-id="' + esc(n.id) + '">' +
-        '<div class="n-title">' + esc(n.title) + '</div>' +
-        '<div class="n-body small">' + esc(n.body) + '</div>' +
-        '<div class="n-time"><span class="pill ' + read + '">' + (n.read ? "read" : "new") + "</span> " + dt(n.created_at) + "</div>" +
-        "</div>";
-    }).join("");
+    var unread = items.filter(function (n) { return !n.read; }).length;
+    list.innerHTML = (unread ? '<div class="notif-head"><span class="small muted">' + unread + " unread</span>" +
+        '<button type="button" class="btn ghost sm" id="notif-read-all">Mark all as read</button></div>' : "") +
+      items.map(function (n, i) {
+        var target = notificationTarget(n);
+        return '<div class="item' + (n.read ? "" : " unread") + '" data-i="' + i + '" role="button" tabindex="0">' +
+          '<div class="n-title">' + esc(n.title) + "</div>" +
+          '<div class="n-body small">' + esc(n.body) + "</div>" +
+          '<div class="n-time">' + (n.read ? "" : '<span class="pill blue">new</span> ') + dt(n.created_at) +
+            (target ? '<span class="n-go">' + esc(target.label) + " &#8250;</span>" : "") + "</div>" +
+          "</div>";
+      }).join("");
     $$("#notif-list .item").forEach(function (el) {
-      el.addEventListener("click", async function () {
-        try { await api("/api/notifications/" + el.dataset.id + "/read", { method: "POST" }); refreshBell(); openNotifs(); }
-        catch (e) { toast(e.message, "err"); }
-      });
+      var n = items[Number(el.dataset.i)];
+      el.addEventListener("click", function () { openNotification(n); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openNotification(n); } });
+    });
+    if ($("#notif-read-all")) $("#notif-read-all").addEventListener("click", async function () {
+      try { await api("/api/notifications/read-all", { method: "POST" }); refreshBell(); openNotifs(); }
+      catch (e) { toast(e.message, "err"); }
     });
   } catch (e) {
     list.innerHTML = '<div class="empty">' + esc(e.message) + "</div>";
