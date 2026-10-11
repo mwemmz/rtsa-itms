@@ -57,7 +57,7 @@ def my_vehicles_query(db: Session, user: User):
 
 
 def _fines_query(db: Session, user: User):
-    """Fines on the user's vehicles plus any charged to their account (false road reports)."""
+    """Fines on the user's vehicles, charged to their account (false road reports), or owed as the driver."""
     return owed_challans_query(db, user)
 
 
