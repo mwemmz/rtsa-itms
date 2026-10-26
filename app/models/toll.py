@@ -32,6 +32,8 @@ class TollTransaction(Base):
         Enum(TollComplianceResult), nullable=False
     )
     flagged_issues: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identification_method: Mapped[str] = mapped_column(String(20), default="anpr", nullable=False)
+    lane_mode: Mapped[str] = mapped_column(String(20), default="barrier", nullable=False)
     toll_amount: Mapped[int | None] = mapped_column(nullable=True)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

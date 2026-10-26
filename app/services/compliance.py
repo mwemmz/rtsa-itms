@@ -104,7 +104,31 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
     else:
         result.checks.append({"check": "outstanding_fines", "status": "pass"})
 
-    # 6. PSV permit check
+    # 6. Toll dues (free-flow passages billed to the owner and not yet settled)
+    from datetime import timedelta
+
+    from app.models.toll import TollTransaction
+    from app.services import settings as runtime_settings
+
+    grace_cutoff = now - timedelta(days=runtime_settings.get(db, "toll.due_grace_days"))
+    dues = (
+        db.query(TollTransaction)
+        .filter(
+            TollTransaction.vehicle_id == vehicle.id,
+            TollTransaction.lane_mode == "mlff",
+            TollTransaction.is_paid == False,  # noqa: E712
+            TollTransaction.toll_amount > 0,
+            TollTransaction.timestamp <= grace_cutoff,
+        )
+        .count()
+    )
+    if dues > 0:
+        result.issues.append(f"{dues} unpaid toll due(s)")
+        result.checks.append({"check": "toll_dues", "status": "fail", "detail": f"{dues} unpaid"})
+    else:
+        result.checks.append({"check": "toll_dues", "status": "pass"})
+
+    # 7. PSV permit check
     from app.models.psv import PSVPermit, PSVPermitStatus
     psv_permit = (
         db.query(PSVPermit)

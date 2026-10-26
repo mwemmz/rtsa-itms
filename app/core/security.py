@@ -96,6 +96,22 @@ def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
         )
 
 
+def enforce_admin_network(user: User, request: Request, db: Session) -> None:
+    """Admins may be limited to approved networks (setting `security.admin_ip_allowlist`)."""
+    if user.role != UserRole.ADMIN:
+        return
+    allowlist = runtime_settings.get(db, "security.admin_ip_allowlist")
+    if not allowlist:
+        return
+    from app.services.auth import client_ip  # imported here: app.services.auth imports this module
+
+    if not runtime_settings.ip_allowed(allowlist, client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is not allowed from this network.",
+        )
+
+
 def get_user_from_token(token: str, db: Session, typ: str = "access", touch: bool = True) -> User:
     """Resolve a (still-valid) token of type `typ` to a live User, or raise 401.
 
@@ -159,6 +175,7 @@ def get_current_user(
 ) -> User:
     background = request.headers.get(BACKGROUND_HEADER) == "1"
     user = get_user_from_token(token, db, touch=not background)
+    enforce_admin_network(user, request, db)
     enforce_staff_mfa(user, request.url.path, db)
     return user
 

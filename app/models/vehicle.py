@@ -39,6 +39,7 @@ class Vehicle(Base):
     status: Mapped[VehicleStatus] = mapped_column(
         Enum(VehicleStatus), default=VehicleStatus.ACTIVE, nullable=False
     )
+    fastag_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     is_blacklisted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blacklist_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     registration_date: Mapped[datetime] = mapped_column(

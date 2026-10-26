@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.vehicle import VehicleStatus
 
@@ -16,6 +16,7 @@ class VehicleCreate(BaseModel):
     color: str | None = None
     engine_number: str | None = None
     chassis_number: str | None = None
+    fastag_id: str | None = Field(default=None, min_length=4, max_length=64)
 
 
 class VehicleUpdate(BaseModel):
@@ -27,6 +28,7 @@ class VehicleUpdate(BaseModel):
     status: VehicleStatus | None = None
     is_blacklisted: bool | None = None
     blacklist_reason: str | None = None
+    fastag_id: str | None = Field(default=None, min_length=4, max_length=64)
 
 
 class VehicleResponse(BaseModel):
@@ -40,6 +42,7 @@ class VehicleResponse(BaseModel):
     color: str | None
     engine_number: str | None
     chassis_number: str | None
+    fastag_id: str | None = None
     status: VehicleStatus
     is_blacklisted: bool
     blacklist_reason: str | None

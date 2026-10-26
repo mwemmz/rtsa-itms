@@ -1,17 +1,29 @@
 import uuid
 from datetime import datetime
-from pydantic import Field
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.toll import TollComplianceResult
 
 
 class TollEventCreate(BaseModel):
-    plate_number: str
+    """A vehicle passing a gate, identified by plate (ANPR / manual), by FASTag, or both."""
+
+    plate_number: str | None = Field(default=None, min_length=1, max_length=20)
+    tag_id: str | None = Field(default=None, min_length=4, max_length=64)
     gate_id: str
     timestamp: datetime | None = None
     toll_amount: int | None = None
+    # barrier: the vehicle stops and the gate opens or holds it.
+    # mlff: multi-lane free flow, the vehicle never stops; the toll is billed to the owner.
+    lane_mode: Literal["barrier", "mlff"] = "barrier"
+
+    @model_validator(mode="after")
+    def _needs_an_identifier(self):
+        if not self.plate_number and not self.tag_id:
+            raise ValueError("Give a plate_number, a tag_id, or both")
+        return self
 
 
 class OfflineTollEventCreate(BaseModel):
@@ -54,6 +66,8 @@ class TollTransactionResponse(BaseModel):
     flagged_issues: str | None
     toll_amount: int | None
     is_paid: bool
+    identification_method: str = "anpr"
+    lane_mode: str = "barrier"
 
     model_config = {"from_attributes": True}
 
@@ -65,4 +79,8 @@ class ComplianceResponse(BaseModel):
     checks: list[ComplianceCheckItem]
     flagged_issues: list[str]
     challan_created: bool = False
+    # What the gate should do. In free-flow lanes nothing stops the vehicle, so a
+    # flagged event is "dispatch_enforcement" (intercept it further along) instead of a held barrier.
+    action: str = "proceed"
+    barrier_required: bool = False
     transaction: TollTransactionResponse

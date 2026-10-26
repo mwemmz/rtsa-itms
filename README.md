@@ -381,6 +381,24 @@ The script prints the rule count, sections and any **missing rule numbers**. Che
 
 **Limits.** Questions up to 500 characters, 6 turns of history. Every answer carries a notice that it is guidance, not legal advice. Endpoints: `GET /api/assistant/status`, `POST /api/assistant/ask` (any signed-in user).
 
+## Network restriction, geo-fencing and free-flow tolling
+
+**Admin network restriction (R15).** Set `security.admin_ip_allowlist` under Admin settings to a comma-separated list of IPs or CIDR ranges, for example `41.223.10.0/24, 196.1.2.3`. Administrator accounts are then refused (403) from any other address. Other roles are not affected. Empty means no restriction. The setting cannot be saved if it would lock out the admin saving it. Behind a proxy, set `TRUST_PROXY_HEADERS=true` so the real client address is used.
+
+**PSV route geo-fencing (R4).**
+1. An officer sets a route corridor on a permit: `PUT /api/psv/permits/{id}/corridor` with `waypoints` (at least 2 `{lat, lon}` points) and `buffer_m` (allowed distance either side, 50 to 20000, default 500).
+2. A tracker, officer or toll operator reports a position: `POST /api/psv/positions` with `plate_number`, `latitude`, `longitude`. The reply says whether the vehicle is `inside` and how far (`distance_m`) it is from the route.
+3. If it is outside, an alert is created and officers and admins are notified (rule `psv_route_violation`). Repeat reports within 10 minutes reuse the open alert.
+4. `GET /api/psv/alerts` lists alerts; `POST /api/psv/alerts/{id}/acknowledge` closes one.
+
+**FASTag and free-flow tolling (R8).** A vehicle can carry a `fastag_id` (set on registration or update). `POST /api/toll/events` accepts `tag_id`, `plate_number` or both, plus `lane_mode`:
+- `barrier` (default): a flagged vehicle is held (`action: hold_at_barrier`).
+- `mlff`: multi-lane free flow. Nothing stops the vehicle. A compliant passage is recorded as an unpaid toll due, and a flagged one returns `action: dispatch_enforcement`.
+- If a tag and a plate are sent together and disagree, the event is flagged (cloned plate or swapped tag) but not fined.
+- A seventh compliance check, `toll_dues`, flags vehicles with free-flow tolls unpaid longer than `toll.due_grace_days` (default 7). `POST /api/toll/transactions/{id}/settle` (toll operator or admin) marks one paid.
+
+These were added with migration `a1c3e5f7b902`. There is no web screen for them yet; they are available through the API and `/docs`.
+
 ## Security notes
 
 - Passwords hashed with bcrypt and checked against a length + letters/numbers policy; JWTs are bound to a

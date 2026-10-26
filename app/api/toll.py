@@ -39,13 +39,30 @@ FLAGGED_VIOLATION_MAP = {
 
 def _process_toll_event(
     db: Session,
-    plate: str,
+    plate: str | None,
     gate_id: str,
     timestamp: datetime | None,
     toll_amount: int | None,
     actor: User,
+    tag_id: str | None = None,
+    lane_mode: str = "barrier",
 ) -> ComplianceResponse:
-    vehicle = db.query(Vehicle).filter(Vehicle.registration_number == plate).first()
+    mismatch = False
+    if tag_id:
+        tagged = db.query(Vehicle).filter(Vehicle.fastag_id == tag_id).first()
+        if not tagged:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No vehicle registered with FASTag {tag_id}",
+            )
+        # A tag read together with a plate must agree: a mismatch is a cloned plate or a swapped tag.
+        mismatch = bool(plate) and tagged.registration_number != plate
+        vehicle = tagged
+        plate = plate or tagged.registration_number
+        method = "fastag"
+    else:
+        vehicle = db.query(Vehicle).filter(Vehicle.registration_number == plate).first()
+        method = "anpr"
 
     # Check if vehicle exists
     if not vehicle:
@@ -55,6 +72,11 @@ def _process_toll_event(
         )
 
     compliance = check_vehicle_compliance(db, vehicle)
+    if mismatch:
+        compliance.issues.append(f"Tag and plate mismatch (tag belongs to {vehicle.registration_number}, camera read {plate})")
+        compliance.checks.append({"check": "tag_plate_match", "status": "fail", "detail": "Plate does not match tag"})
+        compliance.compliant = False
+        plate = vehicle.registration_number
     result = TollComplianceResult.COMPLIANT if compliance.compliant else TollComplianceResult.FLAGGED
 
     transaction = TollTransaction(
@@ -65,7 +87,11 @@ def _process_toll_event(
         compliance_result=result,
         flagged_issues="; ".join(compliance.issues) if compliance.issues else None,
         toll_amount=toll_amount,
-        is_paid=compliance.compliant,
+        # Barrier lanes are paid at the gate when compliant. Free-flow lanes bill the owner
+        # afterwards, so the passage is a toll due until it is settled.
+        is_paid=compliance.compliant and lane_mode != "mlff",
+        identification_method=method,
+        lane_mode=lane_mode,
     )
     db.add(transaction)
     db.flush()
@@ -75,7 +101,10 @@ def _process_toll_event(
     # (insurance, fitness, permit, blacklist, registration). Having an unpaid fine is
     # a reason to stop the vehicle, not a new offence: fining it would add a fresh
     # challan at every gate, each of which guarantees the next flag.
-    chargeable = [i for i in compliance.issues if not i.endswith("outstanding challan(s)")]
+    chargeable = [
+        i for i in compliance.issues
+        if not i.endswith("outstanding challan(s)") and not i.endswith("unpaid toll due(s)") and not i.startswith("Tag and plate mismatch")
+    ]
     description = "; ".join(chargeable)
     already_fined = chargeable and (
         db.query(Challan.id)
@@ -140,6 +169,11 @@ def _process_toll_event(
         checks=compliance.checks,
         flagged_issues=compliance.issues,
         challan_created=challan_created,
+        action=(
+            "proceed" if result == TollComplianceResult.COMPLIANT
+            else ("dispatch_enforcement" if lane_mode == "mlff" else "hold_at_barrier")
+        ),
+        barrier_required=lane_mode != "mlff" and result == TollComplianceResult.FLAGGED,
         transaction=txn_data,
     )
 
@@ -151,7 +185,10 @@ def process_toll_gate_event(
     current_user: User = Depends(require_role(*FIELD_STAFF)),
 ):
     response = _process_toll_event(
-        db, payload.plate_number.upper(), payload.gate_id, payload.timestamp, payload.toll_amount, current_user
+        db,
+        payload.plate_number.upper() if payload.plate_number else None,
+        payload.gate_id, payload.timestamp, payload.toll_amount, current_user,
+        tag_id=payload.tag_id, lane_mode=payload.lane_mode,
     )
     db.commit()
     return response
@@ -235,3 +272,21 @@ def list_toll_transactions(
     if plate_number:
         query = query.filter(TollTransaction.plate_number == plate_number.upper())
     return query.order_by(TollTransaction.timestamp.desc()).limit(100).all()
+
+@router.post("/transactions/{transaction_id}/settle", response_model=TollTransactionResponse)
+def settle_toll_due(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("toll_operator", "admin")),
+):
+    """Mark a free-flow toll passage as paid (settled at a booth or by agreement with the owner)."""
+    txn = db.query(TollTransaction).filter(TollTransaction.id == transaction_id).first()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Toll transaction not found")
+    if txn.is_paid:
+        raise HTTPException(status_code=400, detail="This toll is already paid")
+    txn.is_paid = True
+    log_action(db, "settle_toll", "toll_transaction", str(txn.id), f"{txn.plate_number} at {txn.gate_id}", current_user.id)
+    db.commit()
+    db.refresh(txn)
+    return txn

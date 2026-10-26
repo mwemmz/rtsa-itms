@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -64,4 +64,45 @@ class PSVPermit(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PSVCorridor(Base):
+    """The approved route of a permit, as a polyline of waypoints plus an allowed distance either side."""
+
+    __tablename__ = "psv_corridors"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
+    permit_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("psv_permits.id"), unique=True, nullable=False
+    )
+    waypoints: Mapped[str] = mapped_column(Text, nullable=False)  # JSON [[lat, lon], ...]
+    buffer_m: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PSVRouteAlert(Base):
+    """A geo-fencing alert: a PSV was reported outside its permitted corridor."""
+
+    __tablename__ = "psv_route_alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
+    permit_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("psv_permits.id"), nullable=False, index=True
+    )
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("vehicles.id"), nullable=False, index=True
+    )
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    buffer_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
     )

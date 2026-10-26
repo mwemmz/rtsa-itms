@@ -10,7 +10,7 @@ from app.models.driver_report import DriverReport
 from app.models.anpr import ANPREvent
 from app.models.toll import TollTransaction
 from app.models.toll_offline import OfflineTollEvent
-from app.models.psv import PSVOperator, PSVPermit
+from app.models.psv import PSVCorridor, PSVOperator, PSVPermit, PSVRouteAlert
 from app.models.accident import Accident, AccidentVehicle
 from app.models.payment import Payment
 from app.models.notification import Notification, NotificationPreference, NotificationRule

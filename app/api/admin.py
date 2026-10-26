@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -330,6 +330,7 @@ def list_settings(
 def update_setting(
     key: str,
     payload: dict,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("settings:manage")),
 ):
@@ -346,6 +347,20 @@ def update_setting(
             detail="Enable MFA on your own account first (Settings → Two-factor authentication) - "
                    "otherwise you would be locked out as soon as this takes effect.",
         )
+    if key == "security.admin_ip_allowlist":
+        from app.services.auth import client_ip
+
+        try:
+            cleaned = runtime_settings.validate(key, payload["value"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        # Refuse a list that would lock the person saving it out straight away.
+        if cleaned and not runtime_settings.ip_allowed(cleaned, client_ip(request)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Your own address ({client_ip(request)}) is not in this list. "
+                       "Add it first, otherwise you would be locked out as soon as this takes effect.",
+            )
     try:
         row = runtime_settings.set_value(db, key, payload["value"], current_user.id)
     except ValueError as exc:

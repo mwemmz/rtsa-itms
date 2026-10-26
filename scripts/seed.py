@@ -59,6 +59,12 @@ DEFAULT_RULES = [
         "body_template": "{incident_type} reported on {road}. {description} Suggested: {suggestion}",
     },
     {
+        "trigger_event": "psv_route_violation",
+        "channels": "in_app",
+        "title_template": "PSV off its permitted route",
+        "body_template": "Vehicle {registration} is {distance} m from its permitted route {route} (limit {limit} m).",
+    },
+    {
         "trigger_event": "psv_permit_expiring",
         "channels": "in_app,sms",
         "title_template": "PSV permit expiring",

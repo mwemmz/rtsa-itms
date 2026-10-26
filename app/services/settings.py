@@ -5,6 +5,7 @@ Defaults are declared here (type, bounds, description). Values saved in
 paths (login, notification scans) cost nothing extra.
 """
 
+import ipaddress
 import threading
 import time
 import uuid
@@ -38,6 +39,9 @@ DEFINITIONS: list[SettingDef] = [
                "Minimum password length", 8, 64),
     SettingDef("security.require_mfa_staff", str(env.REQUIRE_MFA_FOR_STAFF).lower(), "bool", "security",
                "Require staff accounts (officer, toll operator, admin) to enrol in MFA before using the app"),
+    SettingDef("security.admin_ip_allowlist", "", "str", "security",
+               "Only allow administrator accounts from these networks (comma-separated IPs or CIDR ranges, "
+               "e.g. 41.223.10.0/24, 196.1.2.3). Leave empty to allow any network"),
     SettingDef("security.captcha_enabled", "false", "bool", "security",
                "Require a solved CAPTCHA on login and registration"),
     SettingDef("security.require_email_verification", "false", "bool", "security",
@@ -62,6 +66,8 @@ DEFINITIONS: list[SettingDef] = [
                "Unverified reports one citizen can have live on the road feed at once", 1, 20),
     SettingDef("toll.compliance_target_ms", "500", "int", "toll",
                "Target latency for a toll-gate compliance decision", 50, 5000),
+    SettingDef("toll.due_grace_days", "7", "int", "toll",
+               "Days a free-flow (MLFF) toll can stay unpaid before it counts as an overdue toll due at the gate", 0, 365),
     SettingDef("reports.default_range_days", "90", "int", "reports",
                "Default look-back window for reports", 1, 3650),
 ]
@@ -91,6 +97,33 @@ def _stored(db: Session) -> dict[str, str]:
     return values
 
 
+def parse_networks(raw: str, strict: bool = False) -> list[str]:
+    """Split an allowlist into normalised CIDR strings. `strict` raises ValueError on a bad entry."""
+    out: list[str] = []
+    for part in str(raw).replace(";", ",").replace("\n", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(str(ipaddress.ip_network(part, strict=False)))
+        except ValueError:
+            if strict:
+                raise ValueError(f"'{part}' is not a valid IP address or CIDR range")
+    return out
+
+
+def ip_allowed(allowlist: str, ip: str) -> bool:
+    """True if `ip` is inside the allowlist. An empty allowlist allows everything."""
+    networks = parse_networks(allowlist)
+    if not networks:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in ipaddress.ip_network(n) for n in networks)
+
+
 def _coerce(defn: SettingDef, raw: str):
     if defn.type == "int":
         return int(raw)
@@ -118,6 +151,8 @@ def validate(key: str, raw_value) -> str:
     if defn is None:
         raise ValueError(f"Unknown setting: {key}")
     raw = ",".join(str(x) for x in raw_value) if isinstance(raw_value, list) else str(raw_value)
+    if key == "security.admin_ip_allowlist":
+        return ", ".join(parse_networks(raw, strict=True)) if raw.strip() else ""
     if defn.type == "bool":
         if raw.strip().lower() not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
             raise ValueError(f"{key} must be true or false")
