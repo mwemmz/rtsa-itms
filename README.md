@@ -346,6 +346,41 @@ git push -u origin main
 > created by `python -m scripts.seed`, which the blueprint runs automatically
 > before each deploy. Seeding is idempotent — it skips records that already exist.
 
+## Highway Code assistant (AI)
+
+A chat view ("Highway Code" in the menu) for citizens, officers and admins. It answers road-rule questions from the Zambian Highway Code and shows which rules it used.
+
+**How it works.** Retrieval first, generation second. The question is matched against the rules with BM25 (`app/services/highway_code.py`, no extra runtime dependencies). Only the top rules are given to the model, which must cite `[Rule N]`. Citations that were not retrieved are removed. If nothing matches well, the model is not called and the user is told so. With no API key, or if the provider fails, the app returns the matching rule text word for word.
+
+| Mode | Meaning |
+|---|---|
+| `ai` | Summary written by the model from the retrieved rules |
+| `extract` | Rule text shown as is (no key, or provider error) |
+| `no_match` | Nothing relevant found; model not called |
+| `unavailable` | Highway Code file not loaded on this server |
+
+**Load the Highway Code.** The text is not bundled. Download the official PDF from RTSA (<https://www.rtsa.org.zm/wp-content/uploads/2019/09/Zambian-Highway-Code.pdf>, Sixth Edition, issued under section 231 of the Road Traffic Act No. 11 of 2002), check its terms of use, then:
+
+```bash
+pip install -r requirements.txt
+python -m scripts.ingest_highway_code Zambian-Highway-Code.pdf --out data/highway_code.jsonl
+```
+
+The script prints the rule count, sections and any **missing rule numbers**. Check those against the PDF before relying on the output. Render's disk is wiped on each deploy, so either commit `data/highway_code.jsonl` or run the script in the build command.
+
+**Settings** (environment variables)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ASSISTANT_ENABLED` | `true` | Switch the feature off (API returns 503) |
+| `HIGHWAY_CODE_PATH` | `data/highway_code.jsonl` | Ingested rules file |
+| `ANTHROPIC_API_KEY` | empty | Enables AI summaries; leave empty for extract mode |
+| `ASSISTANT_MODEL` | `claude-haiku-5-5` | Model used for summaries |
+| `ASSISTANT_MIN_SCORE` | `2.0` | Minimum match score before the model is called |
+| `ASSISTANT_RATE_PER_5MIN` | `20` | Questions per user per 5 minutes |
+
+**Limits.** Questions up to 500 characters, 6 turns of history. Every answer carries a notice that it is guidance, not legal advice. Endpoints: `GET /api/assistant/status`, `POST /api/assistant/ask` (any signed-in user).
+
 ## Security notes
 
 - Passwords hashed with bcrypt and checked against a length + letters/numbers policy; JWTs are bound to a

@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     OSRM_API_URL: str = "https://router.project-osrm.org/route/v1/driving"
     OSRM_TIMEOUT: float = 6.0
 
+    # --- Highway Code assistant ---------------------------------------
+    # Rules index built by scripts/ingest_highway_code.py. Empty ANTHROPIC_API_KEY =
+    # the assistant returns the matching rules word for word instead of an AI summary.
+    ASSISTANT_ENABLED: bool = True
+    HIGHWAY_CODE_PATH: str = "data/highway_code.jsonl"
+    ANTHROPIC_API_KEY: str = ""
+    ASSISTANT_MODEL: str = "claude-haiku-5-5"
+    ASSISTANT_TIMEOUT: float = 20.0
+    ASSISTANT_MIN_SCORE: float = 2.0  # below this nothing in the Code matches; the model is not called
+    ASSISTANT_RATE_PER_5MIN: int = 20  # questions per user
+
     # --- Performance / scalability -----------------------------------
     # Set when running more than one app instance, so rate limits, single-use
     # tickets, live updates and metrics are shared (see app/core/shared.py).

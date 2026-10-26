@@ -31,7 +31,7 @@ from app.api import (
 )
 from app.api import integration, lookup, reports, system
 from app.api.health import router as health_router
-from app.api import driver_reports, incidents, portal, road_network, routing
+from app.api import assistant, driver_reports, incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
 from app.core import metrics
 from app.core.config import settings
@@ -105,6 +105,7 @@ app.include_router(lookup.router)
 app.include_router(integration.router)
 app.include_router(system.router)
 app.include_router(events.router)
+app.include_router(assistant.router)
 
 # Middleware runs bottom-up: gzip is innermost, the platform middleware
 # (HTTPS redirect, security headers, timing, metrics) is outermost.
