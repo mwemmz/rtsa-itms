@@ -186,7 +186,6 @@ var NAV = {
     { id: "violations", label: "Violations" },
     { id: "challans", label: "Challans" },
     { id: "alerts", label: "Road alerts" },
-    { id: "assistant", label: "Highway Code" },
     { id: "audits", label: "Audit log" },
     { id: "rules", label: "Notification rules" },
     { id: "planner", label: "Route planner" }
@@ -204,7 +203,6 @@ var NAV = {
     { id: "challans", label: "Challans" },
     { id: "toll", label: "Toll gates" },
     { id: "alerts", label: "Road alerts" },
-    { id: "assistant", label: "Highway Code" },
     { id: "planner", label: "Route planner" }
   ],
   citizen: [
@@ -214,7 +212,6 @@ var NAV = {
     { id: "fines", label: "Fines & payments" },
     { id: "licence", label: "My licence" },
     { id: "alerts", label: "Road alerts" },
-    { id: "assistant", label: "Highway Code" },
 
     { id: "planner", label: "Route planner" }
   ]
@@ -611,6 +608,8 @@ function logout() {
   closeLiveStream();
   resetLoginForm();
   USER = null;
+  ASSISTANT_HISTORY = [];
+  var cw = document.getElementById("cw"); if (cw) { cw.remove(); ASSISTANT_MOUNTED = false; }
   renderVerifyBanner();
   $("#shell").classList.add("hidden");
   $("#mfa-gate").classList.add("hidden");
@@ -631,6 +630,7 @@ async function bootstrapApp() {
   }
   $("#mfa-gate").classList.add("hidden");
   $("#shell").classList.remove("hidden");
+  mountAssistant();
   await loadRouter();
   openLiveStream();
 }
@@ -3388,22 +3388,31 @@ async function loadDriverReports() {
 
 /* ---------------- route planner (all roles) ---------------- */
 
-/* ---------------- Highway Code assistant ---------------- */
+/* ---------------- Highway Code assistant (floating chat) ---------------- */
 
 var ASSISTANT_HISTORY = [];
+var ASSISTANT_MOUNTED = false;
 
-VIEWS.assistant = async function () {
-  $("#content").innerHTML =
-    '<div class="card chat-card">' +
-      "<h3>Highway Code assistant</h3>" +
-      '<p class="small muted" id="chat-note">Ask a road-rules question. Answers come from the Zambian Highway Code and name the rules they use.</p>' +
+function mountAssistant() {
+  if (ASSISTANT_MOUNTED) return;
+  ASSISTANT_MOUNTED = true;
+  var wrap = document.createElement("div");
+  wrap.id = "cw";
+  wrap.innerHTML =
+    '<button type="button" class="cw-fab" id="cw-fab" aria-label="Open Highway Code assistant" aria-expanded="false">' +
+      '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+      '<span class="cw-fab-text">Ask the Highway Code</span></button>' +
+    '<section class="cw-panel hidden" id="cw-panel" role="dialog" aria-label="Highway Code assistant">' +
+      '<header class="cw-head"><div><b>Highway Code assistant</b><div class="small" id="chat-note">Ask a road-rules question. Answers name the rules used.</div></div>' +
+      '<button type="button" class="cw-close" id="cw-close" aria-label="Close">&times;</button></header>' +
       '<div class="chat-log" id="chat-log" aria-live="polite"></div>' +
       '<div class="chat-chips" id="chat-chips"></div>' +
       '<form class="chat-form" id="chat-form">' +
         '<input id="chat-input" maxlength="500" autocomplete="off" placeholder="e.g. Can I use my phone while driving?" aria-label="Your question">' +
         '<button class="btn gold" id="chat-send" type="submit">Ask</button>' +
       "</form>" +
-    "</div>";
+    "</section>";
+  $("#shell").appendChild(wrap);
   var log = $("#chat-log");
 
   function bubble(role, html) {
@@ -3420,13 +3429,12 @@ VIEWS.assistant = async function () {
     var html = '<div class="chat-text">' + esc(res.answer).replace(/\n/g, "<br>") + "</div>";
     if (shown.length) {
       html += '<details class="chat-src"><summary>' + (cited.length ? "Rules used" : "Matching rules") + " (" + shown.length + ")</summary>" +
-        shown.map(function (s) {
-          return '<div class="chat-rule"><b>Rule ' + esc(s.rule) + "</b>" + (s.section ? ' <span class="small muted">' + esc(s.section) + "</span>" : "") +
-            "<div>" + esc(s.text) + "</div></div>";
+        shown.map(function (x) {
+          return '<div class="chat-rule"><b>Rule ' + esc(x.rule) + "</b>" + (x.section ? ' <span class="small muted">' + esc(x.section) + "</span>" : "") +
+            "<div>" + esc(x.text) + "</div></div>";
         }).join("") + "</details>";
     }
-    html += '<div class="small muted chat-disc">' + esc(res.disclaimer) + "</div>";
-    return html;
+    return html + '<div class="small muted chat-disc">' + esc(res.disclaimer) + "</div>";
   }
   async function ask(q) {
     q = (q || "").trim();
@@ -3447,6 +3455,29 @@ VIEWS.assistant = async function () {
     $("#chat-input").focus();
   }
 
+  var opened = false;
+  async function setOpen(open) {
+    $("#cw-panel").classList.toggle("hidden", !open);
+    $("#cw-fab").setAttribute("aria-expanded", open ? "true" : "false");
+    $("#cw-fab").classList.toggle("hidden", open);
+    if (!open) return;
+    $("#chat-input").focus();
+    if (opened) return;
+    opened = true;
+    bubble("bot", "Hello. Ask me about road rules and I will answer from the Zambian Highway Code, with the rules I used.");
+    try {
+      var st = await api("/api/assistant/status");
+      if (!st.enabled) { $("#chat-note").textContent = "The assistant is switched off."; $("#chat-form").classList.add("hidden"); $("#chat-chips").classList.add("hidden"); }
+      else if (!st.loaded) { bubble("bot", "The Highway Code has not been loaded on this server yet. Ask an administrator to run the ingest script."); $("#chat-form").classList.add("hidden"); $("#chat-chips").classList.add("hidden"); }
+      else if (!st.ai) { $("#chat-note").textContent = "Plain mode: showing matching rules without an AI summary."; }
+    } catch (e) { /* the form still works; the server will explain any problem */ }
+  }
+
+  $("#cw-fab").addEventListener("click", function () { setOpen(true); });
+  $("#cw-close").addEventListener("click", function () { setOpen(false); $("#cw-fab").classList.remove("hidden"); $("#cw-fab").focus(); });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !$("#cw-panel").classList.contains("hidden")) { setOpen(false); $("#cw-fab").classList.remove("hidden"); }
+  });
   $("#chat-form").addEventListener("submit", function (ev) { ev.preventDefault(); ask($("#chat-input").value); });
   ["What must I do at a zebra crossing?", "Do passengers need seat belts?", "What are the rules at a level crossing?", "How should I overtake safely?"].forEach(function (q) {
     var b = document.createElement("button");
@@ -3454,15 +3485,7 @@ VIEWS.assistant = async function () {
     b.addEventListener("click", function () { ask(q); });
     $("#chat-chips").appendChild(b);
   });
-  ASSISTANT_HISTORY.length = 0;
-
-  try {
-    var st = await api("/api/assistant/status");
-    if (!st.enabled) { $("#chat-note").textContent = "The assistant is switched off."; $("#chat-form").classList.add("hidden"); }
-    else if (!st.loaded) { $("#chat-note").textContent = "The Highway Code has not been loaded on this server yet. Ask an administrator to run the ingest script."; $("#chat-form").classList.add("hidden"); $("#chat-chips").classList.add("hidden"); }
-    else if (!st.ai) { $("#chat-note").textContent += " (Plain mode: showing the matching rules without an AI summary.)"; }
-  } catch (e) { /* the form still works; the server will explain any problem */ }
-};
+}
 
 VIEWS.planner = async function () {
   $("#content").innerHTML =
