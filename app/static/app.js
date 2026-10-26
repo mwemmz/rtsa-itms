@@ -3399,11 +3399,11 @@ function mountAssistant() {
   var wrap = document.createElement("div");
   wrap.id = "cw";
   wrap.innerHTML =
-    '<button type="button" class="cw-fab" id="cw-fab" aria-label="Open Highway Code assistant" aria-expanded="false">' +
+    '<button type="button" class="cw-fab" id="cw-fab" aria-label="Open assistant" aria-expanded="false">' +
       '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
-      '<span class="cw-fab-text">Ask the Highway Code</span></button>' +
-    '<section class="cw-panel hidden" id="cw-panel" role="dialog" aria-label="Highway Code assistant">' +
-      '<header class="cw-head"><div><b>Highway Code assistant</b><div class="small" id="chat-note">Ask a road-rules question. Answers name the rules used.</div></div>' +
+      '<span class="cw-fab-text">Assistant</span></button>' +
+    '<section class="cw-panel hidden" id="cw-panel" role="dialog" aria-label="Assistant">' +
+      '<header class="cw-head"><div><b>Assistant</b><div class="small" id="chat-note">Ask a road-rules question. Answers name the rules used.</div></div>' +
       '<button type="button" class="cw-close" id="cw-close" aria-label="Close">&times;</button></header>' +
       '<div class="chat-log" id="chat-log" aria-live="polite"></div>' +
       '<div class="chat-chips" id="chat-chips"></div>' +
