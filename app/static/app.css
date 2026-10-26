@@ -249,23 +249,25 @@ a:hover { color: var(--gold-strong); }
     linear-gradient(160deg, #171d23 0%, var(--slate) 100%);
   overflow: hidden;
 }
-.login-brand::before {
-  content: "";
-  position: absolute;
-  right: -70px;
-  bottom: -70px;
-  width: 320px;
-  height: 320px;
-  background-image: url("/static/login-bg.png");
-  background-size: contain;
-  background-repeat: no-repeat;
-  opacity: 0.14;
-  pointer-events: none;
-}
+/* The crest is shown whole, as the brand mark (it used to be a cropped watermark
+   that ran under the text). */
 .login-brand-inner { position: relative; z-index: 1; max-width: 520px; }
 .login-brand .wordmark h1 { color: #fff; }
 .login-brand .brand-sub { color: var(--nav-ink); }
-.login-brand .mark { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
+.login-brand .mark {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  border-radius: 18px;
+  font-size: 0;
+  color: transparent;
+  background: #fff url("/static/login-bg.png") center / contain no-repeat;
+  background-origin: content-box;
+  background-clip: padding-box;
+  padding: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.login-brand .wordmark { gap: 16px; margin-bottom: 10px; }
 .login-brand .login-about { color: var(--nav-ink); font-size: 14.5px; line-height: 1.62; margin-bottom: 0; }
 .login-brand .login-about b { color: #fff; font-weight: 600; }
 
@@ -406,9 +408,7 @@ a:hover { color: var(--gold-strong); }
   .login-brand { padding: 30px 20px 24px; }
   /* Collapse the description so the form stays above the fold on a phone. */
   .login-brand .login-about { display: none; }
-  /* Smaller watermark on a short mobile brand panel so it doesn't overpower
-     the wordmark next to it. */
-  .login-brand::before { width: 180px; height: 180px; right: -40px; bottom: -40px; }
+  .login-brand .mark { width: 64px; height: 64px; border-radius: 14px; padding: 6px; }
   .login-split .login-card {
     height: auto;
     border-radius: 0;
