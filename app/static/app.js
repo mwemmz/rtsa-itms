@@ -1476,6 +1476,7 @@ function vehicleForm() {
       '<input name="color" placeholder="Colour (optional)">' +
       '<input name="engine_number" placeholder="Engine no. (optional)">' +
       '<input name="chassis_number" placeholder="Chassis no. (optional)">' +
+      '<input name="fastag_id" placeholder="FASTag ID (optional)">' +
       '</div><button class="btn gold sm" id="vehicle-save" type="submit">Register vehicle</button></form>'
   );
 }
@@ -1493,7 +1494,7 @@ async function loadVehicles() {
         var b = v.is_blacklisted
           ? '<span class="pill red">yes</span><div class="small muted">' + esc(v.blacklist_reason || "") + "</div>"
           : '<span class="pill gray">no</span>';
-        return "<tr><td class='mono'><b>" + esc(v.registration_number) + '</b></td><td>' + esc(v.owner_name) + '</td><td>' + esc(v.make) + " " + esc(v.model) + " (" + v.year + ')</td><td>' + statusPill(v.status) + "</td><td>" + b + "</td><td>" +
+        return "<tr><td class='mono'><b>" + esc(v.registration_number) + '</b></td><td>' + esc(v.owner_name) + '</td><td>' + esc(v.make) + " " + esc(v.model) + " (" + v.year + ')' + (v.fastag_id ? '<div class="small muted mono">Tag ' + esc(v.fastag_id) + "</div>" : "") + '</td><td>' + statusPill(v.status) + "</td><td>" + b + "</td><td>" +
           '<button class="btn ghost sm blacklist" data-id="' + esc(v.id) + '" data-blacklisted="' + v.is_blacklisted + '">' + (v.is_blacklisted ? "Unlist" : "Blacklist") + "</button>" +
           "</td></tr>";
       }).join("") + "</table></div>";
@@ -2618,7 +2619,9 @@ VIEWS.toll = async function () {
     '<div class="row">' +
       '<div class="card"><h3>Process toll gate event</h3>' +
         '<form id="toll-form">' +
-          '<div class="field"><label>Plate number</label><input name="plate_number" placeholder="e.g. BAK 123" required></div>' +
+          '<div class="field"><label>Plate number</label><input name="plate_number" placeholder="e.g. BAK 123"></div>' +
+          '<div class="field"><label>FASTag ID (use instead of, or with, the plate)</label><input name="tag_id" placeholder="e.g. TAG-000123"></div>' +
+          '<div class="field"><label>Lane type</label><select name="lane_mode"><option value="barrier">Barrier lane (vehicle stops)</option><option value="mlff">Free-flow lane (billed to owner)</option></select></div>' +
           '<div class="field"><label>Gate ID</label><input name="gate_id" placeholder="e.g. GATE-01" required></div>' +
           '<div class="field"><label>Toll amount (optional)</label><input name="toll_amount" type="number" placeholder="e.g. 30000"></div>' +
           '<button class="btn gold" type="submit">Process event</button> ' +
@@ -2634,7 +2637,9 @@ VIEWS.toll = async function () {
     var out = $("#toll-result");
     out.innerHTML = '<span class="muted">Checking compliance…</span>';
     try {
-      var r = await api("/api/toll/events", { method: "POST", body: JSON.stringify(formData(e.target)) });
+      var body = formData(e.target);
+      if (!body.plate_number && !body.tag_id) throw new Error("Enter a plate number or a FASTag ID");
+      var r = await api("/api/toll/events", { method: "POST", body: JSON.stringify(body) });
       out.innerHTML = '<div class="card" style="box-shadow:none;padding:10px;margin:0;">' +
         '<div><b>' + esc(r.plate_number) + "</b> → " + (r.compliance_result === "compliant" ? '<span class="pill green">COMPLIANT</span>' : '<span class="pill red">FLAGGED</span>') + "</div>" +
         '<div class="small muted" style="margin-top:6px;">' + (r.checks || []).map(function (c) {
@@ -2642,6 +2647,7 @@ VIEWS.toll = async function () {
         }).join("<br>") + "</div>" +
         (r.flagged_issues && r.flagged_issues.length ? '<div style="margin-top:6px;"><span class="pill amber">' + r.flagged_issues.join("; ") + "</span></div>" : "") +
         (r.challan_created ? '<div style="margin-top:6px;"><span class="pill red">e-challan auto-generated</span></div>' : "") +
+        '<div style="margin-top:6px;">' + (r.action === "proceed" ? '<span class="pill green">Proceed</span>' : r.action === "hold_at_barrier" ? '<span class="pill red">Hold at barrier</span>' : '<span class="pill amber">Dispatch enforcement ahead</span>') + "</div>" +
         "</div>";
       e.target.reset();
       loadTollEvents();
@@ -2684,10 +2690,19 @@ async function loadTollEvents() {
   try {
     var items = await api("/api/toll/transactions");
     list.innerHTML = items.length
-      ? '<div class="table-wrap"><table><tr><th>Plate</th><th>Gate</th><th>Result</th><th>When</th></tr>' + items.map(function (t) {
-          return "<tr><td class='mono'><b>" + esc(t.plate_number) + "</b></td><td>" + esc(t.gate_id) + "</td><td>" + (t.compliance_result === "compliant" ? '<span class="pill green">compliant</span>' : '<span class="pill red">flagged</span>') + '</td><td class="small">' + dt(t.timestamp) + "</td></tr>";
+      ? '<div class="table-wrap"><table><tr><th>Plate</th><th>Gate</th><th>Lane</th><th>Result</th><th>Toll</th><th>When</th></tr>' + items.map(function (t) {
+          var canSettle = USER && (USER.role === "toll_operator" || USER.role === "admin");
+          var toll = t.lane_mode === "mlff" ? (t.is_paid ? '<span class="pill green">paid</span>' : '<span class="pill amber">due</span>' + (canSettle ? ' <button class="btn gold sm toll-settle" data-id="' + esc(t.id) + '">Mark paid</button>' : "")) : '<span class="muted small">at gate</span>';
+          return "<tr><td class='mono'><b>" + esc(t.plate_number) + "</b></td><td>" + esc(t.gate_id) + "</td><td class='small'>" + (t.lane_mode === "mlff" ? "Free-flow" : "Barrier") + (t.identification_method === "fastag" ? " · tag" : "") + "</td><td>" + (t.compliance_result === "compliant" ? '<span class="pill green">compliant</span>' : '<span class="pill red">flagged</span>') + '</td><td>' + toll + '</td><td class="small">' + dt(t.timestamp) + "</td></tr>";
         }).join("") + "</table></div>"
       : '<div class="empty">No toll events yet.</div>';
+    $$("#toll-list .toll-settle").forEach(function (b) {
+      b.addEventListener("click", function () {
+        api("/api/toll/transactions/" + b.dataset.id + "/settle", { method: "POST" })
+          .then(function () { toast("Toll marked as paid", "ok"); loadTollEvents(); })
+          .catch(function (e) { toast(e.message, "err"); });
+      });
+    });
   } catch (e) {
     list.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>";
   }
