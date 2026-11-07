@@ -51,6 +51,7 @@ _COMPOUNDS = (
     (re.compile(r"\bzebra crossings?\b"), "pedestrian crossing"),
     (re.compile(r"\bround-?abouts?\b"), "roundabout"),
     (re.compile(r"\byield\b"), "give way"),
+    (re.compile(r"\b(?:car|vehicle) in front\b|\bbehind the (?:car|vehicle)\b|\bstay(?:ing)? behind\b|\btailgat\w*|\bfollowing distance\b"), "gap distance vehicle in front"),
 )
 _SYNONYMS = {
     "highway": "road", "motorway": "road", "expressway": "road",
@@ -98,6 +99,16 @@ _RULE_START = re.compile(r"^\s*(\d{1,3})\.\s+(\S.*)$")
 _SECTION = re.compile(r"^\s*(SECTION\s+\d+\s*[:\-–.]?\s*.*)$", re.IGNORECASE)
 
 
+_LIGATURES = str.maketrans({"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl"})
+_PAGE_FOOTER = re.compile(r"(?:\s+[A-Z][A-Z ,&()/-]{7,})?\s*ZAMBIAN HIGHWAY CODE\s*\d*")
+
+
+def _tidy(text: str) -> str:
+    """Undo PDF quirks: ligature glyphs (traffic written as one 'ffi' character) and page footers."""
+    text = _PAGE_FOOTER.sub(" ", text.translate(_LIGATURES))
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def parse_rules(text: str) -> list[dict]:
     """Split Highway Code text into ``{"rule", "section", "text"}`` dicts.
 
@@ -132,7 +143,7 @@ def parse_rules(text: str) -> list[dict]:
     if current:
         rules.append(current)
     for r in rules:
-        r["text"] = re.sub(r"\s+", " ", r["text"]).strip()[:MAX_RULE_CHARS]
+        r["text"] = _tidy(r["text"])[:MAX_RULE_CHARS]
     return rules
 
 
