@@ -18,6 +18,11 @@ class InspectionUpdate(BaseModel):
     inspected_by: str | None = None
     checklist: dict[str, str] | None = None
     readings: dict[str, float] | None = None
+    obd_codes: list[str] | None = None
+
+
+class ObdDecodeIn(BaseModel):
+    codes: list[str]
 
 
 class InspectionResponse(BaseModel):
@@ -30,14 +35,23 @@ class InspectionResponse(BaseModel):
     inspected_by: str | None
     checklist: dict[str, str] = {}
     readings: dict[str, float] = {}
+    obd_codes: list[str] = []
     created_at: datetime
 
-    @field_validator("checklist", "readings", mode="before")
+    @field_validator("checklist", "readings", "obd_codes", mode="before")
     @classmethod
-    def _parse(cls, v):
-        from app.services.inspection_rules import load
+    def _parse(cls, v, info):
+        import json
 
-        return load(v) if isinstance(v, str) or v is None else v
+        empty = [] if info.field_name == "obd_codes" else {}
+        if v is None:
+            return empty
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return empty
+        return v
 
     model_config = {"from_attributes": True}
 

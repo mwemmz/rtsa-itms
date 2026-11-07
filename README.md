@@ -478,3 +478,4 @@ The demo data includes an appealable fine, a citizen with 9 of 12 points, and a 
 * **Insights** (officer and admin): vehicles to look at first (a visible scoring rule), accident hotspots, what expires in 30/60/90 days, offence locations.
 * **Themes**: Navy (default, matches the presentation), Asphalt, Forest, Concrete (light). Chosen from the header; stored in the browser.
 * The administrator's menu now includes every officer module.
+* **OBD-II**: an officer can type or paste fault codes into the inspection form, or read them from a Bluetooth LE ELM327 adapter in Chrome (experimental, untested without hardware). Codes are explained, and misfire, catalytic-converter, ABS and airbag codes fail the test; others are advisory. The code table is a small illustrative set, not the full SAE list.

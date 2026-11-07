@@ -638,9 +638,13 @@ def make_extras(db, vehicles, drivers, officers, citizens):
             ins.checklist = rules.dump({k: "pass" for k in items})
             ins.readings = rules.dump({"brake_efficiency_pct": rng.randint(58, 82), "tyre_tread_mm": round(rng.uniform(2.2, 7.5), 1),
                                        "emission_co_pct": round(rng.uniform(0.3, 3.2), 1)})
+            if rng.random() < 0.25:
+                ins.obd_codes = rules.dump([rng.choice(["P0128", "P0442", "P0171"])])  # advisory only
         elif ins.result == InspectionResult.FAILED:
             bad = rng.choice(["brakes", "tyres", "lights", "exhaust"])
             ins.checklist = rules.dump({k: ("fail" if k == bad else "pass") for k in items})
+            if bad == "exhaust":
+                ins.obd_codes = rules.dump(["P0420"])
             ins.readings = rules.dump({"brake_efficiency_pct": rng.randint(30, 49) if bad == "brakes" else rng.randint(55, 70),
                                        "tyre_tread_mm": round(rng.uniform(0.6, 1.4), 1) if bad == "tyres" else round(rng.uniform(2.5, 6), 1)})
     # 3. fees paid through the services screen: booked tests, permit renewals, replacement cards

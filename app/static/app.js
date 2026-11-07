@@ -2674,7 +2674,7 @@ VIEWS.inspections = async function () {
     e.preventDefault();
     var id = e.target.dataset.inspectionId;
     if (!id) return;
-    var data = { findings: e.target.elements.findings.value || undefined, inspected_by: e.target.elements.inspected_by.value || undefined, checklist: {}, readings: {} };
+    var data = { findings: e.target.elements.findings.value || undefined, inspected_by: e.target.elements.inspected_by.value || undefined, checklist: {}, readings: {}, obd_codes: obdCodes() };
     $$("#insp-checks select[data-item]").forEach(function (sel) { data.checklist[sel.dataset.item] = sel.value; });
     $$("#insp-checks input[data-reading]").forEach(function (inp) { if (inp.value !== "") data.readings[inp.dataset.reading] = parseFloat(inp.value); });
     try {
@@ -2697,8 +2697,74 @@ async function renderChecklist() {
       '<div class="grid cards" style="margin-top:12px">' + INSPECTION_SPEC.readings.map(function (r) {
         var lim = (r.min != null ? "min " + r.min : "") + (r.max != null ? "max " + r.max : "");
         return '<div class="field"><label>' + esc(r.label) + " (" + esc(r.unit) + ") <span class=\"muted\">" + esc(lim) + '</span></label><input type="number" step="0.1" data-reading="' + esc(r.id) + '"></div>';
-      }).join("") + "</div>";
+      }).join("") + "</div>" +
+      '<div class="field" style="margin-top:12px"><label>OBD-II fault codes <span class="muted">(separate with spaces or commas)</span></label>' +
+        '<textarea id="insp-obd" rows="2" placeholder="e.g. P0420 P0301"></textarea>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn ghost sm" id="insp-obd-decode">Explain codes</button>' +
+        '<button type="button" class="btn ghost sm" id="insp-obd-read">Read from adapter</button></div>' +
+        '<div class="small muted" id="insp-obd-note" style="margin-top:6px">A misfire, catalytic-converter, ABS or airbag code fails the test. The adapter button needs Chrome and a Bluetooth LE ELM327 adapter in the vehicle. It is experimental.</div>' +
+        '<div id="insp-obd-out"></div></div>';
+    $("#insp-obd-decode").addEventListener("click", decodeObdBox);
+    $("#insp-obd-read").addEventListener("click", readObdAdapter);
   } catch (e) { box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+}
+
+function obdCodes() { return ($("#insp-obd").value || "").split(/[\s,;]+/).filter(Boolean); }
+
+async function decodeObdBox() {
+  var out = $("#insp-obd-out");
+  var codes = obdCodes();
+  if (!codes.length) { out.innerHTML = ""; return; }
+  try {
+    var d = await api("/api/inspections/obd/decode", { method: "POST", body: JSON.stringify({ codes: codes }) });
+    out.innerHTML = tbl(["Code", "System", "Meaning", "Effect"], d.map(function (x) {
+      return ['<span class="mono">' + esc(x.code) + "</span>", esc(x.system), esc(x.meaning), pill(x.blocking ? "Fails the test" : "Advisory", x.blocking ? "red" : "amber")];
+    }));
+  } catch (e) { out.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+}
+
+// Turn the reply to OBD-II mode 03 ("43 02 03 01 04 20 ...") into codes such as P0301 and P0420.
+function parseObdMode03(text) {
+  var hex = (text || "").replace(/[^0-9A-Fa-f]/g, " ").trim().split(/\s+/).filter(function (h) { return h.length === 2; });
+  var codes = [];
+  for (var i = 0; i < hex.length; i++) {
+    if (hex[i].toUpperCase() === "43") {
+      for (var j = i + 2; j + 1 < hex.length; j += 2) {
+        var a = parseInt(hex[j], 16), b = parseInt(hex[j + 1], 16);
+        if (a === 0 && b === 0) continue;
+        if (hex[j].toUpperCase() === "43") break;
+        codes.push("PCBU".charAt(a >> 6) + ((a >> 4) & 3) + (a & 15).toString(16).toUpperCase() + hex[j + 1].toUpperCase());
+      }
+      break;
+    }
+  }
+  return codes;
+}
+
+async function readObdAdapter() {
+  var note = $("#insp-obd-note");
+  if (!navigator.bluetooth) { note.textContent = "This browser cannot talk to Bluetooth. Use Chrome on Android or desktop, or type the codes."; return; }
+  try {
+    note.textContent = "Choose the adapter in the pop-up…";
+    var dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xFFF0, 0xFFE0, "0000fff0-0000-1000-8000-00805f9b34fb"] });
+    var server = await dev.gatt.connect(), chars = [], services = await server.getPrimaryServices();
+    for (var i = 0; i < services.length; i++) chars = chars.concat(await services[i].getCharacteristics());
+    var writer = chars.filter(function (c) { return c.properties.write || c.properties.writeWithoutResponse; })[0];
+    var reader = chars.filter(function (c) { return c.properties.notify; })[0];
+    if (!writer || !reader) throw new Error("This adapter does not look like an ELM327 over Bluetooth LE.");
+    var buf = "", enc = new TextEncoder(), dec = new TextDecoder();
+    await reader.startNotifications();
+    reader.addEventListener("characteristicvaluechanged", function (e) { buf += dec.decode(e.target.value); });
+    async function ask(cmd, wait) { buf = ""; await writer.writeValue(enc.encode(cmd + "\r")); await new Promise(function (r) { setTimeout(r, wait || 900); }); return buf; }
+    note.textContent = "Connected. Reading stored fault codes…";
+    await ask("ATZ", 1500); await ask("ATE0"); await ask("ATSP0");
+    var reply = await ask("03", 2500);
+    var codes = parseObdMode03(reply);
+    $("#insp-obd").value = codes.join(" ");
+    note.textContent = codes.length ? "Read " + codes.length + " fault code(s) from the vehicle." : "No stored fault codes. (Raw reply: " + reply.replace(/\s+/g, " ").trim().slice(0, 60) + ")";
+    try { dev.gatt.disconnect(); } catch (e2) { /* already gone */ }
+    decodeObdBox();
+  } catch (e) { note.textContent = "Could not read the adapter: " + e.message; }
 }
 
 async function loadInspectionsForVehicle(vehicleId) {

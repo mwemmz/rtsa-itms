@@ -15,6 +15,7 @@ from app.schemas.inspection import (
     InspectionCreate,
     InspectionResponse,
     InspectionUpdate,
+    ObdDecodeIn,
 )
 from app.services.audit import log_action
 
@@ -45,6 +46,17 @@ def schedule_inspection(
     db.commit()
     db.refresh(inspection)
     return inspection
+
+
+@router.post("/obd/decode")
+def decode_obd(payload: ObdDecodeIn, current_user: User = Depends(require_role(*FIELD_STAFF))):
+    """Explain fault codes read from a vehicle's OBD-II port, and say which ones fail a roadworthiness test."""
+    from app.services import inspection_rules
+
+    try:
+        return inspection_rules.decode_dtcs(payload.codes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/checklist-spec")
@@ -79,7 +91,7 @@ def update_inspection_result(
 
     data = payload.model_dump(exclude_unset=True)
     try:
-        suggested, reasons = rules.evaluate(payload.checklist, payload.readings)
+        suggested, reasons = rules.evaluate(payload.checklist, payload.readings, payload.obd_codes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = payload.result
@@ -94,6 +106,8 @@ def update_inspection_result(
         if result == InspectionResult.FAILED and not data.get("findings") and reasons:
             data["findings"] = "; ".join(reasons)
     data["result"] = result
+    if payload.obd_codes is not None:
+        data["obd_codes"] = rules.dump([d["code"] for d in rules.decode_dtcs(payload.obd_codes)])
     for key in ("checklist", "readings"):
         if key in data:
             data[key] = rules.dump(data[key])

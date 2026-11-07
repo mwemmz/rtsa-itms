@@ -33,6 +33,7 @@ class Inspection(Base):
     inspected_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     checklist: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {item: pass|fail|na}
     readings: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {brake_efficiency_pct: 62, ...}
+    obd_codes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of fault codes read from the OBD-II port
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

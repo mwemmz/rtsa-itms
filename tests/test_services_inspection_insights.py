@@ -170,3 +170,23 @@ def test_insights_are_for_staff_only_and_explain_scores():
     assert "risk_rules" in d and set(d["expiry_pipeline"]) == {"Insurance", "Fitness certificates", "Driving licences", "PSV permits"}
     for r in d["risky_vehicles"]:
         assert r["why"]
+
+
+def test_obd_fault_codes_are_decoded_and_blocking_codes_fail_the_test():
+    officer, _, _ = _login("officer")
+    _, uid, _ = _login("citizen")
+    vid = _vehicle(officer, uid)
+    items = [c["id"] for c in client.get("/api/inspections/checklist-spec", headers=officer).json()["checklist"]]
+    dec = client.post("/api/inspections/obd/decode", headers=officer, json={"codes": ["p0420", "P0128", "P0420"]}).json()
+    assert [d["code"] for d in dec] == ["P0420", "P0128"]
+    assert dec[0]["blocking"] is True and dec[1]["blocking"] is False and "Catalytic" in dec[0]["meaning"]
+    assert client.post("/api/inspections/obd/decode", headers=officer, json={"codes": ["XYZ"]}).status_code == 400
+    good = {k: "pass" for k in items}
+    iid = _scheduled(officer, vid)
+    # a misfire code fails an otherwise clean vehicle
+    bad = client.patch(f"/api/inspections/{iid}", headers=officer, json={"checklist": good, "obd_codes": ["P0301"]}).json()
+    assert bad["result"] == "failed" and "P0301" in bad["findings"] and bad["obd_codes"] == ["P0301"]
+    # an advisory code alone does not
+    iid2 = _scheduled(officer, vid)
+    ok = client.patch(f"/api/inspections/{iid2}", headers=officer, json={"checklist": good, "obd_codes": ["P0128"]}).json()
+    assert ok["result"] == "passed"
