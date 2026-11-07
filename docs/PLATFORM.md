@@ -15,7 +15,7 @@ consume most of this through a few stable interfaces, listed first.
 | Read a business threshold | `from app.services import settings; settings.get(db, "enforcement.challan_due_days")` | Admin-editable (Settings & access). `enforcement.*` and `toll.*` keys are declared but **not yet consumed by Developer 1's code** – wire them in when convenient. |
 | Current user | `Depends(get_current_user)` | Now also validates the server-side session (revocation, idle timeout, blocked device). |
 
-Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
+Events currently wired: `payment_receipt`, `payment_failed`,
 `new_device_login`, `licence_expiring`, `insurance_expiring`, `fitness_expiring`,
 `psv_permit_expiring`, plus Developer 1's `challan_created`, `toll_flagged`,
 `road_alert`, `licence_renewed`.
@@ -113,8 +113,7 @@ Real gateway integration = implement the charge call in `create_payment` and poi
 `POST /api/payments/webhook/{gateway}` (HMAC-SHA256 over the raw body in `X-Signature`, secret derived from `SECRET_KEY`).
 
 * Idempotency: `Idempotency-Key` header – a retry returns the original payment (HTTP 200) instead of charging again.
-* Ledger: `payment_events` is append-only (initiated → completed / failed → refunded → reconciled).
-* Refunds: full or partial; a fully refunded fine reopens the challan.
+* Ledger: `payment_events` is append-only (initiated → completed / failed → reconciled).
 * Reconciliation: `POST /api/payments/reconciliation/run` with the gateway's settlement rows; reports matched, amount
   mismatches, rows missing from our ledger and payments missing from the statement.
 * Receipts: JSON and PDF (`/api/payments/{id}/receipt[.pdf]`).

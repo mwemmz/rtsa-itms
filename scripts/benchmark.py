@@ -97,7 +97,7 @@ def seed(engine, toll_rows: int, vehicles: int, violations: int, payments: int) 
             id=uuid.uuid4(), reference=f"PAY-B{n:07d}", payment_type=rng.choice(list(PaymentType)),
             amount=rng.choice([2000, 30000, 60000]), currency="ZMW",
             status=rng.choices(list(PaymentStatus), weights=[5, 85, 7, 3])[0], gateway="sandbox",
-            paid_by=rng.choice(citizen_ids), paid_at=ts, created_at=ts, refunded_amount=0,
+            paid_by=rng.choice(citizen_ids), paid_at=ts, created_at=ts,
         ))
 
     counts = {"users": len(users), "vehicles": len(vehicle_rows), "violations": len(violation_rows),

@@ -15,11 +15,12 @@ from app.api.portal import LICENCE_RENEWAL_FEE, _ensure_driver_registered
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.insurance import Insurance
+from app.models.licence import LicenceApplication, LicenceApplicationStatus
 from app.models.inspection import FitnessCertificate, Inspection, InspectionResult
 from app.models.payment import PaymentStatus, PaymentType
 from app.models.psv import PSVPermit, PSVPermitStatus
 from app.models.user import User
-from app.models.vehicle import Vehicle
+from app.models.vehicle import Vehicle, VehicleStatus
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.money import zmw
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/services", tags=["Services"])
 
 CENTRES = ["Lusaka Main VID Centre", "Kitwe VID Centre", "Ndola VID Centre", "Livingstone VID Centre", "Kabwe VID Centre"]
 FITNESS_RENEW_WINDOW_DAYS = 60
+REGISTRATION_RENEW_WINDOW_DAYS = 60
 
 SERVICES = [
     {"id": "fitness_test", "name": "Book a fitness test", "agency": "RTSA", "needs_vehicle": True,
@@ -41,6 +43,12 @@ SERVICES = [
     {"id": "licence_renewal", "name": "Renew your driving licence", "agency": "RTSA", "needs_vehicle": False,
      "fee": LICENCE_RENEWAL_FEE, "link": "licence",
      "what": "Renewal opens 90 days before expiry. Done on the My licence page."},
+    {"id": "vehicle_registration", "name": "Renew vehicle registration", "agency": "RTSA", "needs_vehicle": True,
+     "fee_key": "fees.vehicle_registration_renewal",
+     "what": "Pay the annual registration fee for a vehicle. Opens 60 days before it runs out and cannot be paid for a stolen vehicle."},
+    {"id": "licence_application", "name": "Pay licence application fee", "agency": "RTSA", "needs_application": True,
+     "fee_key": "fees.licence_application",
+     "what": "Pay the application and test fee for a driving licence you applied for. Tests are scheduled once it is paid."},
     {"id": "duplicate_licence", "name": "Replace a lost licence card", "agency": "RTSA", "needs_vehicle": False,
      "fee_key": "fees.duplicate_licence",
      "what": "Request a replacement card. Collect it at the RTSA office you choose."},
@@ -54,6 +62,7 @@ NOT_HERE = [
 class PayIn(BaseModel):
     service: str
     vehicle_id: str | None = None
+    application_id: str | None = None
     inspection_centre: str | None = None
     preferred_date: datetime | None = None
 
@@ -64,7 +73,11 @@ def _fee(db: Session, svc: dict) -> int:
 
 @router.get("/catalogue")
 def catalogue(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    apps = (db.query(LicenceApplication)
+            .filter(LicenceApplication.applicant_id == current_user.id, LicenceApplication.fee_paid_at.is_(None),
+                    LicenceApplication.status.notin_([LicenceApplicationStatus.ISSUED, LicenceApplicationStatus.REJECTED])).all())
     return {
+        "unpaid_applications": [{"id": str(a.id), "label": f"{a.first_name} {a.last_name} · class {a.requested_class.value}"} for a in apps],
         "services": [
             {k: v for k, v in s.items() if k not in ("fee_key",)} | {"fee": _fee(db, s), "fee_label": zmw(_fee(db, s))}
             for s in SERVICES
@@ -149,6 +162,44 @@ def pay_for_service(payload: PayIn, db: Session = Depends(get_db), current_user:
         permit.status = PSVPermitStatus.ACTIVE
         outcome = {"message": f"Permit {permit.permit_number} renewed until {permit.expiry_date:%d %b %Y}"}
         subject = permit.permit_number
+
+    elif svc["id"] == "vehicle_registration":
+        vehicle = _owned_vehicle(db, current_user, payload.vehicle_id)
+        if vehicle.status == VehicleStatus.STOLEN or vehicle.is_blacklisted:
+            raise HTTPException(status_code=409, detail="Registration cannot be renewed while the vehicle is flagged stolen or blacklisted. Contact RTSA.")
+        current = vehicle.registration_expiry or (vehicle.registration_date.replace(tzinfo=None) + timedelta(days=365))
+        current = current.replace(tzinfo=None)
+        if current - now > timedelta(days=REGISTRATION_RENEW_WINDOW_DAYS):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{vehicle.registration_number} is registered until {current:%d %b %Y}. Renew within {REGISTRATION_RENEW_WINDOW_DAYS} days of that date.",
+            )
+        payment, _ = create_payment(db, current_user, PaymentType.FEE, vehicle.id, fee,
+                                    description=f"Vehicle registration renewal {vehicle.registration_number}")
+        if payment.status != PaymentStatus.COMPLETED:
+            raise HTTPException(status_code=402, detail="Payment did not complete")
+        vehicle.registration_expiry = max(current, now) + timedelta(days=365)
+        outcome = {"message": f"{vehicle.registration_number} registered until {vehicle.registration_expiry:%d %b %Y}"}
+        subject = vehicle.registration_number
+
+    elif svc["id"] == "licence_application":
+        if not payload.application_id:
+            raise HTTPException(status_code=400, detail="Choose an application")
+        app_row = db.query(LicenceApplication).filter(
+            LicenceApplication.id == payload.application_id, LicenceApplication.applicant_id == current_user.id).first()
+        if app_row is None:
+            raise HTTPException(status_code=404, detail="Application not found")
+        if app_row.fee_paid_at is not None:
+            raise HTTPException(status_code=409, detail="The fee for this application is already paid")
+        if app_row.status in (LicenceApplicationStatus.ISSUED, LicenceApplicationStatus.REJECTED):
+            raise HTTPException(status_code=409, detail=f"This application is already {app_row.status.value}")
+        payment, _ = create_payment(db, current_user, PaymentType.FEE, app_row.id, fee,
+                                    description=f"Licence application fee {app_row.first_name} {app_row.last_name}")
+        if payment.status != PaymentStatus.COMPLETED:
+            raise HTTPException(status_code=402, detail="Payment did not complete")
+        app_row.fee_paid_at = now
+        outcome = {"message": "Application fee paid. The testing centre will schedule your theory test"}
+        subject = f"{app_row.first_name} {app_row.last_name}"
 
     else:  # duplicate_licence
         driver = _ensure_driver_registered(db, current_user)

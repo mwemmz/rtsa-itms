@@ -245,7 +245,7 @@ ready for a Leaflet/OpenLayers map), plus a live board at
 | `toll_operator` | Post toll events; view reports                                 |
 | `admin`         | Everything, including user management, settings, integrations, ops |
 
-Roles map to 13 fine-grained permissions (`reports:export`, `payments:refund`, `settings:manage`, ...)
+Roles map to 13 fine-grained permissions (`reports:export`, `settings:manage`, ...)
 that an admin can re-assign per role at runtime. Public registration only ever creates citizens;
 staff accounts are created by an admin.
 
@@ -263,7 +263,7 @@ backup/restore and failure playbook: **[docs/DISASTER_RECOVERY.md](docs/DISASTER
 | Metrics, backups, capacity | `/api/system` |
 | Sessions, devices, MFA, password | `/api/auth` |
 | Users, permissions, settings, audit, login history | `/api/admin` |
-| Receipts, refunds, reconciliation, webhooks | `/api/payments` |
+| Receipts, reconciliation, webhooks | `/api/payments` |
 | Citizen: vehicles, fines, applications, profile | `/api/citizen` |
 | Probes | `/health/live`, `/health/ready` |
 
@@ -471,7 +471,7 @@ The demo data includes an appealable fine, a citizen with 9 of 12 points, and a 
 
 ## Services, insights, inspections and themes
 
-* **Pay for services** (citizen): book a fitness test, renew a PSV route permit, replace a lost licence card; licence renewal links to My licence. Fees live under Settings, `fees.*`, and are placeholders until RTSA confirms its schedule. Road tax is shown as "paid to ZRA": it is not an RTSA charge. Government payments are not refundable, so there is no refund action.
+* **Pay for services** (citizen): book a fitness test, renew a PSV route permit, renew vehicle registration (opens 60 days before expiry, refused for stolen/blacklisted vehicles), pay the driving-licence application fee, replace a lost licence card; licence renewal links to My licence. Fees live under Settings, `fees.*`, and are placeholders until RTSA confirms its schedule. Road tax is shown as "paid to ZRA": it is not an RTSA charge. Government payments are not refundable, so there is no refund action.
 * **PSV permit renewal** needs an active `psv_passenger` insurance policy on the vehicle.
 * **Insurance** policies carry a type (third-party, fire and theft, comprehensive, PSV passenger liability, goods-in-transit, COMESA Yellow Card) and an optional premium. Types and what they cover are in `app/services/insurance_types.py`.
 * **Inspection** is a checklist plus instrument readings (`app/services/inspection_rules.py`). The checks decide pass or fail; an officer cannot pass a vehicle whose checks fail. A passed test issues a certificate with a public check at `/api/verify/fitness/{number}` and a QR code (`.../qr.svg`). The limits are illustrative.

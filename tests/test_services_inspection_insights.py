@@ -209,3 +209,45 @@ def test_bi_groups_offences_by_road_region_and_season():
     assert all(0 <= x["value"] <= x["max"] and x["zone"] in ("green", "amber", "red") and x["zones"] for x in j["dials"])
     assert [s["name"][:4] for s in j["seasons"]] == ["Rain", "Cold", "Hot "]
     assert len(j["lights"]) == 6 and all("on" in l for l in j["lights"])
+
+
+def test_registration_renewal_window_and_licence_application_fee():
+    citizen, uid, _ = _login("citizen")
+    officer, _, _ = _login("officer")
+    vid = _vehicle(officer, uid)
+
+    # Just registered: not due for renewal yet.
+    r = client.post("/api/services/pay", headers=citizen, json={"service": "vehicle_registration", "vehicle_id": vid})
+    assert r.status_code == 409 and "Renew within" in r.json()["detail"]
+
+    # Move the expiry inside the 60-day window, then renew.
+    from app.models.vehicle import Vehicle
+    db = SessionLocal()
+    try:
+        row = db.get(Vehicle, vid)
+        row.registration_expiry = datetime.utcnow() + timedelta(days=10)
+        db.commit()
+    finally:
+        db.close()
+    r = client.post("/api/services/pay", headers=citizen, json={"service": "vehicle_registration", "vehicle_id": vid})
+    assert r.status_code == 200, r.text
+    assert r.json()["receipt_number"]
+    again = client.post("/api/services/pay", headers=citizen, json={"service": "vehicle_registration", "vehicle_id": vid})
+    assert again.status_code == 409
+
+    # Someone else's vehicle is invisible.
+    other, _, _ = _login("citizen")
+    assert client.post("/api/services/pay", headers=other, json={"service": "vehicle_registration", "vehicle_id": vid}).status_code == 404
+
+    # Licence application fee.
+    app_r = client.post("/api/licence-applications/", headers=citizen, json={
+        "first_name": "Test", "last_name": "Applicant", "id_number": "123456/78/1",
+        "date_of_birth": "1995-01-01T00:00:00", "requested_class": "B"})
+    assert app_r.status_code == 201, app_r.text
+    aid = app_r.json()["id"]
+    cat = client.get("/api/services/catalogue", headers=citizen).json()
+    assert any(a["id"] == aid for a in cat["unpaid_applications"])
+    ok = client.post("/api/services/pay", headers=citizen, json={"service": "licence_application", "application_id": aid})
+    assert ok.status_code == 200, ok.text
+    assert client.post("/api/services/pay", headers=citizen, json={"service": "licence_application", "application_id": aid}).status_code == 409
+    assert client.post("/api/services/pay", headers=other, json={"service": "licence_application", "application_id": aid}).status_code == 404

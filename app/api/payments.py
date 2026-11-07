@@ -135,7 +135,7 @@ def payment_events(
 
 
 def _receipt(db: Session, payment: Payment) -> dict:
-    if payment.status not in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED) or not payment.receipt_number:
+    if payment.status not in (PaymentStatus.COMPLETED,) or not payment.receipt_number:
         raise HTTPException(status_code=409, detail="No receipt: payment is not completed")
     payer = db.get(User, payment.paid_by) if payment.paid_by else None
     return {
@@ -144,7 +144,6 @@ def _receipt(db: Session, payment: Payment) -> dict:
         "payment_type": payment.payment_type.value,
         "description": payment.description,
         "amount": payment.amount,
-        "refunded_amount": payment.refunded_amount,
         "currency": payment.currency,
         "gateway": payment.gateway,
         "gateway_reference": payment.gateway_reference,
@@ -203,7 +202,10 @@ async def gateway_webhook(
 
 def _run_out(run: ReconciliationRun) -> ReconciliationResponse:
     out = ReconciliationResponse.model_validate(run)
-    out.details = json.loads(run.report) if run.report else None
+    try:
+        out.details = json.loads(run.report) if run.report else None
+    except ValueError:  # a report that is not JSON must not take the whole list down
+        out.details = {"note": run.report}
     return out
 
 

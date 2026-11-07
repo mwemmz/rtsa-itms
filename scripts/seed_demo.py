@@ -610,6 +610,17 @@ def make_extras(db, vehicles, drivers, officers, citizens):
 
     vids = {v.id: v for v in vehicles}
     permit_vehicles = {p.vehicle_id for p in db.query(PSVPermit).filter(PSVPermit.vehicle_id.in_(list(vids))).all()}
+    # registration: most vehicles are paid up for months, a few fall due inside the renewal window
+    for i, v in enumerate(vehicles):
+        v.registration_expiry = datetime.utcnow() + timedelta(days=(rng.randint(10, 55) if i % 5 == 0 else rng.randint(90, 330)))
+    # licence applications: leave the fee unpaid on in-progress ones so "Pay licence application fee" has something to pay
+    for a in db.query(LicenceApplication).all():
+        if a.status.value == "issued":
+            a.fee_paid_at = a.created_at
+        elif a.status.value in ("submitted", "theory_test_scheduled") and a.id.int % 2:
+            a.fee_paid_at = None
+        else:
+            a.fee_paid_at = a.created_at
     # 1. policy types and premiums
     typed = 0
     for pol in db.query(Insurance).filter(Insurance.vehicle_id.in_(list(vids))).all():
@@ -733,7 +744,7 @@ def make_extras(db, vehicles, drivers, officers, citizens):
     ledger = db.query(func.coalesce(func.sum(Payment.amount), 0)).filter(Payment.status == PaymentStatus.COMPLETED).scalar() or 0
     done = db.query(func.count()).select_from(Payment).filter(Payment.status == PaymentStatus.COMPLETED).scalar() or 0
     db.add(ReconciliationRun(gateway="mobile_money", statement_total=int(ledger), ledger_total=int(ledger), matched=done, mismatched=0,
-                             missing_in_ledger=0, missing_in_statement=0, report="[demo] Statement and ledger agree.", run_by=officers[0].id))
+                             missing_in_ledger=0, missing_in_statement=0, report='{"note": "Demo run: statement and ledger agree.", "mismatches": []}', run_by=officers[0].id))
     db.flush()
     return {"policies typed": typed, "service fees paid": paid_fees, "tests booked": booked, "alerts": alerts}
 

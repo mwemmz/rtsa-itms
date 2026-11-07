@@ -201,7 +201,7 @@ def _receipt_recipient(db: Session, payment: Payment) -> uuid.UUID | None:
     citizen's behalf -- an officer marking a challan paid at the roadside, or
     a toll operator taking a cash payment -- ``paid_by`` is the staff member,
     not the vehicle owner. The owner is who actually needs to see the
-    receipt/failure/refund, so resolve to them when the payment is tied to a
+    receipt/failure, so resolve to them when the payment is tied to a
     vehicle with a known owner; otherwise fall back to the payer.
     """
     vehicle_id = None
@@ -310,7 +310,7 @@ def reconcile(db: Session, gateway: str, statement: list[dict], actor: User) -> 
         p.gateway_reference: p
         for p in db.query(Payment).filter(
             Payment.gateway == gateway,
-            Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]),
+            Payment.status == PaymentStatus.COMPLETED,
             Payment.reconciled_at.is_(None),
             Payment.gateway_reference.isnot(None),
         )
@@ -353,19 +353,16 @@ def reconcile(db: Session, gateway: str, statement: list[dict], actor: User) -> 
 
 
 def revenue_summary(db: Session, since: datetime | None = None) -> dict:
-    q = db.query(Payment).filter(Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]))
+    q = db.query(Payment).filter(Payment.status == PaymentStatus.COMPLETED)
     if since is not None:
         q = q.filter(Payment.paid_at >= since)
     gross = q.with_entities(func.coalesce(func.sum(Payment.amount), 0)).scalar()
-    refunded = q.with_entities(func.coalesce(func.sum(Payment.refunded_amount), 0)).scalar()
     by_type = {t.value if hasattr(t, "value") else t: (n, tot) for t, n, tot in
                q.with_entities(Payment.payment_type, func.count(), func.sum(Payment.amount)).group_by(Payment.payment_type)}
     by_gateway = {g: (n, tot) for g, n, tot in
                   q.with_entities(Payment.gateway, func.count(), func.sum(Payment.amount)).group_by(Payment.gateway)}
     return {
         "gross": int(gross or 0),
-        "refunded": int(refunded or 0),
-        "net": int((gross or 0) - (refunded or 0)),
         "by_type": {k: {"count": n, "total": int(t or 0)} for k, (n, t) in by_type.items()},
         "by_gateway": {k or "unknown": {"count": n, "total": int(t or 0)} for k, (n, t) in by_gateway.items()},
     }

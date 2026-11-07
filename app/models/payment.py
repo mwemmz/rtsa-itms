@@ -13,7 +13,7 @@ class PaymentStatus(str, enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
-    REFUNDED = "refunded"
+    REFUNDED = "refunded"  # legacy value, never set: government does not refund
 
 
 class PaymentType(str, enum.Enum):
@@ -60,7 +60,7 @@ class Payment(Base):
     receipt_number: Mapped[str | None] = mapped_column(
         String(50), unique=True, index=True, nullable=True
     )
-    refunded_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    refunded_amount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # legacy, unused
     failure_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
     gateway_payload_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     reconciled_at: Mapped[datetime | None] = mapped_column(

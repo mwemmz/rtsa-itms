@@ -397,7 +397,6 @@ Exceptions:    Notification provider down → logged, does not roll back the cha
 | UC-A6 | Configure notification rules & broadcasts | `/api/admin/notification-rules`, `/api/admin/notifications/broadcast` | `notifications:manage` |
 | UC-A7 | Register an external agency API client | `/api/integration/*` | `integrations:manage` |
 | UC-A8 | View the revenue ledger & reconcile payments | `/api/payments`, `/api/payments/reconciliation/run` | `payments:reconcile` |
-| UC-A9 | Issue refunds | `POST /api/payments/{payment_id}/refund` | `payments:refund` |
 | UC-A10 | View audit log & login history | `/api/admin/audit-logs`, `/api/admin/login-attempts` | `audit:read` |
 | UC-A11 | View metrics, capacity, backups, system health | `/api/system/*` | `system:monitor` |
 | UC-A12 | Export reports as CSV / Excel / PDF | `GET /api/reports/{key}?format=…` | `reports:export` |

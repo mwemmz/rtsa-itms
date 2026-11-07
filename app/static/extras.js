@@ -278,6 +278,7 @@ VIEWS.services = async function () {
         if (sv.needs_vehicle) body += '<div class="field"><label>Vehicle</label><select class="sv-vehicle">' + (vopts || '<option value="">No vehicles linked</option>') + "</select></div>";
         if (sv.id === "fitness_test") body += '<div class="field"><label>Inspection centre</label><select class="sv-centre">' + cat.centres.map(function (c) { return "<option>" + esc(c) + "</option>"; }).join("") + "</select></div>" +
           '<div class="field"><label>Preferred date</label><input type="date" class="sv-date" min="' + new Date().toISOString().slice(0, 10) + '"></div>';
+        if (sv.needs_application) body += '<div class="field"><label>Application</label><select class="sv-app">' + (cat.unpaid_applications.length ? cat.unpaid_applications.map(function (a) { return '<option value="' + esc(a.id) + '">' + esc(a.label) + "</option>"; }).join("") : '<option value="">No unpaid applications</option>') + "</select></div>";
         body += '<p><b>' + esc(sv.fee_label) + '</b></p><button class="btn gold sv-pay" data-service="' + esc(sv.id) + '">Pay ' + esc(sv.fee_label) + "</button>";
       }
       return '<div class="card" data-svc="' + esc(sv.id) + '"><h3>' + esc(sv.name) + "</h3>" + body + "</div>";
@@ -289,6 +290,7 @@ VIEWS.services = async function () {
         var card = b.closest(".card");
         var body = { service: b.dataset.service };
         var sel = card.querySelector(".sv-vehicle"); if (sel) body.vehicle_id = sel.value;
+        var ap = card.querySelector(".sv-app"); if (ap) body.application_id = ap.value;
         var c = card.querySelector(".sv-centre"); if (c) body.inspection_centre = c.value;
         var d = card.querySelector(".sv-date"); if (d && d.value) body.preferred_date = new Date(d.value + "T09:00:00").toISOString();
         b.disabled = true;

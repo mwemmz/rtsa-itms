@@ -24,7 +24,6 @@ PERMISSIONS: dict[str, str] = {
     "reports:view": "View reports and analytics",
     "reports:export": "Export reports as CSV, Excel and PDF",
     "payments:view_all": "View every payment and the revenue ledger",
-    "payments:refund": "Refund payments",
     "payments:reconcile": "Run and view gateway reconciliation",
     "notifications:manage": "Manage notification rules and broadcast messages",
     "integrations:manage": "Manage agency API clients and view integration monitoring",

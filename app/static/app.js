@@ -403,11 +403,18 @@ var AUTH_VIEWS = {
   reset: { form: "#reset-form", focus: "#rs-password", hash: "" } // never put the token back in the URL
 };
 
+/* The demo-accounts box only appears when the server runs with SEED_DEMO_DATA=true. */
+fetch("/health").then(function (r) { return r.json(); }).then(function (h) {
+  window.__RTSA_DEMO = !!h.demo;
+  var el = document.getElementById("demo-hint");
+  if (el && h.demo) el.classList.remove("hidden");
+}).catch(function () {});
+
 function showAuthView(view) {
   Object.keys(AUTH_VIEWS).forEach(function (name) {
     $(AUTH_VIEWS[name].form).classList.toggle("hidden", name !== view);
   });
-  $("#demo-hint").classList.toggle("hidden", view !== "signin");
+  $("#demo-hint").classList.toggle("hidden", view !== "signin" || !window.__RTSA_DEMO);
   $$("#login-screen .login-msg").forEach(function (el) { el.textContent = ""; el.className = "login-msg"; });
   $("#login-resend").classList.add("hidden");
   var hash = AUTH_VIEWS[view].hash;
@@ -736,7 +743,7 @@ function onLiveEvent(ev) {
   if (!ev || !ev.entity) return;
   if (ev.entity === "notification") { inBackground(refreshBell); return; }
   var targets = LIVE_VIEWS[ev.entity] || [];
-  if (ev.action === "pay" || ev.action === "refund" || ev.action === "broadcast") inBackground(refreshBell);
+  if (ev.action === "pay" || ev.action === "broadcast") inBackground(refreshBell);
   if (VIEW.id && targets.indexOf(VIEW.id) !== -1) {
     if (LIVE_PARTIAL_VIEWS[VIEW.id]) {
       var viewId = VIEW.id;
@@ -828,7 +835,6 @@ var NOTIFICATION_TARGETS = {
   toll_flagged: { views: ["fines", "challans", "toll"], focus: "plate" },
   payment_receipt: { views: ["receipts", "payments", "challans"], focus: "ref" },
   payment_failed: { views: ["receipts", "fines", "payments"], focus: "ref" },
-  refund_issued: { views: ["receipts", "payments"], focus: "ref" },
   licence_expiring: { views: ["licence"] },
   licence_issued: { views: ["licence"] },
   licence_renewed: { views: ["licence"] },

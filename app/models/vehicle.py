@@ -52,3 +52,5 @@ class Vehicle(Base):
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Paid-up-to date for the annual registration (number plate / vehicle licence) fee. NULL = one year from registration_date.
+    registration_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

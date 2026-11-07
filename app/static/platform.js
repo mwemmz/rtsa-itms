@@ -165,8 +165,7 @@ VIEWS.payments = async function () {
   async function loadSummary() {
     try {
       var s = await api("/api/payments/summary?days=30");
-      $("#pay-kpis").innerHTML = '<div class="grid cards">' + kpi("Gross (30 days)", money(s.gross)) +
-        kpi("Net revenue", money(s.net)) +
+      $("#pay-kpis").innerHTML = '<div class="grid cards">' + kpi("Revenue collected (30 days)", money(s.gross)) +
         kpi("By type", Object.keys(s.by_type).map(function (t) { return esc(t) + ": " + money(s.by_type[t].total); }).join("<br>") || "—") + "</div>";
     } catch (e) { fail("#pay-kpis", e); }
   }
@@ -175,7 +174,7 @@ VIEWS.payments = async function () {
     try {
       var items = await api("/api/payments/?all=true&limit=100" + (st ? "&status=" + st : ""));
       $("#pay-list").innerHTML = tbl(["Receipt", "Reference", "Type", "Amount", "Gateway", "Status", ""], items.map(function (p) {
-        var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : p.status === "refunded" ? "amber" : "gray";
+        var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : "gray";
         var acts = "";
         if (p.receipt_number) acts += '<button class="btn ghost sm rcpt" data-id="' + esc(p.id) + '">PDF</button> ';
         return [esc(p.receipt_number || "—"), '<span class="mono">' + esc(p.reference) + "</span>", esc(p.payment_type),
@@ -674,7 +673,7 @@ VIEWS.receipts = async function () {
   try {
     var items = await api("/api/citizen/payments?limit=100");
     $("#rc-list").innerHTML = tbl(["Date", "Description", "Amount", "Status", "Receipt", ""], items.map(function (p) {
-      var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : p.status === "refunded" ? "amber" : "gray";
+      var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : "gray";
       // The payment reference is what the receipt notification quotes.
       return [dt(p.paid_at || p.created_at), esc(p.description || p.payment_type) + '<div class="small muted mono">' + esc(p.reference) + "</div>",
         money(p.amount), pill(p.status, cls), esc(p.receipt_number || "—"),

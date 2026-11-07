@@ -19,7 +19,7 @@ _MUTATING_ACTIONS = {
     "generate_challan", "report", "report_incident", "resolve_incident",
     "confirm_incident", "dismiss_incident",
     "toll_event", "queue_toll_event", "sync_toll_event", "reject_toll_event",
-    "pay", "refund", "reconcile", "register_agency", "update_agency",
+    "pay", "reconcile", "register_agency", "update_agency",
     "rotate_agency_key", "agency_upsert_policy", "agency_report_accident",
     "issue_permit", "update_profile", "capture", "logout", "login",
     "account_locked", "mfa_enabled", "mfa_disabled", "change_password",

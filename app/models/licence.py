@@ -43,6 +43,7 @@ class LicenceApplication(Base):
     )
     theory_score: Mapped[int | None] = mapped_column(nullable=True)
     practical_score: Mapped[int | None] = mapped_column(nullable=True)
+    fee_paid_at: Mapped[datetime | None] = mapped_column(nullable=True)
     issued_licence_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

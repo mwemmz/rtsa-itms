@@ -31,16 +31,10 @@ class PaymentResponse(BaseModel):
     created_at: datetime
     receipt_number: str | None = None
     description: str | None = None
-    refunded_amount: int = 0
     failure_reason: str | None = None
     reconciled_at: datetime | None = None
 
     model_config = {"from_attributes": True}
-
-
-class RefundRequest(BaseModel):
-    amount: int | None = Field(default=None, gt=0)
-    reason: str = Field(min_length=3, max_length=300)
 
 
 class PaymentEventResponse(BaseModel):

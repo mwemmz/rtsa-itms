@@ -443,7 +443,7 @@ def fines_report(
 ):
     """Fines at a glance for the admin: what was issued, collected and is still owed, by offence and by month.
 
-    Amounts are ngwee. "Collected" is money that actually arrived (completed fine payments, less refunds).
+    Amounts are ngwee. "Collected" is money that actually arrived (completed fine payments).
     """
     from app.models.enforcement import Violation
     from app.models.payment import PaymentStatus, PaymentType
@@ -451,8 +451,8 @@ def fines_report(
 
     open_states = [ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]
     paid_q = db.query(Payment).filter(Payment.payment_type == PaymentType.FINE,
-                                      Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]))
-    collected = paid_q.with_entities(func.coalesce(func.sum(Payment.amount - Payment.refunded_amount), 0)).scalar()
+                                      Payment.status == PaymentStatus.COMPLETED)
+    collected = paid_q.with_entities(func.coalesce(func.sum(Payment.amount), 0)).scalar()
     issued = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status != ChallanStatus.CANCELLED).scalar()
     waived = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status == ChallanStatus.CANCELLED).scalar()
     owed = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status.in_(open_states)).scalar()
@@ -473,9 +473,9 @@ def fines_report(
             by_offence[vt.value]["outstanding"] += int(total or 0)
     month = month_bucket(db, Payment.paid_at)
     by_month = {m: int(t or 0) for m, t in
-                paid_q.with_entities(month, func.sum(Payment.amount - Payment.refunded_amount)).group_by(month).order_by(month)}
+                paid_q.with_entities(month, func.sum(Payment.amount)).group_by(month).order_by(month)}
     by_gateway = {g or "unknown": {"count": n, "total": int(t or 0)} for g, n, t in
-                  paid_q.with_entities(Payment.gateway, func.count(), func.sum(Payment.amount - Payment.refunded_amount)).group_by(Payment.gateway)}
+                  paid_q.with_entities(Payment.gateway, func.count(), func.sum(Payment.amount)).group_by(Payment.gateway)}
     return {
         "issued": int(issued), "waived": int(waived), "collected": int(collected), "outstanding": int(owed), "overdue": int(overdue),
         "collection_rate": round(collected / issued * 100, 1) if issued else None,

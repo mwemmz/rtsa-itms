@@ -165,13 +165,13 @@ def _psv_summary(db, start, end):
 def _revenue_rows(db, start, end, limit):
     q = (db.query(Payment).filter(Payment.created_at >= start, Payment.created_at <= end)
          .order_by(Payment.created_at.desc()).limit(limit))
-    return [[p.receipt_number or "", p.reference, p.payment_type.value, kwacha(p.amount), kwacha(p.refunded_amount),
+    return [[p.receipt_number or "", p.reference, p.payment_type.value, kwacha(p.amount),
              p.currency, p.gateway or "", p.status.value, p.paid_at or ""] for p in q]
 
 
 def _revenue_summary(db, start, end):
     s = payment_service.revenue_summary(db, since=start)
-    out = {"Gross revenue": s["gross"], "Refunded": s["refunded"], "Net revenue": s["net"]}
+    out = {"Revenue collected": s["gross"]}
     for k, v in s["by_type"].items():
         out[f"  {k}"] = v["total"]
     return out
@@ -228,8 +228,8 @@ REPORTS: dict[str, Report] = {r.key: r for r in [
            _accidents_rows, _accidents_summary),
     Report("psv", "PSV Permits", "Public service vehicle operators and route permits",
            ["Permit", "Operator", "Plate", "Route", "Issued", "Expires", "Status"], _psv_rows, _psv_summary),
-    Report("revenue", "Revenue", "Payments, refunds and revenue by category",
-           ["Receipt", "Reference", "Type", "Amount (ZMW)", "Refunded (ZMW)", "Currency", "Gateway", "Status", "Paid at"],
+    Report("revenue", "Revenue", "Payments and revenue by category",
+           ["Receipt", "Reference", "Type", "Amount (ZMW)", "Currency", "Gateway", "Status", "Paid at"],
            _revenue_rows, _revenue_summary),
     Report("toll", "Toll Enforcement", "Toll-gate compliance checks and unpaid tolls",
            ["Plate", "Gate", "Time", "Result", "Issues", "Toll amount (ZMW)", "Paid"], _toll_rows, _toll_summary),
@@ -264,9 +264,9 @@ def dashboard(db: Session, start: datetime, end: datetime) -> dict:
 
     revenue_monthly = {
         m: int(t or 0) for m, t in
-        db.query(month_bucket(db, Payment.paid_at), func.sum(Payment.amount - Payment.refunded_amount))
+        db.query(month_bucket(db, Payment.paid_at), func.sum(Payment.amount))
         .filter(Payment.paid_at >= start, Payment.paid_at <= end,
-                Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]))
+                Payment.status == PaymentStatus.COMPLETED)
         .group_by(month_bucket(db, Payment.paid_at)).order_by(month_bucket(db, Payment.paid_at)).all()
     }
     data = {

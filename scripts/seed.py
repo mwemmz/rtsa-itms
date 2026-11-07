@@ -137,12 +137,6 @@ DEFAULT_RULES = [
         "body_template": "Your payment {reference} of {amount} did not go through. No money was taken.",
     },
     {
-        "trigger_event": "refund_issued",
-        "channels": "in_app,email",
-        "title_template": "Refund issued",
-        "body_template": "A refund of {amount} was issued against payment {reference}.",
-    },
-    {
         "trigger_event": "new_device_login",
         "channels": "in_app,email",
         "title_template": "New device signed in",

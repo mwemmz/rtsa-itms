@@ -1,3 +1,4 @@
+import os
 import time
 
 from fastapi import APIRouter, Depends, Response
@@ -21,7 +22,8 @@ def _db_check(db: Session) -> tuple[bool, str, float]:
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     ok, db_status, _ = _db_check(db)
-    return {"status": "healthy", "database": db_status, "service": "RTSA ITMS"}
+    return {"status": "healthy", "database": db_status, "service": "RTSA ITMS",
+            "demo": os.environ.get("SEED_DEMO_DATA", "").lower() in ("1", "true", "yes")}
 
 
 @router.get("/health/live")

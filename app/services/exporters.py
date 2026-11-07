@@ -142,7 +142,6 @@ def receipt_pdf(receipt: dict) -> bytes:
         ["Description", receipt.get("description") or receipt["payment_type"]],
         ["Payment type", receipt["payment_type"]],
         ["Amount", zmw(receipt['amount'], receipt['currency'])],
-        ["Refunded", zmw(receipt['refunded_amount'], receipt['currency'])],
         ["Gateway", f"{receipt['gateway']} ({receipt.get('gateway_reference') or '-'})"],
         ["Paid by", receipt.get("paid_by_name") or "-"],
         ["Paid at", str(receipt.get("paid_at") or "-")],
