@@ -26,6 +26,8 @@ def create_driver(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Driver with this licence number already exists",
         )
+    if db.query(Driver.id).filter(Driver.id_number == payload.id_number).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A driver with this NRC / ID number already exists")
     driver = Driver(**payload.model_dump())
     db.add(driver)
     db.flush()

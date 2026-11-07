@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -18,14 +19,17 @@ def register_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*OFFICERS)),
 ):
-    existing = db.query(Vehicle).filter(
-        Vehicle.registration_number == payload.registration_number
-    ).first()
-    if existing:
+    if find_vehicle_by_plate(db, payload.registration_number):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Vehicle with this registration number already exists",
         )
+    for column, value, label in (
+        (Vehicle.chassis_number, payload.chassis_number, "chassis number"),
+        (Vehicle.engine_number, payload.engine_number, "engine number"),
+    ):
+        if value and db.query(Vehicle.id).filter(func.upper(column) == value).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"A vehicle with this {label} is already registered")
     vehicle = Vehicle(**payload.model_dump())
     db.add(vehicle)
     db.flush()

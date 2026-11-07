@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import model_validator, BaseModel, Field
 
 from app.models.psv import PSVOperatorStatus, PSVPermitStatus
 
@@ -36,6 +36,12 @@ class PSVPermitCreate(BaseModel):
     route: str
     issued_date: datetime
     expiry_date: datetime
+
+    @model_validator(mode="after")
+    def _expiry_after_issue(self):
+        if self.expiry_date <= self.issued_date:
+            raise ValueError("Permit expiry must be after the issue date")
+        return self
 
 
 class PSVPermitResponse(BaseModel):

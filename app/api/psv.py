@@ -88,6 +88,15 @@ def issue_permit(
     if existing:
         raise HTTPException(status_code=400, detail="Permit number already exists")
 
+    overlap = db.query(PSVPermit.id).filter(
+        PSVPermit.vehicle_id == payload.vehicle_id,
+        PSVPermit.status == PSVPermitStatus.ACTIVE,
+        PSVPermit.issued_date <= payload.expiry_date,
+        PSVPermit.expiry_date >= payload.issued_date,
+    ).first()
+    if overlap:
+        raise HTTPException(status_code=400, detail="This vehicle already has a PSV permit for that period")
+
     permit = PSVPermit(**payload.model_dump())
     db.add(permit)
     db.flush()

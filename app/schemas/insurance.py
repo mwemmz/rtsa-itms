@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class InsuranceCreate(BaseModel):
@@ -10,6 +10,12 @@ class InsuranceCreate(BaseModel):
     policy_number: str
     start_date: datetime
     end_date: datetime
+
+    @model_validator(mode="after")
+    def _end_after_start(self):
+        if self.end_date <= self.start_date:
+            raise ValueError("Policy end date must be after its start date")
+        return self
 
 
 class InsuranceResponse(BaseModel):

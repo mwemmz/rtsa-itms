@@ -30,9 +30,13 @@ def add_insurance(
     if existing:
         raise HTTPException(status_code=400, detail="Policy number already exists")
 
-    # Deactivate any overlapping active policy for this vehicle
+    # Deactivate only the active policies this one overlaps, so a future-dated
+    # renewal does not switch off the cover the vehicle has today.
     db.query(Insurance).filter(
-        Insurance.vehicle_id == payload.vehicle_id, Insurance.is_active == True
+        Insurance.vehicle_id == payload.vehicle_id,
+        Insurance.is_active == True,
+        Insurance.start_date <= payload.end_date,
+        Insurance.end_date >= payload.start_date,
     ).update({"is_active": False})
 
     insurance = Insurance(**payload.model_dump())
