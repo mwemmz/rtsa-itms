@@ -14,6 +14,14 @@ from app.services.audit import log_action
 router = APIRouter(prefix="/api/insurance", tags=["Insurance"])
 
 
+@router.get("/policy-types")
+def policy_types(current_user: User = Depends(require_role(*OFFICERS))):
+    """The kinds of policy an officer can record, with what each covers."""
+    from app.services.insurance_types import POLICY_TYPES
+
+    return [{"id": k, **v} for k, v in POLICY_TYPES.items()]
+
+
 @router.post("/", response_model=InsuranceResponse, status_code=status.HTTP_201_CREATED)
 def add_insurance(
     payload: InsuranceCreate,

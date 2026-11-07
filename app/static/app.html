@@ -6,7 +6,9 @@
   <meta name="theme-color" content="#1e242a">
   <meta name="description" content="RTSA Integrated Transport Management System — vehicle registration, violations, fines, road tolls and route planning for Zambia.">
   <title>RTSA ITMS — Web App</title>
+  <script src="/static/theme-boot.js"></script>
   <link rel="stylesheet" href="/static/app.css?v=chat-widget-2">
+  <link rel="stylesheet" href="/static/themes.css?v=deck-1">
   <link rel="preload" as="image" href="/static/login-bg.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 </head>
@@ -162,6 +164,7 @@
       <header>
         <button class="menu-btn" id="menu-btn" aria-label="Open menu" aria-controls="mnav">&#9776;</button>
         <div class="page-title" id="page-title">Dashboard</div>
+        <label class="theme-picker" title="Theme"><span class="sr-only" style="position:absolute;left:-9999px">Theme</span><select id="theme-select" aria-label="Theme"><option value="navy">Navy (deck)</option><option value="asphalt">Asphalt</option><option value="forest">Forest</option><option value="concrete">Concrete (light)</option></select></label>
         <button class="bell" id="bell" title="Notifications"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="badge hidden" id="bell-badge">0</span></button>
         <div class="user-chip" id="user-chip"></div>
         <button class="btn ghost sm" id="logout-btn">Sign out</button>
@@ -195,8 +198,8 @@
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="/static/app.js?v=appeals-1"></script>
-  <script src="/static/platform.js?v=appeals-1"></script>
-  <script src="/static/extras.js?v=fines-1"></script>
+  <script src="/static/app.js?v=deck-1"></script>
+  <script src="/static/platform.js?v=deck-1"></script>
+  <script src="/static/extras.js?v=deck-1"></script>
 </body>
 </html>

@@ -1,0 +1,1 @@
+(function(){var t="navy";try{t=localStorage.getItem("itms-theme")||"navy"}catch(e){}if(["navy","asphalt","forest","concrete"].indexOf(t)<0)t="navy";document.documentElement.setAttribute("data-theme",t)})();

@@ -263,35 +263,6 @@ def fail_payment(db: Session, payment: Payment, reason: str, actor_id=None) -> P
     return payment
 
 
-def refund_payment(db: Session, payment: Payment, actor: User, amount: int | None, reason: str) -> Payment:
-    if payment.status not in (PaymentStatus.COMPLETED,):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Only completed payments can be refunded")
-    remaining = payment.amount - payment.refunded_amount
-    amount = remaining if amount is None else amount
-    if amount <= 0 or amount > remaining:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Refund must be between 1 and {remaining}")
-    payment.refunded_amount += amount
-    full = payment.refunded_amount >= payment.amount
-    record_event(db, payment, "refunded" if full else "partially_refunded", actor.id, amount, reason[:300])
-    if full:
-        payment.status = PaymentStatus.REFUNDED
-        # a fully refunded fine is owed again
-        if payment.payment_type == PaymentType.FINE and payment.related_entity_id:
-            challan = db.get(Challan, payment.related_entity_id)
-            if challan is not None and challan.status == ChallanStatus.PAID:
-                challan.status = ChallanStatus.UNPAID
-        if payment.payment_type == PaymentType.TOLL and payment.related_entity_id:
-            toll = db.get(TollTransaction, payment.related_entity_id)
-            if toll is not None:
-                toll.is_paid = False
-    log_action(db, "refund", "payment", str(payment.id), f"{amount} refunded: {reason[:100]}", actor.id)
-    recipient = _receipt_recipient(db, payment)
-    if recipient:
-        notify(db, recipient, "refund_issued", {"amount": zmw(amount), "reference": payment.reference})
-    db.flush()
-    return payment
-
-
 # --- gateway webhook -------------------------------------------------------------
 
 def webhook_secret(gateway: str) -> bytes:

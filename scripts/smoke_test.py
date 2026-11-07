@@ -86,8 +86,6 @@ def main() -> int:
         check("receipt PDF", client.get(f"/api/payments/{pid}/receipt.pdf", headers=c).content[:4] == b"%PDF")
         check("double payment refused", client.post("/api/payments/", json={"payment_type": "fine",
               "related_entity_id": challan_id}, headers=c).status_code == 409)
-        check("partial refund", client.post(f"/api/payments/{pid}/refund", json={"amount": 34, "reason": "smoke"},
-                                           headers=a).status_code == 200)
         check("revenue summary", client.get("/api/payments/summary", headers=a).status_code == 200)
 
         print("Reports & exports")

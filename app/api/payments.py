@@ -16,7 +16,6 @@ from app.schemas.payment import (
     PaymentResponse,
     ReconcileRequest,
     ReconciliationResponse,
-    RefundRequest,
     WebhookPayload,
 )
 from app.services import exporters
@@ -176,22 +175,6 @@ def payment_receipt_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{receipt["receipt_number"]}.pdf"'},
     )
-
-
-@router.post("/{payment_id}/refund", response_model=PaymentResponse)
-def refund(
-    payment_id: str,
-    payload: RefundRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("payments:refund")),
-):
-    payment = db.query(Payment).filter(Payment.id == payment_id).first()
-    if payment is None:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    svc.refund_payment(db, payment, current_user, payload.amount, payload.reason)
-    db.commit()
-    db.refresh(payment)
-    return payment
 
 
 @router.post("/webhook/{gateway}")

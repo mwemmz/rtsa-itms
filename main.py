@@ -21,7 +21,10 @@ from app.api import (
     enforcement,
     events,
     inspections,
+    insights,
     insurance,
+    services,
+    verify,
     licence,
     notifications,
     payments,
@@ -85,6 +88,9 @@ app.include_router(vehicles.router)
 app.include_router(drivers.router)
 app.include_router(inspections.router)
 app.include_router(insurance.router)
+app.include_router(services.router)
+app.include_router(insights.router)
+app.include_router(verify.router)
 app.include_router(licence.router)
 app.include_router(enforcement.router)
 app.include_router(anpr.router)

@@ -236,7 +236,15 @@ function renderNav() {
     var el = $("#" + slot[0]);
     if (!el) return;
     el.innerHTML = "";
+    var lastGroup = null;
     ids.forEach(function (item) {
+      if (item.group && item.group !== lastGroup) {
+        var h = document.createElement("div");
+        h.className = "nav-section";
+        h.textContent = item.group;
+        el.appendChild(h);
+        lastGroup = item.group;
+      }
       var a = document.createElement("a");
       a.href = "#/" + item.id;
       a.innerHTML = '<span class="nav-dot" aria-hidden="true"></span>' + item.label;
@@ -1466,6 +1474,12 @@ function challanRows(cs) {
 
 VIEWS.vehicles = async function () {
   var html =
+    '<div class="card"><h3>Records kept for a vehicle</h3><p class="small muted" style="margin:0 0 10px">A vehicle\'s fitness tests, insurance and PSV permit each have their own screen. Look the plate up there.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      ["inspections|Fitness inspections", "insurance|Insurance policies", "psv|PSV permits", "anpr|ANPR sightings"].filter(function (x) {
+        return (NAV[USER.role] || []).some(function (n) { return n.id === x.split("|")[0]; });
+      }).map(function (x) { var p = x.split("|"); return '<a class="btn ghost sm" href="#/' + p[0] + '">' + p[1] + "</a>"; }).join("") +
+      "</div></div>" +
     '<div class="card"><h3>Register vehicle</h3>' +
       vehicleForm() +
     "</div>" +
@@ -2605,8 +2619,9 @@ VIEWS.inspections = async function () {
           '<button class="btn gold" type="submit">Schedule inspection</button>' +
         "</form>" +
         '<form id="insp-result-form" style="display:none; margin-top:16px; border-top:1px solid var(--border, #333); padding-top:16px;">' +
-          '<h4 style="margin:0 0 8px;">Record result</h4>' +
-          '<div class="field"><label>Result</label><select name="result"><option value="passed">Passed</option><option value="failed">Failed</option></select></div>' +
+          '<h4 style="margin:0 0 4px;">Roadworthiness test</h4>' +
+          '<p class="small muted" style="margin:0 0 10px;">Tick each item. The checks decide the result: any fail, or a reading outside its limit, fails the vehicle.</p>' +
+          '<div id="insp-checks"><div class="empty">Loading checklist…</div></div>' +
           '<div class="field"><label>Findings (optional)</label><textarea name="findings" rows="2"></textarea></div>' +
           '<div class="field"><label>Inspected by (optional)</label><input name="inspected_by" placeholder="Inspector name"></div>' +
           '<button class="btn gold" type="submit">Save result</button> ' +
@@ -2659,15 +2674,32 @@ VIEWS.inspections = async function () {
     e.preventDefault();
     var id = e.target.dataset.inspectionId;
     if (!id) return;
-    var data = formData(e.target);
+    var data = { findings: e.target.elements.findings.value || undefined, inspected_by: e.target.elements.inspected_by.value || undefined, checklist: {}, readings: {} };
+    $$("#insp-checks select[data-item]").forEach(function (sel) { data.checklist[sel.dataset.item] = sel.value; });
+    $$("#insp-checks input[data-reading]").forEach(function (inp) { if (inp.value !== "") data.readings[inp.dataset.reading] = parseFloat(inp.value); });
     try {
-      await api("/api/inspections/" + id, { method: "PATCH", body: JSON.stringify(data) });
-      toast("Inspection result recorded" + (data.result === "passed" ? " — fitness certificate issued" : ""), "ok");
+      var r = await api("/api/inspections/" + id, { method: "PATCH", body: JSON.stringify(data) });
+      toast(r.result === "passed" ? "Passed. Fitness certificate issued." : "Failed: " + (r.findings || "see findings"), r.result === "passed" ? "ok" : "err");
       e.target.style.display = "none";
       await loadInspectionsForVehicle(CURRENT_INSPECTION_VEHICLE);
     } catch (err) { toast(err.message, "err"); }
   });
 };
+
+var INSPECTION_SPEC = null;
+async function renderChecklist() {
+  var box = $("#insp-checks");
+  try {
+    if (!INSPECTION_SPEC) INSPECTION_SPEC = await api("/api/inspections/checklist-spec");
+    box.innerHTML = '<div class="table-wrap"><table><tbody>' + INSPECTION_SPEC.checklist.map(function (c) {
+      return "<tr><td>" + esc(c.label) + '</td><td style="width:120px"><select data-item="' + esc(c.id) + '"><option value="pass">Pass</option><option value="fail">Fail</option><option value="na">N/A</option></select></td></tr>';
+    }).join("") + "</tbody></table></div>" +
+      '<div class="grid cards" style="margin-top:12px">' + INSPECTION_SPEC.readings.map(function (r) {
+        var lim = (r.min != null ? "min " + r.min : "") + (r.max != null ? "max " + r.max : "");
+        return '<div class="field"><label>' + esc(r.label) + " (" + esc(r.unit) + ") <span class=\"muted\">" + esc(lim) + '</span></label><input type="number" step="0.1" data-reading="' + esc(r.id) + '"></div>';
+      }).join("") + "</div>";
+  } catch (e) { box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+}
 
 async function loadInspectionsForVehicle(vehicleId) {
   var list = $("#insp-list");
@@ -2688,6 +2720,7 @@ async function loadInspectionsForVehicle(vehicleId) {
       btn.addEventListener("click", function () {
         var form = $("#insp-result-form");
         form.dataset.inspectionId = btn.dataset.id;
+        renderChecklist();
         form.style.display = "";
         form.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
@@ -2696,7 +2729,14 @@ async function loadInspectionsForVehicle(vehicleId) {
       btn.addEventListener("click", async function () {
         try {
           var cert = await api("/api/inspections/" + btn.dataset.id + "/fitness-certificate");
-          toast("Certificate " + cert.certificate_number + " · valid until " + dt(cert.expiry_date), "ok");
+          var box = $("#insp-cert-box");
+          if (!box) { box = document.createElement("div"); box.id = "insp-cert-box"; $("#insp-list").parentNode.appendChild(box); }
+          var url = "/api/verify/fitness/" + encodeURIComponent(cert.certificate_number);
+          box.innerHTML = '<div style="display:flex;gap:16px;align-items:center;margin-top:16px;border-top:1px solid var(--line);padding-top:16px;flex-wrap:wrap">' +
+            '<img src="' + url + '/qr.svg" alt="QR code that opens the public check of this certificate" width="120" height="120" style="background:#fff;padding:4px">' +
+            '<div><div class="small muted">Fitness certificate</div><div class="mono" style="font-size:18px">' + esc(cert.certificate_number) + "</div>" +
+            '<div class="small">Valid until ' + dt(cert.expiry_date) + '</div><div class="small muted" style="margin-top:6px">Scanning the code opens a public check. No sign-in needed.</div>' +
+            '<a class="small" target="_blank" rel="noopener" href="' + url + '">Open the check</a></div></div>';
         } catch (e) { toast(e.message, "err"); }
       });
     });

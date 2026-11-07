@@ -1,0 +1,183 @@
+/* ------------------------------------------------------------------
+   RTSA ITMS themes. The default, "navy", matches the presentation deck:
+   navy ground, yellow accent, white type, hairline rules, square corners.
+   Pick another from the Theme menu in the header; the choice is kept
+   in this browser. Loaded after app.css, so it overrides its tokens.
+   ------------------------------------------------------------------ */
+
+html[data-theme] {
+  --font-ui: "Calibri", "Carlito", "Lato", "Inter", "Segoe UI", system-ui, sans-serif;
+  --radius-card: 4px;
+  --radius-control: 4px;
+  --shadow-sm: none;
+  --shadow-md: 0 12px 32px -10px rgba(0, 0, 0, 0.55);
+}
+
+/* ---- Navy (default, the deck) ---- */
+html[data-theme="navy"] {
+  color-scheme: dark;
+  --gold: #FFC800; --t-gold: #FFC800; --gold-strong: #FFD43B; --t-gold-strong: #FFD43B; --gold-soft: #3b3410; --t-gold-soft: #3b3410; --gold-ink: #0F2238; --t-gold-ink: #0F2238;
+  --slate: #2D435C; --t-slate: #2D435C; --slate-2: #A3B2C3; --t-slate-2: #A3B2C3; --slate-soft: #1b3350;
+  --dark: #0B1A2C; --nav-bg: #0B1A2C; --nav-ink: rgba(242, 244, 247, 0.88); --nav-ink-muted: #7C8EA3;
+  --bg: #0F2238; --t-bg: #0F2238; --panel: #132B46; --t-panel: #132B46; --panel-2: #17314F; --t-panel-2: #17314F; --line: #2D435C; --t-line: #2D435C; --line-strong: #3b5675; --t-line-strong: #3b5675;
+  --ink: #F2F4F7; --t-ink: #F2F4F7; --ink-2: #A3B2C3; --t-ink-2: #A3B2C3; --ink-3: #7C8EA3; --t-ink-3: #7C8EA3;
+  --ok: #5fd0a0; --t-ok: #5fd0a0; --ok-bg: #12382f; --t-ok-bg: #12382f; --err: #ff8f80; --t-err: #ff8f80; --err-bg: #44201f; --t-err-bg: #44201f; --warn: #FFC800; --t-warn: #FFC800; --warn-bg: #3b3410; --t-warn-bg: #3b3410;
+  --info: #8fc1f0; --t-info: #8fc1f0; --info-bg: #173552; --t-info-bg: #173552;
+  --ring: 0 0 0 3px rgba(255, 200, 0, 0.35);
+}
+/* ---- Asphalt ---- */
+html[data-theme="asphalt"] {
+  color-scheme: dark;
+  --gold: #FFD400; --t-gold: #FFD400; --gold-strong: #FFE04D; --t-gold-strong: #FFE04D; --gold-soft: #3a3510; --t-gold-soft: #3a3510; --gold-ink: #16191C; --t-gold-ink: #16191C;
+  --slate: #3A4046; --t-slate: #3A4046; --slate-2: #A9B0B5; --t-slate-2: #A9B0B5; --slate-soft: #262b30;
+  --dark: #101215; --nav-bg: #101215; --nav-ink: rgba(244, 244, 240, 0.88); --nav-ink-muted: #858d93;
+  --bg: #16191C; --t-bg: #16191C; --panel: #1d2125; --t-panel: #1d2125; --panel-2: #22272c; --t-panel-2: #22272c; --line: #3A4046; --t-line: #3A4046; --line-strong: #4b5259; --t-line-strong: #4b5259;
+  --ink: #F4F4F0; --t-ink: #F4F4F0; --ink-2: #A9B0B5; --t-ink-2: #A9B0B5; --ink-3: #858d93; --t-ink-3: #858d93;
+  --ok: #5fd0a0; --t-ok: #5fd0a0; --ok-bg: #16352c; --t-ok-bg: #16352c; --err: #ff8f80; --t-err: #ff8f80; --err-bg: #43201e; --t-err-bg: #43201e; --warn: #FFD400; --t-warn: #FFD400; --warn-bg: #3a3510; --t-warn-bg: #3a3510;
+  --info: #8fc1f0; --t-info: #8fc1f0; --info-bg: #1b3247; --t-info-bg: #1b3247;
+  --ring: 0 0 0 3px rgba(255, 212, 0, 0.35);
+}
+/* ---- Forest ---- */
+html[data-theme="forest"] {
+  color-scheme: dark;
+  --gold: #FFD400; --t-gold: #FFD400; --gold-strong: #FFE04D; --t-gold-strong: #FFE04D; --gold-soft: #3a3a12; --t-gold-soft: #3a3a12; --gold-ink: #0E3B2A; --t-gold-ink: #0E3B2A;
+  --slate: #2E5C48; --t-slate: #2E5C48; --slate-2: #A8C2B3; --t-slate-2: #A8C2B3; --slate-soft: #17493a;
+  --dark: #082a1e; --nav-bg: #082a1e; --nav-ink: rgba(242, 245, 239, 0.9); --nav-ink-muted: #7fa592;
+  --bg: #0E3B2A; --t-bg: #0E3B2A; --panel: #11473a; --t-panel: #11473a; --panel-2: #14503f; --t-panel-2: #14503f; --line: #2E5C48; --t-line: #2E5C48; --line-strong: #3d7360; --t-line-strong: #3d7360;
+  --ink: #F2F5EF; --t-ink: #F2F5EF; --ink-2: #A8C2B3; --t-ink-2: #A8C2B3; --ink-3: #7fa592; --t-ink-3: #7fa592;
+  --ok: #6fe0ae; --t-ok: #6fe0ae; --ok-bg: #0d4a35; --t-ok-bg: #0d4a35; --err: #ff9a8a; --t-err: #ff9a8a; --err-bg: #4a2420; --t-err-bg: #4a2420; --warn: #FFD400; --t-warn: #FFD400; --warn-bg: #3a3a12; --t-warn-bg: #3a3a12;
+  --info: #9cc9ee; --t-info: #9cc9ee; --info-bg: #17435a; --t-info-bg: #17435a;
+  --ring: 0 0 0 3px rgba(255, 212, 0, 0.35);
+}
+/* ---- Concrete (light) ---- */
+html[data-theme="concrete"] {
+  color-scheme: light;
+  --gold: #B01E1E; --t-gold: #B01E1E; --gold-strong: #8f1818; --t-gold-strong: #8f1818; --gold-soft: #f4dede; --t-gold-soft: #f4dede; --gold-ink: #ffffff; --t-gold-ink: #ffffff;
+  --slate: #15181A; --t-slate: #15181A; --slate-2: #2c3338; --t-slate-2: #2c3338; --slate-soft: #e4e7e5;
+  --dark: #15181A; --nav-bg: #15181A; --nav-ink: rgba(255, 255, 255, 0.88); --nav-ink-muted: #9aa3a8;
+  --bg: #E9ECEA; --t-bg: #E9ECEA; --panel: #FFFFFF; --t-panel: #FFFFFF; --panel-2: #F4F6F5; --t-panel-2: #F4F6F5; --line: #CBD0CD; --t-line: #CBD0CD; --line-strong: #B0B6B3; --t-line-strong: #B0B6B3;
+  --ink: #15181A; --t-ink: #15181A; --ink-2: #4B5358; --t-ink-2: #4B5358; --ink-3: #737b80; --t-ink-3: #737b80;
+  --ok: #17734f; --t-ok: #17734f; --ok-bg: #dff1e8; --t-ok-bg: #dff1e8; --err: #b3372b; --t-err: #b3372b; --err-bg: #fbe7e4; --t-err-bg: #fbe7e4; --warn: #7a5a05; --t-warn: #7a5a05; --warn-bg: #fdf0cc; --t-warn-bg: #fdf0cc;
+  --info: #28608f; --t-info: #28608f; --info-bg: #e5eefa; --t-info-bg: #e5eefa;
+  --ring: 0 0 0 3px rgba(176, 30, 30, 0.3);
+}
+
+html[data-theme] body, html[data-theme] { font-family: var(--font-ui); font-size: 15px; background: var(--bg); color: var(--ink); }
+html[data-theme] input, html[data-theme] select, html[data-theme] textarea, html[data-theme] button { font-family: var(--font-ui); }
+
+/* ---- shell: dark rail, yellow marker, hairline header ---- */
+html[data-theme] #shell aside { border-right: 1px solid var(--line); }
+html[data-theme] .sidebar-brand .mark,
+html[data-theme] .login-brand .mark,
+html[data-theme] .mnav .mark {
+  background: url("/static/rtsa-logo.png") center / contain no-repeat;
+  color: transparent; box-shadow: none; border-radius: 0; font-size: 0;
+}
+html[data-theme] .sidebar-brand .mark { width: 38px; height: 38px; flex-basis: 38px; }
+html[data-theme] nav { padding: 10px 0; }
+html[data-theme] .nav-section {
+  color: var(--gold); font-size: 10.5px; letter-spacing: 0.22em; margin: 18px 18px 6px;
+}
+html[data-theme] nav a { border-radius: 0; padding: 9px 18px; margin: 0; font-size: 14px; }
+html[data-theme] nav a:hover { background: rgba(255, 255, 255, 0.06); }
+html[data-theme] nav a.active { background: rgba(255, 255, 255, 0.08); }
+html[data-theme] nav a.active::before { left: 0; top: 0; bottom: 0; width: 3px; border-radius: 0; }
+html[data-theme] header { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: 1px solid var(--line); }
+html[data-theme] header .page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
+
+/* ---- cards: hairline, a small yellow label like a slide section ---- */
+html[data-theme] .card, html[data-theme] .kpi { background: var(--panel); border: 1px solid var(--line); box-shadow: none; }
+html[data-theme] .card { padding: 20px 22px; }
+html[data-theme] .card h3 {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; color: var(--gold);
+  padding-top: 0; margin-bottom: 16px;
+}
+html[data-theme="concrete"] .card h3 { color: var(--gold); }
+html[data-theme] .card h3 .pill, html[data-theme] .card h3 .mono, html[data-theme] .card h3 .subtle { text-transform: none; letter-spacing: 0; }
+html[data-theme] .card h3 .mono { color: var(--ink); font-size: 15px; letter-spacing: 0.02em; }
+html[data-theme] .kpi { padding: 18px 20px 16px; border-left: 3px solid var(--gold); }
+html[data-theme] .kpi::before { display: none; }
+html[data-theme] .kpi .kpi-label { color: var(--ink-2); letter-spacing: 0.16em; font-size: 11px; }
+html[data-theme] .kpi .kpi-value { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
+
+/* ---- buttons, inputs, tables, pills ---- */
+html[data-theme] .btn { border-radius: 3px; letter-spacing: 0.01em; }
+html[data-theme] .btn.gold { background: var(--gold); color: var(--gold-ink); }
+html[data-theme] .btn:not(.gold):not(.ghost) { background: var(--slate); color: #fff; }
+html[data-theme="concrete"] .btn:not(.gold):not(.ghost) { background: var(--slate); }
+html[data-theme] .btn.ghost { border-color: var(--line-strong); color: var(--ink); }
+html[data-theme] .btn.ghost:hover { border-color: var(--gold); background: transparent; color: var(--gold); }
+html[data-theme="concrete"] .btn.ghost:hover { color: var(--gold); }
+html[data-theme] input, html[data-theme] select, html[data-theme] textarea {
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 3px;
+}
+html[data-theme] input::placeholder, html[data-theme] textarea::placeholder { color: var(--ink-3); }
+html[data-theme] label { color: var(--ink-2); }
+html[data-theme] th {
+  background: transparent; color: var(--ink-2); letter-spacing: 0.14em; font-size: 10.5px; border-bottom: 1px solid var(--line-strong);
+}
+html[data-theme] td { border-bottom: 1px solid var(--line); }
+html[data-theme] tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 70%, transparent); }
+html[data-theme] .pill { border-radius: 2px; letter-spacing: 0.02em; }
+html[data-theme] a { color: var(--gold); }
+html[data-theme] nav a, html[data-theme] .mnav nav a { color: var(--nav-ink); }
+html[data-theme] nav a.active { color: #fff; }
+html[data-theme] a.btn { color: inherit; }
+html[data-theme] a.btn.gold { color: var(--gold-ink); }
+html[data-theme] a.btn.ghost { color: var(--ink); }
+html[data-theme] .bell, html[data-theme] .menu-btn { background: transparent; border-radius: 3px; }
+html[data-theme] .notice { border-radius: 3px; color: var(--ink); }
+html[data-theme] .drawer { background: var(--panel); color: var(--ink); border-left: 1px solid var(--line); }
+
+/* ---- rows: cards sit side by side only when they are about the same height;
+   app.js adds .stacked to a row whose cards are very different heights so there
+   is never a tall card beside a short one with a hole under it ---- */
+.row { align-items: stretch; }
+.row > .card { margin-bottom: 0; }
+.row.stacked { display: block; }
+.row.stacked > * { margin-bottom: 16px; width: 100%; }
+.row { margin-bottom: 16px; }
+
+/* ---- theme menu ---- */
+.theme-picker { position: relative; }
+.theme-picker select {
+  appearance: none; -webkit-appearance: none; padding: 7px 28px 7px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: transparent; border: 1px solid var(--line-strong); color: var(--ink-2); border-radius: 3px;
+}
+.theme-picker select:hover { border-color: var(--gold); color: var(--ink); }
+.theme-picker::after {
+  content: ""; position: absolute; right: 11px; top: 50%; width: 6px; height: 6px; margin-top: -5px;
+  border-right: 1.5px solid var(--ink-2); border-bottom: 1.5px solid var(--ink-2); transform: rotate(45deg); pointer-events: none;
+}
+.theme-picker.floating { position: fixed; top: 14px; right: 16px; z-index: 40; }
+.theme-picker.floating select { background: var(--panel); }
+.swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; }
+
+/* ---- sign-in page follows the theme ---- */
+html[data-theme] .login-screen { background: var(--bg); }
+html[data-theme] .login-split .login-card {
+  --gold: var(--t-gold); --gold-strong: var(--t-gold-strong); --gold-soft: var(--t-gold-soft); --gold-ink: var(--t-gold-ink);
+  --slate: var(--t-slate); --slate-2: var(--t-slate-2); --bg: var(--t-bg); --panel: var(--t-panel); --panel-2: var(--t-panel-2);
+  --line: var(--t-line); --line-strong: var(--t-line-strong); --ink: var(--t-ink); --ink-2: var(--t-ink-2); --ink-3: var(--t-ink-3);
+  --ok: var(--t-ok); --ok-bg: var(--t-ok-bg); --err: var(--t-err); --err-bg: var(--t-err-bg); --warn: var(--t-warn); --warn-bg: var(--t-warn-bg);
+  --info: var(--t-info); --info-bg: var(--t-info-bg);
+  background: var(--t-panel);
+}
+html[data-theme] .login-split .login-card .btn.gold.block { border-radius: 3px; }
+html[data-theme] .login-brand { background: var(--nav-bg); }
+html[data-theme] .demo-hint { background: var(--panel-2); color: var(--ink-2); border: 1px solid var(--line); border-radius: 3px; }
+html[data-theme] .demo-hint code { background: transparent; color: var(--ink); }
+html[data-theme] .login-split { border-radius: 6px; border: 1px solid var(--line); }
+html[data-theme] .login-card input { background: var(--panel-2); }
+
+/* ---- phones ---- */
+@media (max-width: 760px) {
+  html[data-theme] .kpi .kpi-value { font-size: 22px; }
+  html[data-theme] .kpi { padding: 14px 14px 12px; }
+  html[data-theme] header .page-title { font-size: 17px; }
+  header .theme-picker { display: none; }
+  .mnav .theme-picker { margin: 10px 0 0; display: block; }
+  .mnav .theme-picker select { width: 100%; }
+  html[data-theme] .card { padding: 16px; }
+  html[data-theme] td, html[data-theme] th { padding: 9px 8px; }
+}

@@ -94,7 +94,7 @@ async function loadReportKpis() {
       kpi("Accidents", k.accidents["Accidents"],
         (k.accidents["  Fatal"] || 0) + " fatal · " + (k.accidents["  Serious"] || 0) + " serious" +
         (k.accidents["Accident hotspot"] ? " · hotspot: " + k.accidents["Accident hotspot"] : "")) +
-      kpi("Net revenue", money(k.revenue["Net revenue"]), "refunded " + money(k.revenue["Refunded"])) +
+      kpi("Revenue collected", money(k.revenue["Net revenue"]), "fines, fees, permits and tolls") +
       kpi("Toll non-compliance", k.toll["Non-compliance rate"], k.toll["Flagged"] + " of " + k.toll["Vehicles checked"] + " checks") +
       kpi("PSV permits valid", k.psv["Permits currently valid"], k.psv["Permits expired"] + " expired") +
       "</div>";
@@ -153,7 +153,7 @@ VIEWS.reports = async function () {
 VIEWS.payments = async function () {
   $("#content").innerHTML = '<div id="pay-kpis"></div>' +
     '<div class="card"><h3>Transactions</h3><div class="toolbar">' +
-    '<select id="pay-status"><option value="">All statuses</option><option>completed</option><option>pending</option><option>failed</option><option>refunded</option></select>' +
+    '<select id="pay-status"><option value="">All statuses</option><option>completed</option><option>pending</option><option>failed</option></select>' +
     '<button class="btn gold sm" id="pay-go">Filter</button></div><div id="pay-list"></div></div>' +
     '<div class="card"><h3>Gateway reconciliation</h3>' +
     '<p class="small muted">Paste the gateway settlement statement as JSON: <code>[{"gateway_reference":"SANDBOX-…","amount":1000}]</code></p>' +
@@ -165,7 +165,7 @@ VIEWS.payments = async function () {
   async function loadSummary() {
     try {
       var s = await api("/api/payments/summary?days=30");
-      $("#pay-kpis").innerHTML = '<div class="grid cards">' + kpi("Gross (30 days)", money(s.gross)) + kpi("Refunded", money(s.refunded)) +
+      $("#pay-kpis").innerHTML = '<div class="grid cards">' + kpi("Gross (30 days)", money(s.gross)) +
         kpi("Net revenue", money(s.net)) +
         kpi("By type", Object.keys(s.by_type).map(function (t) { return esc(t) + ": " + money(s.by_type[t].total); }).join("<br>") || "—") + "</div>";
     } catch (e) { fail("#pay-kpis", e); }
@@ -178,20 +178,12 @@ VIEWS.payments = async function () {
         var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : p.status === "refunded" ? "amber" : "gray";
         var acts = "";
         if (p.receipt_number) acts += '<button class="btn ghost sm rcpt" data-id="' + esc(p.id) + '">PDF</button> ';
-        if (p.status === "completed" && can("payments:refund")) acts += '<button class="btn sm refund" data-id="' + esc(p.id) + '">Refund</button>';
         return [esc(p.receipt_number || "—"), '<span class="mono">' + esc(p.reference) + "</span>", esc(p.payment_type),
-          money(p.amount) + (p.refunded_amount ? '<div class="small muted">refunded ' + money(p.refunded_amount) + "</div>" : ""),
+          money(p.amount),
           esc(p.gateway), pill(p.status, cls), acts];
       }));
       $$("#pay-list .rcpt").forEach(function (b) {
         b.addEventListener("click", function () { download("/api/payments/" + b.dataset.id + "/receipt.pdf", "receipt.pdf").catch(function (e) { toast(e.message, "err"); }); });
-      });
-      $$("#pay-list .refund").forEach(function (b) {
-        b.addEventListener("click", function () {
-          var reason = prompt("Reason for refund (required):");
-          if (!reason) return;
-          mutate("/api/payments/" + b.dataset.id + "/refund", "POST", { reason: reason }, "Refund issued", function () { loadSummary(); loadList(); });
-        });
       });
     } catch (e) { fail("#pay-list", e); }
   }

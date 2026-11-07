@@ -31,6 +31,8 @@ class Inspection(Base):
     )
     findings: Mapped[str | None] = mapped_column(Text, nullable=True)
     inspected_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    checklist: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {item: pass|fail|na}
+    readings: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {brake_efficiency_pct: 62, ...}
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

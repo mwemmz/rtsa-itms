@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import or_  # noqa: E402
+from sqlalchemy import func, or_  # noqa: E402
 
 from app.api.enforcement import VIOLATION_PENALTIES, create_challan_for_violation  # noqa: E402
 from app.api.toll import _process_toll_event  # noqa: E402
@@ -32,17 +32,20 @@ from app.models.driver import Driver, DriverStatus, LicenceClass  # noqa: E402
 from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType  # noqa: E402
 from app.models.inspection import FitnessCertificate, Inspection, InspectionResult  # noqa: E402
 from app.models.insurance import Insurance  # noqa: E402
+from app.models.anpr import ANPREvent  # noqa: E402
+from app.models.driver_report import DriverReport  # noqa: E402
+from app.models.platform import AgencyClient, IntegrationLog, ReconciliationRun  # noqa: E402
 from app.models.licence import LicenceApplication, LicenceApplicationStatus  # noqa: E402
 from app.models.payment import Payment, PaymentStatus, PaymentType  # noqa: E402
 from app.models.psv import (  # noqa: E402
-    PSVCorridor, PSVOperator, PSVOperatorStatus, PSVPermit, PSVPermitStatus,
+    PSVCorridor, PSVOperator, PSVOperatorStatus, PSVPermit, PSVPermitStatus, PSVRouteAlert,
 )
 from app.models.road_network import (  # noqa: E402
     IncidentSeverity, IncidentType, Road, RoadIncident,
 )
 from app.models.toll import TollTransaction  # noqa: E402
 from app.models.user import User, UserRole  # noqa: E402
-from app.models.vehicle import Vehicle  # noqa: E402
+from app.models.vehicle import Vehicle, VehicleStatus  # noqa: E402
 from app.services.money import zmw  # noqa: E402
 from app.services.payments import complete_payment, create_payment, fail_payment  # noqa: E402
 
@@ -160,11 +163,19 @@ def reset(db) -> None:
         if pm_ids:
             db.query(PSVCorridor).filter(PSVCorridor.permit_id.in_(pm_ids)).delete(synchronize_session=False)
             db.query(PSVPermit).filter(PSVPermit.id.in_(pm_ids)).delete(synchronize_session=False)
+        if pm_ids:
+            db.query(PSVRouteAlert).filter(PSVRouteAlert.permit_id.in_(pm_ids)).delete(synchronize_session=False)
+        db.query(ANPREvent).filter(ANPREvent.camera_id.like("DEMO-%")).delete(synchronize_session=False)
         db.query(AccidentVehicle).filter(AccidentVehicle.vehicle_id.in_(vids)).delete(synchronize_session=False)
         db.query(FitnessCertificate).filter(FitnessCertificate.vehicle_id.in_(vids)).delete(synchronize_session=False)
         db.query(Inspection).filter(Inspection.vehicle_id.in_(vids)).delete(synchronize_session=False)
         db.query(Insurance).filter(Insurance.vehicle_id.in_(vids)).delete(synchronize_session=False)
         db.query(Vehicle).filter(Vehicle.id.in_(vids)).delete(synchronize_session=False)
+    if uids:
+        db.query(DriverReport).filter(DriverReport.reporter_id.in_(uids)).delete(synchronize_session=False)
+    db.query(IntegrationLog).filter(IntegrationLog.agency_name.like("[demo]%")).delete(synchronize_session=False)
+    db.query(AgencyClient).filter(AgencyClient.name.like("[demo]%")).delete(synchronize_session=False)
+    db.query(ReconciliationRun).filter(ReconciliationRun.report.like("[demo]%")).delete(synchronize_session=False)
     db.query(PSVOperator).filter(PSVOperator.licence_number.like("DEMO-%")).delete(synchronize_session=False)
     db.query(Accident).filter(Accident.description.like("[demo]%")).delete(synchronize_session=False)
     db.query(RoadIncident).filter(RoadIncident.description.like("[demo]%")).delete(synchronize_session=False)
@@ -587,6 +598,142 @@ def make_licence_applications(db, citizens):
         db.add(app)
 
 
+def make_extras(db, vehicles, drivers, officers, citizens):
+    """The modules the fines, tolls and accidents above do not touch: policy types, test checklists,
+    service fees, ANPR sightings, driver reports, PSV route alerts, agency integrations, reconciliation."""
+    import json
+
+    from app.core.security import hash_password as _h  # noqa: F401
+    from app.services import inspection_rules as rules
+    from app.services.integration import generate_key
+    from app.services.payments import create_payment as _pay
+
+    vids = {v.id: v for v in vehicles}
+    permit_vehicles = {p.vehicle_id for p in db.query(PSVPermit).filter(PSVPermit.vehicle_id.in_(list(vids))).all()}
+    # 1. policy types and premiums
+    typed = 0
+    for pol in db.query(Insurance).filter(Insurance.vehicle_id.in_(list(vids))).all():
+        v = vids[pol.vehicle_id]
+        if v.id in permit_vehicles:
+            pol.policy_type, pol.premium = "psv_passenger", rng.randint(280000, 520000)
+        elif v.make in ("Scania", "FAW") or v.model in ("Canter", "Truck"):
+            pol.policy_type, pol.premium = "goods_in_transit", rng.randint(450000, 900000)
+        else:
+            pol.policy_type = rng.choices(["third_party", "third_party_fire_theft", "comprehensive", "comesa_yellow_card"], weights=[50, 20, 25, 5])[0]
+            pol.premium = {"third_party": rng.randint(90000, 160000), "third_party_fire_theft": rng.randint(180000, 320000),
+                           "comprehensive": rng.randint(350000, 900000), "comesa_yellow_card": rng.randint(60000, 120000)}[pol.policy_type]
+        typed += 1
+    # every permitted vehicle has live passenger-liability cover, so renewal works in the demo
+    for vid in permit_vehicles:
+        if not db.query(Insurance).filter(Insurance.vehicle_id == vid, Insurance.policy_type == "psv_passenger", Insurance.is_active == True,  # noqa: E712
+                                          Insurance.end_date >= NOW).first():
+            db.query(Insurance).filter(Insurance.vehicle_id == vid, Insurance.is_active == True).update({"is_active": False})  # noqa: E712
+            db.add(Insurance(vehicle_id=vid, provider=rng.choice(INSURERS), policy_number=f"POL-{rng.randint(10**6, 10**7 - 1)}",
+                             policy_type="psv_passenger", premium=rng.randint(280000, 520000), start_date=NOW - timedelta(days=120),
+                             end_date=NOW + timedelta(days=245), is_active=True))
+    # 2. checklists and readings on past inspections
+    items = [c[0] for c in rules.CHECKLIST]
+    for ins in db.query(Inspection).filter(Inspection.vehicle_id.in_(list(vids))).all():
+        if ins.result == InspectionResult.PASSED:
+            ins.checklist = rules.dump({k: "pass" for k in items})
+            ins.readings = rules.dump({"brake_efficiency_pct": rng.randint(58, 82), "tyre_tread_mm": round(rng.uniform(2.2, 7.5), 1),
+                                       "emission_co_pct": round(rng.uniform(0.3, 3.2), 1)})
+        elif ins.result == InspectionResult.FAILED:
+            bad = rng.choice(["brakes", "tyres", "lights", "exhaust"])
+            ins.checklist = rules.dump({k: ("fail" if k == bad else "pass") for k in items})
+            ins.readings = rules.dump({"brake_efficiency_pct": rng.randint(30, 49) if bad == "brakes" else rng.randint(55, 70),
+                                       "tyre_tread_mm": round(rng.uniform(0.6, 1.4), 1) if bad == "tyres" else round(rng.uniform(2.5, 6), 1)})
+    # 3. fees paid through the services screen: booked tests, permit renewals, replacement cards
+    owners = {u.id: u for u in citizens}
+    booked = paid_fees = 0
+    for v in vehicles:
+        u = owners.get(v.user_id)
+        if u is None or booked >= 6:
+            continue
+        if db.query(Inspection).filter(Inspection.vehicle_id == v.id, Inspection.result == InspectionResult.PENDING).first():
+            continue
+        db.add(Inspection(vehicle_id=v.id, inspection_centre=rng.choice(CENTRES), scheduled_date=NOW + timedelta(days=rng.randint(1, 12))))
+        _pay(db, u, PaymentType.FEE, v.id, 15000, description=f"Fitness test fee {v.registration_number}")
+        booked += 1
+        paid_fees += 1
+    for pid in list(permit_vehicles)[:3]:
+        v = vids[pid]
+        u = owners.get(v.user_id)
+        permit = db.query(PSVPermit).filter(PSVPermit.vehicle_id == pid).first()
+        if u and permit:
+            _pay(db, u, PaymentType.PERMIT, permit.id, 120000, description=f"PSV permit renewal {permit.permit_number}")
+            paid_fees += 1
+    for d in [x for x in drivers if x.user_id in owners][:3]:
+        _pay(db, owners[d.user_id], PaymentType.FEE, d.id, 10000, description=f"Replacement licence card {d.licence_number}")
+        paid_fees += 1
+    # 4. ANPR sightings
+    cameras = [("DEMO-CAM-01", "Great East Road, Lusaka"), ("DEMO-CAM-02", "Cairo Road, Lusaka"), ("DEMO-CAM-03", "Kafue Road, Chilanga"),
+               ("DEMO-CAM-04", "Ndola-Kitwe Dual Carriageway")]
+    for i in range(46):
+        cam = rng.choice(cameras)
+        if i % 9 == 0:
+            plate, vid = f"{rng.choice(PLATE_LETTERS)} {rng.randint(1000, 9999)}", None  # a plate nobody has registered
+        else:
+            v = rng.choice(vehicles); plate, vid = v.registration_number, v.id
+        db.add(ANPREvent(plate_number=plate, vehicle_id=vid, location=cam[1], camera_id=cam[0],
+                         timestamp=NOW - timedelta(minutes=rng.randint(5, 60 * 24 * 30)), confidence=round(rng.uniform(0.74, 0.99), 2)))
+    stolen = next((x for x in vehicles if x.status == VehicleStatus.STOLEN and x.user_id == citizens[3].id), None)
+    if stolen is not None:
+        db.add(ANPREvent(plate_number=stolen.registration_number, vehicle_id=stolen.id, location="Great East Road, Lusaka", camera_id="DEMO-CAM-01",
+                         timestamp=NOW - timedelta(hours=3), confidence=0.97))
+    # 5. citizen reports of other drivers
+    types = ["using_phone", "speeding", "running_red_light", "reckless_driving", "rear_seat_belt"]
+    statuses = ["pending", "pending", "pending", "accepted", "accepted", "rejected", "false", "pending"]
+    for i, st in enumerate(statuses):
+        rep = citizens[(i + 4) % len(citizens)]
+        v = rng.choice([x for x in vehicles if x.user_id != rep.id])
+        db.add(DriverReport(reporter_id=rep.id, plate_number=v.registration_number, vehicle_id=v.id, violation_type=rng.choice(types),
+                            location=(loc := rng.choice(LOCATIONS))[0], latitude=loc[1], longitude=loc[2], observed_at=NOW - timedelta(hours=rng.randint(2, 200)),
+                            description=rng.choice(["Driver was on a phone call with one hand on the wheel at the lights.",
+                                                    "Overtook on a solid line near the roundabout and cut in front of a bus.",
+                                                    "Went through the red light after it had been red for several seconds.",
+                                                    "Weaving between lanes at high speed, nearly hit a minibus."]),
+                            status=st, reviewed_by=None if st == "pending" else officers[0].id,
+                            reviewed_at=None if st == "pending" else NOW - timedelta(hours=rng.randint(1, 40)),
+                            review_note=None if st == "pending" else {"accepted": "Matches the camera sighting. Fine issued.",
+                                                                       "rejected": "Evidence too unclear to act on.", "false": "Plate was elsewhere at that time."}[st]))
+    # 6. PSV vehicles that left their route corridor
+    alerts = 0
+    for p in db.query(PSVPermit).filter(PSVPermit.vehicle_id.in_(list(vids))).all():
+        if db.query(PSVCorridor).filter(PSVCorridor.permit_id == p.id).first() and alerts < 7:
+            dist = rng.randint(900, 6000)
+            db.add(PSVRouteAlert(permit_id=p.id, vehicle_id=p.vehicle_id, latitude=-15.35 + rng.random() * 0.1, longitude=28.3 + rng.random() * 0.3,
+                                 distance_m=dist, buffer_m=500, occurred_at=NOW - timedelta(hours=rng.randint(1, 160)),
+                                 acknowledged=rng.random() < 0.4, acknowledged_by=officers[0].id if alerts % 3 == 0 else None))
+            alerts += 1
+    # 7. partner agencies and what they have called
+    agencies = [("[demo] Zambia Police Service", "police", "vehicles:read,drivers:read,accidents:write", "traffic@police.example.zm"),
+                ("[demo] Insurers Association", "insurance", "insurance:read,insurance:write", "api@insurers.example.zm"),
+                ("[demo] Toll Authority", "toll_authority", "compliance:read,vehicles:read", "ops@toll.example.zm")]
+    clients = []
+    for name, typ, scopes, mail in agencies:
+        full, prefix, digest = generate_key()
+        c = AgencyClient(name=name, agency_type=typ, api_key_prefix=prefix, api_key_hash=digest, scopes=scopes, contact_email=mail,
+                         data_sharing_agreement="Demo agreement: read access for enforcement and compliance checks.",
+                         contract_expires_at=NOW + timedelta(days=rng.randint(60, 700)), last_used_at=NOW - timedelta(minutes=rng.randint(2, 600)))
+        db.add(c); clients.append(c)
+    db.flush()
+    for i in range(70):
+        c = rng.choice(clients)
+        ok = rng.random() > 0.08
+        ep = {"police": "/api/integration/vehicles/lookup", "insurance": "/api/integration/insurance", "toll_authority": "/api/integration/compliance"}[c.agency_type]
+        db.add(IntegrationLog(agency_id=c.id, agency_name=c.name, direction="inbound", endpoint=ep, status_code=200 if ok else rng.choice([403, 404, 429]),
+                              success=ok, latency_ms=round(rng.uniform(18, 240), 1), detail=None if ok else "Rejected: outside the agreed scope or rate limit",
+                              created_at=NOW - timedelta(minutes=rng.randint(1, 60 * 24 * 14))))
+    # 8. one gateway reconciliation
+    ledger = db.query(func.coalesce(func.sum(Payment.amount), 0)).filter(Payment.status == PaymentStatus.COMPLETED).scalar() or 0
+    done = db.query(func.count()).select_from(Payment).filter(Payment.status == PaymentStatus.COMPLETED).scalar() or 0
+    db.add(ReconciliationRun(gateway="mobile_money", statement_total=int(ledger), ledger_total=int(ledger), matched=done, mismatched=0,
+                             missing_in_ledger=0, missing_in_statement=0, report="[demo] Statement and ledger agree.", run_by=officers[0].id))
+    db.flush()
+    return {"policies typed": typed, "service fees paid": paid_fees, "tests booked": booked, "alerts": alerts}
+
+
 def summary(db) -> None:
     from sqlalchemy import func
     paid = db.query(func.coalesce(func.sum(Payment.amount), 0)).filter(Payment.status == PaymentStatus.COMPLETED,
@@ -627,6 +774,7 @@ def main() -> int:
         make_licence_applications(db, citizens)
         nom = make_nomination_demo(db, vehicles, drivers, officers, citizens)
         print(f"Driver-nomination demo: {nom}")
+        print(f"Other modules: {make_extras(db, vehicles, drivers, officers, citizens)}")
         from app.services.overdue import mark_overdue_challans
         overdue = mark_overdue_challans(db)
         db.commit()

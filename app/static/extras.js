@@ -7,9 +7,44 @@
   [["admin"], ["officer"]].forEach(function (r) {
     NAV[r[0]] = (NAV[r[0]] || []).concat([
       { id: "psv", label: "PSV & routes" },
-      { id: "insurance", label: "Insurance" }
+      { id: "insurance", label: "Insurance" },
+      { id: "insights", label: "Insights" }
     ]);
   });
+  // The administrator sees every module an officer does, plus the admin ones.
+  var have = {};
+  NAV.admin.forEach(function (x) { have[x.id] = 1; });
+  NAV.officer.forEach(function (x) { if (!have[x.id] && x.id !== "account" && x.id !== "reports") NAV.admin.push(x); });
+  NAV.citizen.push({ id: "services", label: "Pay for services" });
+
+  var GROUPS = [
+    ["Overview", ["dashboard", "insights", "reports"]],
+    ["Vehicles and drivers", ["vehicles", "drivers", "licensing", "inspections", "insurance", "psv"]],
+    ["Enforcement", ["violations", "challans", "driver_reports", "anpr", "toll", "accidents"]],
+    ["Roads", ["alerts", "planner"]],
+    ["Money and system", ["payments", "integrations", "users", "rules", "settings", "audits", "system", "account"]]
+  ];
+  var CITIZEN_GROUPS = [
+    ["Overview", ["dashboard"]],
+    ["Pay and renew", ["fines", "services", "licence", "vehicles", "applications", "receipts"]],
+    ["Report", ["report", "report_driver", "alerts", "planner"]],
+    ["Account", ["account"]]
+  ];
+  function regroup(role, groups) {
+    var items = NAV[role], out = [], seen = {};
+    groups.forEach(function (g) {
+      g[1].forEach(function (id) {
+        var it = items.filter(function (x) { return x.id === id; })[0];
+        if (it && !seen[id]) { seen[id] = 1; it.group = g[0]; out.push(it); }
+      });
+    });
+    items.forEach(function (it) { if (!seen[it.id]) { it.group = it.group || "More"; out.push(it); } });
+    NAV[role] = out;
+  }
+  regroup("admin", GROUPS);
+  regroup("officer", GROUPS);
+  regroup("toll_operator", GROUPS);
+  regroup("citizen", CITIZEN_GROUPS);
 })();
 
 function xPlateLookup(plate) {
@@ -159,27 +194,48 @@ VIEWS.psv = async function () {
 /* ---------------- Insurance ---------------- */
 
 VIEWS.insurance = async function () {
+  var types = [];
+  try { types = await api("/api/insurance/policy-types"); } catch (e) { /* the form still works with the default */ }
+  var byId = {}; types.forEach(function (t) { byId[t.id] = t; });
   $("#content").innerHTML =
+    '<div class="card"><h3>What insurance does in this system</h3>' +
+      '<p style="margin:0 0 8px">Insurers sell the cover; RTSA does not. Officers record each policy here so the system can check it.</p>' +
+      '<ul class="small" style="margin:0;padding-left:18px;line-height:1.7">' +
+        '<li>An active policy is one of the checks at the roadside and at toll gates. No active policy means the vehicle is flagged and a "no insurance" fine can follow.</li>' +
+        '<li>Owners get reminders before a policy ends (30, 14, 7 and 1 days).</li>' +
+        '<li>A PSV permit can only be renewed online while the vehicle has an active passenger-liability policy.</li></ul></div>' +
     '<div class="row">' +
-      '<div class="card"><h3>Insurance policies</h3>' +
+      '<div class="card"><h3>Record a policy</h3>' +
         '<div class="field"><label>Vehicle plate</label><div class="toolbar" style="margin-bottom:0;"><input id="ins-plate" placeholder="e.g. BAK 123">' +
         '<button class="btn ghost sm" id="ins-go" type="button">Look up</button></div>' +
         '<div class="small muted" id="ins-vehicle" style="margin-top:6px;"></div></div>' +
         '<form id="ins-form" style="display:none;">' +
-          '<div class="field"><label>Insurer</label><input name="provider" placeholder="e.g. ZSIC" required></div>' +
+          '<div class="field"><label>Policy type</label><select name="policy_type" id="ins-type">' +
+            types.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.label) + "</option>"; }).join("") + "</select>" +
+            '<p class="small muted" id="ins-type-help" style="margin:6px 0 0"></p></div>' +
+          '<div class="field"><label>Insurer</label><select name="provider" required><option value="">Choose an insurer</option>' +
+            ["ZSIC General Insurance", "Madison General Insurance", "Professional Insurance Corporation Zambia", "Hollard Insurance Zambia", "Mayfair Insurance", "Goldman Insurance", "Other"].map(function (n) { return "<option>" + esc(n) + "</option>"; }).join("") + "</select></div>" +
           '<div class="field"><label>Policy number</label><input name="policy_number" required></div>' +
+          '<div class="field"><label>Premium paid (ZMW, optional)</label><input name="premium" type="number" min="0" step="0.01"></div>' +
           '<div class="field"><label>Starts</label><input name="start_date" type="datetime-local" required></div>' +
           '<div class="field"><label>Ends</label><input name="end_date" type="datetime-local" required></div>' +
           '<button class="btn gold" type="submit">Add policy</button></form></div>' +
       '<div class="card"><h3>Policies for this vehicle</h3><div id="ins-list"><div class="empty">Look up a vehicle first.</div></div></div>' +
     "</div>";
 
+  function showHelp() {
+    var t = byId[$("#ins-type").value];
+    $("#ins-type-help").innerHTML = t ? "<b>Covers:</b> " + esc(t.covers) + "<br><b>When:</b> " + esc(t.required_for) : "";
+  }
+  if ($("#ins-type")) { $("#ins-type").addEventListener("change", showHelp); showHelp(); }
+
   var vehicleId = null;
   async function loadPolicies() {
     try {
       var items = await api("/api/insurance/vehicle/" + vehicleId);
-      $("#ins-list").innerHTML = tbl(["Insurer", "Policy", "From", "To", "Status"], items.map(function (p) {
-        return [esc(p.provider), '<span class="mono">' + esc(p.policy_number) + "</span>", dday(p.start_date), dday(p.end_date), pill(p.is_active ? "active" : "inactive", p.is_active ? "green" : "gray")];
+      $("#ins-list").innerHTML = tbl(["Type", "Insurer", "Policy", "Premium", "From", "To", "Status"], items.map(function (p) {
+        var t = byId[p.policy_type];
+        return [esc(t ? t.label : p.policy_type), esc(p.provider), '<span class="mono">' + esc(p.policy_number) + "</span>", p.premium != null ? money(p.premium) : "—", dday(p.start_date), dday(p.end_date), pill(p.is_active ? "active" : "inactive", p.is_active ? "green" : "gray")];
       }));
     } catch (e) { fail("#ins-list", e); }
   }
@@ -197,6 +253,137 @@ VIEWS.insurance = async function () {
   $("#ins-form").addEventListener("submit", async function (e) {
     e.preventDefault(); if (!vehicleId) return;
     var d = formData(e.target); d.vehicle_id = vehicleId;
-    mutate("/api/insurance/", "POST", d, "Policy added", function () { e.target.reset(); loadPolicies(); });
+    if (d.premium === "" || d.premium == null) delete d.premium; else d.premium = Math.round(parseFloat(d.premium) * 100);
+    if (d.start_date) d.start_date = new Date(d.start_date).toISOString();
+    if (d.end_date) d.end_date = new Date(d.end_date).toISOString();
+    mutate("/api/insurance/", "POST", d, "Policy added", function () { e.target.reset(); showHelp(); loadPolicies(); });
   });
 };
+
+
+/* ---------------- Pay for services (citizen) ---------------- */
+
+VIEWS.services = async function () {
+  $("#content").innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    var cat = await api("/api/services/catalogue");
+    var vehicles = [];
+    try { vehicles = await api("/api/citizen/my-vehicles"); } catch (e) { /* none linked */ }
+    var vopts = vehicles.map(function (v) { return '<option value="' + esc(v.id) + '">' + esc(v.registration_number) + " · " + esc(v.make + " " + v.model) + "</option>"; }).join("");
+    $("#content").innerHTML = '<div class="grid cards" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">' + cat.services.map(function (sv) {
+      var body = '<p class="muted" style="margin:0 0 12px">' + esc(sv.what) + "</p>";
+      if (sv.link) body += '<p><b>' + esc(sv.fee_label) + '</b></p><a class="btn gold" href="#/' + esc(sv.link) + '">Go to My licence</a>';
+      else {
+        if (sv.needs_vehicle) body += '<div class="field"><label>Vehicle</label><select class="sv-vehicle">' + (vopts || '<option value="">No vehicles linked</option>') + "</select></div>";
+        if (sv.id === "fitness_test") body += '<div class="field"><label>Inspection centre</label><select class="sv-centre">' + cat.centres.map(function (c) { return "<option>" + esc(c) + "</option>"; }).join("") + "</select></div>" +
+          '<div class="field"><label>Preferred date</label><input type="date" class="sv-date" min="' + new Date().toISOString().slice(0, 10) + '"></div>';
+        body += '<p><b>' + esc(sv.fee_label) + '</b></p><button class="btn gold sv-pay" data-service="' + esc(sv.id) + '">Pay ' + esc(sv.fee_label) + "</button>";
+      }
+      return '<div class="card" data-svc="' + esc(sv.id) + '"><h3>' + esc(sv.name) + "</h3>" + body + "</div>";
+    }).join("") + "</div>" +
+      '<div class="card"><h3>Not paid here</h3>' + cat.not_handled_here.map(function (n) { return "<p style=\"margin:0 0 6px\"><b>" + esc(n.name) + "</b> · " + esc(n.agency) + ". " + esc(n.what) + "</p>"; }).join("") +
+      '<p class="small muted" style="margin:10px 0 0">Fees are placeholders until RTSA confirms its schedule. Payments here use the sandbox gateway.</p></div>';
+    $$(".sv-pay").forEach(function (b) {
+      b.addEventListener("click", async function () {
+        var card = b.closest(".card");
+        var body = { service: b.dataset.service };
+        var sel = card.querySelector(".sv-vehicle"); if (sel) body.vehicle_id = sel.value;
+        var c = card.querySelector(".sv-centre"); if (c) body.inspection_centre = c.value;
+        var d = card.querySelector(".sv-date"); if (d && d.value) body.preferred_date = new Date(d.value + "T09:00:00").toISOString();
+        b.disabled = true;
+        try {
+          var r = await api("/api/services/pay", { method: "POST", body: JSON.stringify(body) });
+          toast(r.message + ". Receipt " + r.receipt_number, "ok");
+        } catch (e) { toast(e.message, "err"); }
+        b.disabled = false;
+      });
+    });
+  } catch (e) { fail("#content", e); }
+};
+
+/* ---------------- Insights (staff) ---------------- */
+
+VIEWS.insights = async function () {
+  $("#content").innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    var d = await api("/api/insights/");
+    var max = Math.max.apply(null, d.accident_hotspots.map(function (h) { return h.weight; }).concat([1]));
+    var bars = d.accident_hotspots.length ? d.accident_hotspots.map(function (h) {
+      return '<div style="margin-bottom:10px"><div class="small" style="display:flex;justify-content:space-between"><span>' + esc(h.location) + "</span><span class=\"muted\">" + h.accidents + " accidents</span></div>" +
+        '<div style="height:8px;background:var(--line)"><div style="height:8px;width:' + Math.round(h.weight / max * 100) + '%;background:var(--gold)"></div></div></div>';
+    }).join("") : '<div class="empty">No accidents recorded in the last year.</div>';
+    var pipe = Object.keys(d.expiry_pipeline).map(function (k) { var p = d.expiry_pipeline[k]; return [esc(k), p["30"], p["60"], p["90"]]; });
+    $("#content").innerHTML =
+      '<div class="grid cards"><div class="kpi"><div class="kpi-label">Fitness fees expected</div><div class="kpi-value">' + money(d.fitness_fees_expected_90d) + '</div><div class="kpi-sub">from certificates ending in 90 days</div></div></div>' +
+      '<div class="row">' +
+        '<div class="card"><h3>Vehicles to look at first</h3>' +
+          tbl(["Plate", "Score", "Why"], d.risky_vehicles.map(function (r) { return ['<span class="mono">' + esc(r.plate) + "</span><div class=\"small muted\">" + esc(r.vehicle) + "</div>", "<b>" + r.score + "</b>", '<span class="small">' + esc(r.why) + "</span>"]; })) +
+          '<p class="small muted" style="margin:10px 0 0">How the score works: ' + esc(d.risk_rules) + "</p></div>" +
+        '<div class="card"><h3>Accident hotspots, last 12 months</h3>' + bars +
+          '<p class="small muted" style="margin:6px 0 0">Fatal counts 10, serious 4, minor 1.</p></div>' +
+      "</div>" +
+      '<div class="row">' +
+        '<div class="card"><h3>What expires soon</h3>' + tbl(["Document", "30 days", "60 days", "90 days"], pipe) +
+          '<p class="small muted" style="margin:10px 0 0">Counts are cumulative: the 90-day column includes the first two.</p></div>' +
+        '<div class="card"><h3>Where offences happen</h3>' + tbl(["Location", "Offences"], d.offence_hotspots.map(function (h) { return [esc(h.location), h.offences]; })) + "</div>" +
+      "</div>";
+  } catch (e) { fail("#content", e); }
+};
+
+/* ---------------- theme menu and row layout ---------------- */
+
+(function themeAndLayout() {
+  function apply(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("itms-theme", t); } catch (e) { /* private window */ }
+    var meta = document.querySelector('meta[name="theme-color"]');
+    var bg = { navy: "#0F2238", asphalt: "#16191C", forest: "#0E3B2A", concrete: "#E9ECEA" }[t];
+    if (meta && bg) meta.setAttribute("content", bg);
+    $$(".theme-picker select").forEach(function (s) { s.value = t; });
+  }
+  function current() { return document.documentElement.getAttribute("data-theme") || "navy"; }
+  var shellSel = $("#theme-select");
+  if (shellSel) shellSel.addEventListener("change", function () { apply(shellSel.value); });
+  // the sign-in page gets the same picker, top right
+  var login = $("#login-screen");
+  if (login && shellSel) {
+    var lab = document.createElement("label");
+    lab.className = "theme-picker floating";
+    lab.innerHTML = shellSel.parentNode.innerHTML.replace('id="theme-select"', 'id="theme-select-login"');
+    login.appendChild(lab);
+    lab.querySelector("select").addEventListener("change", function (e) { apply(e.target.value); });
+  }
+  // phones: the header picker is hidden, so the menu drawer gets one
+  var drawer = $("#mnav");
+  if (drawer && shellSel) {
+    var dl = document.createElement("label");
+    dl.className = "theme-picker";
+    dl.innerHTML = shellSel.parentNode.innerHTML.replace('id="theme-select"', 'id="theme-select-menu"');
+    drawer.appendChild(dl);
+    dl.querySelector("select").addEventListener("change", function (e) { apply(e.target.value); });
+  }
+  apply(current());
+
+  // Cards in a row sit side by side only when they are close in height.
+  // A tall table beside a short chart leaves a hole, so stack those full width.
+  function settle() {
+    $$("#content .row").forEach(function (row) {
+      row.classList.remove("stacked");
+      row.style.alignItems = "flex-start"; // measure each card at its own height
+      var kids = Array.prototype.filter.call(row.children, function (k) { return k.offsetHeight > 0; });
+      var done = function () { row.style.alignItems = ""; };
+      if (kids.length < 2) return done();
+      var side = kids.some(function (k) { return k.offsetTop !== kids[0].offsetTop; }) === false;
+      if (!side) return done(); // already wrapped by width
+      var hs = kids.map(function (k) { return k.offsetHeight; });
+      var hi = Math.max.apply(null, hs), lo = Math.min.apply(null, hs);
+      if (hi - lo > 120 && hi / lo > 1.3) row.classList.add("stacked");
+      done();
+    });
+  }
+  var timer = null;
+  function later() { clearTimeout(timer); timer = setTimeout(settle, 120); }
+  var content = $("#content");
+  if (content && window.MutationObserver) new MutationObserver(later).observe(content, { childList: true, subtree: true });
+  window.addEventListener("resize", later);
+})();

@@ -47,6 +47,14 @@ def schedule_inspection(
     return inspection
 
 
+@router.get("/checklist-spec")
+def checklist_spec(current_user: User = Depends(require_role(*FIELD_STAFF))):
+    """The checklist items and instrument limits the test is judged against."""
+    from app.services import inspection_rules
+
+    return inspection_rules.spec()
+
+
 @router.get("/vehicle/{vehicle_id}", response_model=list[InspectionResponse])
 def list_inspections_for_vehicle(
     vehicle_id: str,
@@ -67,11 +75,36 @@ def update_inspection_result(
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(inspection, field, value)
+    from app.services import inspection_rules as rules
+
+    data = payload.model_dump(exclude_unset=True)
+    try:
+        suggested, reasons = rules.evaluate(payload.checklist, payload.readings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    result = payload.result
+    if suggested is not None:
+        if result is None:
+            result = InspectionResult(suggested)  # the checks decide
+        elif result == InspectionResult.PASSED and suggested == "failed":
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot pass this vehicle: " + "; ".join(reasons),
+            )
+        if result == InspectionResult.FAILED and not data.get("findings") and reasons:
+            data["findings"] = "; ".join(reasons)
+    data["result"] = result
+    for key in ("checklist", "readings"):
+        if key in data:
+            data[key] = rules.dump(data[key])
+    for field, value in data.items():
+        if value is not None:
+            setattr(inspection, field, value)
+    if result is None:
+        result = inspection.result
 
     # If passed, issue a fitness certificate
-    if payload.result == InspectionResult.PASSED:
+    if result == InspectionResult.PASSED:
         existing = db.query(FitnessCertificate).filter(
             FitnessCertificate.inspection_id == inspection.id
         ).first()
@@ -89,7 +122,7 @@ def update_inspection_result(
     db.flush()
     log_action(
         db, "update_result", "inspection", str(inspection.id),
-        f"Result: {payload.result}", current_user.id
+        f"Result: {result.value}", current_user.id
     )
     db.commit()
     db.refresh(inspection)

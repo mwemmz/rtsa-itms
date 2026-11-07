@@ -711,24 +711,12 @@ def test_mobile_money_webhook_settles_asynchronously():
     assert client.get(f"/api/payments/{pay['id']}/receipt", headers=h).status_code == 200
 
 
-def test_refund_reopens_fine_and_is_permission_gated():
+def test_government_payments_cannot_be_refunded():
     admin, _, _ = _auth_headers("admin")
     h, _, uid = _auth_headers("citizen")
     _, challan_id = _vehicle_with_fine(uid, amount=40000)
     pay = client.post("/api/payments/", json={"payment_type": "fine", "related_entity_id": challan_id}, headers=h).json()
-    assert client.post(f"/api/payments/{pay['id']}/refund", json={"reason": "mistake"}, headers=h).status_code == 403
-    assert client.post(f"/api/payments/{pay['id']}/refund", json={"amount": 999999, "reason": "too much"},
-                       headers=admin).status_code == 400
-    part = client.post(f"/api/payments/{pay['id']}/refund", json={"amount": 10000, "reason": "partial"}, headers=admin)
-    assert part.status_code == 200 and part.json()["status"] == "completed" and part.json()["refunded_amount"] == 10000
-    full = client.post(f"/api/payments/{pay['id']}/refund", json={"reason": "rest"}, headers=admin)
-    assert full.json()["status"] == "refunded" and full.json()["refunded_amount"] == 40000
-    db = _db()
-    try:
-        assert db.query(Challan).filter(Challan.id == challan_id).first().status == ChallanStatus.UNPAID
-    finally:
-        db.close()
-
+    assert client.post(f"/api/payments/{pay['id']}/refund", json={"reason": "x"}, headers=admin).status_code in (404, 405)
 
 def test_reconciliation_finds_matches_and_discrepancies():
     admin, _, _ = _auth_headers("admin")

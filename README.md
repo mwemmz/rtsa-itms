@@ -467,3 +467,14 @@ Endpoints: `GET /api/portal/nominations`, `POST /api/portal/fines/{id}/nominate`
 **Stolen vehicles.** An owner reports a theft with the police report number (My vehicles, "Report stolen"). From then until an officer marks it recovered, a fine for an offence by the vehicle is cancelled automatically instead of charged to the owner, the owner is not notified or asked to name a driver, and a toll-gate sighting alerts officers and admins ("STOLEN VEHICLE SIGHTED") instead of creating a fine. `POST /api/portal/vehicles/{id}/report-stolen`, `POST /api/enforcement/vehicles/{id}/recovered`.
 
 The demo data includes an appealable fine, a citizen with 9 of 12 points, and a vehicle reported stolen.
+
+
+## Services, insights, inspections and themes
+
+* **Pay for services** (citizen): book a fitness test, renew a PSV route permit, replace a lost licence card; licence renewal links to My licence. Fees live under Settings, `fees.*`, and are placeholders until RTSA confirms its schedule. Road tax is shown as "paid to ZRA": it is not an RTSA charge. Government payments are not refundable, so there is no refund action.
+* **PSV permit renewal** needs an active `psv_passenger` insurance policy on the vehicle.
+* **Insurance** policies carry a type (third-party, fire and theft, comprehensive, PSV passenger liability, goods-in-transit, COMESA Yellow Card) and an optional premium. Types and what they cover are in `app/services/insurance_types.py`.
+* **Inspection** is a checklist plus instrument readings (`app/services/inspection_rules.py`). The checks decide pass or fail; an officer cannot pass a vehicle whose checks fail. A passed test issues a certificate with a public check at `/api/verify/fitness/{number}` and a QR code (`.../qr.svg`). The limits are illustrative.
+* **Insights** (officer and admin): vehicles to look at first (a visible scoring rule), accident hotspots, what expires in 30/60/90 days, offence locations.
+* **Themes**: Navy (default, matches the presentation), Asphalt, Forest, Concrete (light). Chosen from the header; stored in the browser.
+* The administrator's menu now includes every officer module.
