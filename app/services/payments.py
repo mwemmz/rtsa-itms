@@ -35,6 +35,7 @@ from app.models.toll import TollTransaction
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.services import settings as runtime_settings
+from app.services.money import zmw
 from app.services.audit import log_action
 from app.services.notifications import notify
 from app.services.ownership import owes_challan, owner_user_id
@@ -238,7 +239,7 @@ def complete_payment(db: Session, payment: Payment, actor_id=None) -> Payment:
     recipient = _receipt_recipient(db, payment)
     if recipient:
         notify(db, recipient, "payment_receipt",
-               {"amount": payment.amount, "reference": payment.reference,
+               {"amount": zmw(payment.amount), "reference": payment.reference,
                 "receipt": payment.receipt_number})
     db.flush()
     return payment
@@ -252,7 +253,7 @@ def fail_payment(db: Session, payment: Payment, reason: str, actor_id=None) -> P
     record_event(db, payment, "failed", actor_id, note=reason[:300])
     recipient = _receipt_recipient(db, payment)
     if recipient:
-        notify(db, recipient, "payment_failed", {"amount": payment.amount, "reference": payment.reference})
+        notify(db, recipient, "payment_failed", {"amount": zmw(payment.amount), "reference": payment.reference})
     db.flush()
     return payment
 
@@ -281,7 +282,7 @@ def refund_payment(db: Session, payment: Payment, actor: User, amount: int | Non
     log_action(db, "refund", "payment", str(payment.id), f"{amount} refunded: {reason[:100]}", actor.id)
     recipient = _receipt_recipient(db, payment)
     if recipient:
-        notify(db, recipient, "refund_issued", {"amount": amount, "reference": payment.reference})
+        notify(db, recipient, "refund_issued", {"amount": zmw(amount), "reference": payment.reference})
     db.flush()
     return payment
 

@@ -109,10 +109,13 @@ def run_expiry_scan(
     """Run the expiry-reminder scan now (the worker also runs it hourly)."""
     from app.services.expiry import scan_expiries
 
+    from app.services.overdue import mark_overdue_challans
+
     sent = scan_expiries(db)
-    log_action(db, "expiry_scan", "system", None, str(sent), current_user.id)
+    overdue = mark_overdue_challans(db)
+    log_action(db, "expiry_scan", "system", None, f"{sent} {overdue}", current_user.id)
     db.commit()
-    return {"sent": sent}
+    return {"sent": sent, "overdue": overdue}
 
 
 @router.post("/dispatch-notifications")

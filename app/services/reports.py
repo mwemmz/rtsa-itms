@@ -24,6 +24,7 @@ from app.models.psv import PSVOperator, PSVPermit
 from app.models.toll import TollComplianceResult, TollTransaction
 from app.models.vehicle import Vehicle
 from app.services import payments as payment_service
+from app.services.money import kwacha, zmw
 
 MAX_EXPORT_ROWS = 50_000
 
@@ -164,7 +165,7 @@ def _psv_summary(db, start, end):
 def _revenue_rows(db, start, end, limit):
     q = (db.query(Payment).filter(Payment.created_at >= start, Payment.created_at <= end)
          .order_by(Payment.created_at.desc()).limit(limit))
-    return [[p.receipt_number or "", p.reference, p.payment_type.value, p.amount, p.refunded_amount,
+    return [[p.receipt_number or "", p.reference, p.payment_type.value, kwacha(p.amount), kwacha(p.refunded_amount),
              p.currency, p.gateway or "", p.status.value, p.paid_at or ""] for p in q]
 
 
@@ -180,7 +181,7 @@ def _toll_rows(db, start, end, limit):
     q = (db.query(TollTransaction).filter(TollTransaction.timestamp >= start, TollTransaction.timestamp <= end)
          .order_by(TollTransaction.timestamp.desc()).limit(limit))
     return [[t.plate_number, t.gate_id, t.timestamp, t.compliance_result.value, t.flagged_issues or "",
-             t.toll_amount if t.toll_amount is not None else "", "yes" if t.is_paid else "no"] for t in q]
+             kwacha(t.toll_amount) if t.toll_amount is not None else "", "yes" if t.is_paid else "no"] for t in q]
 
 
 def _toll_summary(db, start, end):
@@ -193,6 +194,24 @@ def _toll_summary(db, start, end):
     return {"Vehicles checked": total, "Flagged": flagged,
             "Non-compliance rate": f"{(flagged / total * 100):.1f}%" if total else "n/a",
             "Unpaid toll value": int(unpaid)}
+
+
+# Summary figures that are money (stored in ngwee). The dashboard cards format these themselves;
+# the report screen and the CSV/Excel/PDF exports show them as kwacha through readable_summary().
+_MONEY_SUMMARY = {
+    "violations": {"Fines issued", "Fines collected"},
+    "toll": {"Unpaid toll value"},
+}
+
+
+def readable_summary(key: str, summary: dict) -> dict:
+    out = {}
+    for k, v in summary.items():
+        if key == "revenue" or k in _MONEY_SUMMARY.get(key, ()):
+            out[k] = zmw(v)
+        else:
+            out[k] = v
+    return out
 
 
 REPORTS: dict[str, Report] = {r.key: r for r in [
@@ -210,10 +229,10 @@ REPORTS: dict[str, Report] = {r.key: r for r in [
     Report("psv", "PSV Permits", "Public service vehicle operators and route permits",
            ["Permit", "Operator", "Plate", "Route", "Issued", "Expires", "Status"], _psv_rows, _psv_summary),
     Report("revenue", "Revenue", "Payments, refunds and revenue by category",
-           ["Receipt", "Reference", "Type", "Amount", "Refunded", "Currency", "Gateway", "Status", "Paid at"],
+           ["Receipt", "Reference", "Type", "Amount (ZMW)", "Refunded (ZMW)", "Currency", "Gateway", "Status", "Paid at"],
            _revenue_rows, _revenue_summary),
     Report("toll", "Toll Enforcement", "Toll-gate compliance checks and unpaid tolls",
-           ["Plate", "Gate", "Time", "Result", "Issues", "Toll amount", "Paid"], _toll_rows, _toll_summary),
+           ["Plate", "Gate", "Time", "Result", "Issues", "Toll amount (ZMW)", "Paid"], _toll_rows, _toll_summary),
 ]}
 
 

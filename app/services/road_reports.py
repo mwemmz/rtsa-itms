@@ -33,6 +33,7 @@ from app.models.road_network import IncidentVerification, RoadIncident
 from app.models.user import STAFF_ROLES, User
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
+from app.services.money import zmw
 from app.services.notifications import notify
 
 
@@ -159,7 +160,7 @@ def false_report_notice(db: Session, reporter: User, challan: Challan) -> dict:
     standing = reporter_standing(db, reporter)
     return {
         "reference": challan.reference,
-        "amount": challan.penalty_amount,
+        "amount": zmw(challan.penalty_amount),
         "due_date": challan.due_date.strftime("%Y-%m-%d"),
         "strikes": standing.false_reports,
         "strike_limit": standing.strike_limit,

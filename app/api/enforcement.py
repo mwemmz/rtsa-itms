@@ -32,9 +32,11 @@ from app.schemas.enforcement import (
 )
 from app.models.payment import PaymentType
 from app.services import exporters
+from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.delivery import send_sms
 from app.services.evidence import MAX_PHOTOS_PER_VIOLATION, new_photo, photo_out, photo_response, read_photo
+from app.services.money import zmw
 from app.services.ownership import owner_user_id
 from app.services.payments import create_payment
 from app.services.notifications import notify
@@ -220,7 +222,7 @@ def create_challan_for_violation(
     violation: Violation,
     actor_id: uuid.UUID | None,
     penalty_amount: int | None = None,
-    due_days: int = 14,
+    due_days: int | None = None,
 ) -> Challan:
     challan = Challan(
         reference=generate_challan_reference(),
@@ -232,7 +234,7 @@ def create_challan_for_violation(
             penalty_amount if penalty_amount is not None
             else VIOLATION_PENALTIES.get(violation.violation_type, 100000)
         ),
-        due_date=datetime.utcnow() + timedelta(days=due_days),
+        due_date=datetime.utcnow() + timedelta(days=due_days if due_days is not None else runtime_settings.get(db, "enforcement.challan_due_days")),
     )
     db.add(challan)
     db.flush()
@@ -309,7 +311,7 @@ def _notify_challan(db: Session, user_id: uuid.UUID, challan: Challan) -> None:
         {
             # Formatted here: the template is admin-managed and just drops these in.
             "reference": challan.reference,
-            "amount": f"{challan.penalty_amount:,} ZMW",
+            "amount": zmw(challan.penalty_amount),
             "due_date": challan.due_date.strftime("%d %b %Y"),
         },
     )
@@ -570,7 +572,7 @@ def _ticket(db: Session, challan_id: str) -> tuple[Challan, Violation, list[tupl
     if photos:
         lines.append(("Photos", f"{photos} on file with RTSA"))
     lines += [
-        ("Fine", f"{challan.penalty_amount:,} ZMW"),
+        ("Fine", zmw(challan.penalty_amount)),
         ("Pay by", _cat(challan.due_date).split(",")[0]),
         ("Status", challan.status.value),
         ("Issued by", officer.full_name if officer else "RTSA"),

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import FIELD_STAFF, require_role
-from app.api.enforcement import generate_challan_reference
+from app.api.enforcement import VIOLATION_PENALTIES, generate_challan_reference
 from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
 from app.models.toll import TollComplianceResult, TollTransaction
 from app.models.toll_offline import OfflineTollEvent, OfflineTollEventStatus
@@ -22,6 +22,7 @@ from app.schemas.toll import (
 )
 from app.services.audit import log_action
 from app.services.ownership import owner_user_id
+from app.services import settings as runtime_settings
 from app.services.compliance import check_vehicle_compliance
 from app.services.notifications import notify
 
@@ -119,9 +120,14 @@ def _process_toll_event(
         is not None
     )
     if result == TollComplianceResult.FLAGGED and chargeable and not already_fined:
-        violation_type = ViolationType.BLACKLISTED_VEHICLE if vehicle.is_blacklisted else ViolationType.OTHER
+        # Fine the most serious offence found, at that offence's own penalty (an uninsured
+        # vehicle at a toll gate owes the no-insurance fine, not a generic one).
+        found = [vt for key, vt in FLAGGED_VIOLATION_MAP.items()
+                 if vt != ViolationType.OTHER and any(key.lower() in i.lower() for i in chargeable)]
+        violation_type = max(found, key=lambda vt: VIOLATION_PENALTIES.get(vt, 0)) if found else ViolationType.OTHER
         violation = Violation(
             vehicle_id=vehicle.id,
+            liable_party=violation_type.liable_party,
             violation_type=violation_type,
             location=f"Toll gate {gate_id}",
             description=description,
@@ -133,8 +139,8 @@ def _process_toll_event(
         challan = Challan(
             violation_id=violation.id,
             vehicle_id=vehicle.id,
-            penalty_amount=2000000 if vehicle.is_blacklisted else 100000,
-            due_date=datetime.utcnow() + timedelta(days=14),
+            penalty_amount=VIOLATION_PENALTIES.get(violation_type, 100000),
+            due_date=datetime.utcnow() + timedelta(days=runtime_settings.get(db, "enforcement.challan_due_days")),
             status=ChallanStatus.UNPAID,
             reference=generate_challan_reference(),
         )

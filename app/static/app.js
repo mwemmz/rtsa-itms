@@ -11,8 +11,9 @@ function esc(v) {
   });
 }
 
+// Amounts travel in ngwee (100 ngwee = 1 kwacha); people read kwacha.
 function money(n) {
-  return Number(n || 0).toLocaleString("en-ZM") + " ZMW";
+  return "ZMW " + (Number(n || 0) / 100).toLocaleString("en-ZM", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function utcDate(v) {
@@ -965,18 +966,48 @@ VIEWS.dashboard = async function () {
   if (USER.role === "officer") wireMyRecent();
 };
 
+// Fines at a glance for the admin: money issued, collected and still owed, by offence and by month.
+function finesPanel(f) {
+  var months = Object.keys(f.by_month);
+  var top = Math.max.apply(null, months.map(function (m) { return f.by_month[m]; }).concat([1]));
+  var bars = months.map(function (m) {
+    var w = Math.max(2, Math.round(f.by_month[m] / top * 100));
+    return '<div style="display:flex;align-items:center;gap:10px;margin:6px 0;"><span class="small muted" style="width:64px;">' + esc(m) +
+      '</span><div style="flex:1;background:var(--line,#e5e7eb);height:14px;"><div style="width:' + w + '%;height:14px;background:var(--gold,#d9a93c);"></div></div>' +
+      '<span class="small" style="width:120px;text-align:right;">' + money(f.by_month[m]) + "</span></div>";
+  }).join("") || '<div class="empty">No fines paid yet</div>';
+  var rows = Object.keys(f.by_offence).map(function (k) {
+    var o = f.by_offence[k];
+    return "<tr><td>" + esc(k.replace(/_/g, " ")) + '</td><td>' + o.count + '</td><td>' + money(o.issued) + "</td><td>" + money(o.collected) +
+      "</td><td>" + (o.outstanding ? '<b>' + money(o.outstanding) + "</b>" : "—") + "</td></tr>";
+  }).join("");
+  return '<div class="grid cards">' +
+      kpi("Fines issued", money(f.issued)) +
+      kpi("Fines collected", money(f.collected), f.collection_rate == null ? "" : f.collection_rate + "% of issued") +
+      kpi("Still owed", money(f.outstanding), "includes disputed") +
+      kpi("Overdue", money(f.overdue), "with late surcharge") +
+    "</div>" +
+    '<div class="row">' +
+      cars("Fines paid by month", bars) +
+      cars("Fines by offence", '<table><thead><tr><th>Offence</th><th>Fines</th><th>Issued</th><th>Collected</th><th>Owed</th></tr></thead><tbody>' + rows + "</tbody></table>") +
+    "</div>";
+}
+
 async function adminDashboard() {
   var s = await api("/api/admin/reports/summary");
   var vehicles = await api("/api/vehicles?limit=6");
   var challans = await api("/api/enforcement/challans?limit=6");
   var violations = await api("/api/enforcement/violations?limit=6");
+  var f = null;
+  try { f = await api("/api/admin/reports/fines"); } catch (e) { /* the fines panel just stays out */ }
   return (
     '<div class="grid cards">' +
       kpi("Registered vehicles", s.vehicles) +
       kpi("Drivers", s.drivers) +
-      kpi("Unpaid challans", s.challans_unpaid, "of " + s.challans_total + " total") +
+      kpi("Fines still owed", s.challans_unpaid, "of " + s.challans_total + " issued" + (s.challans_overdue ? " · " + s.challans_overdue + " overdue" : "")) +
       kpi("Revenue collected", money(s.revenue_collected)) +
     "</div>" +
+    (f ? finesPanel(f) : "") +
     '<div class="row">' +
       cars("Recent vehicles", vehicleRows(vehicles)) +
       cars("Recent violations", violationRows(violations) +
@@ -2623,7 +2654,7 @@ VIEWS.toll = async function () {
           '<div class="field"><label>FASTag ID (use instead of, or with, the plate)</label><input name="tag_id" placeholder="e.g. TAG-000123"></div>' +
           '<div class="field"><label>Lane type</label><select name="lane_mode"><option value="barrier">Barrier lane (vehicle stops)</option><option value="mlff">Free-flow lane (billed to owner)</option></select></div>' +
           '<div class="field"><label>Gate ID</label><input name="gate_id" placeholder="e.g. GATE-01" required></div>' +
-          '<div class="field"><label>Toll amount (optional)</label><input name="toll_amount" type="number" placeholder="e.g. 30000"></div>' +
+          '<div class="field"><label>Toll amount in kwacha (optional)</label><input name="toll_amount" type="number" min="0" step="0.01" placeholder="e.g. 30"></div>' +
           '<button class="btn gold" type="submit">Process event</button> ' +
           '<button class="btn ghost" type="button" id="toll-sync">Sync queued events</button></form>' +
         '<div id="toll-result" class="small" style="margin-top:12px;"></div></div>' +
@@ -2639,6 +2670,7 @@ VIEWS.toll = async function () {
     try {
       var body = formData(e.target);
       if (!body.plate_number && !body.tag_id) throw new Error("Enter a plate number or a FASTag ID");
+      if (body.toll_amount !== undefined && body.toll_amount !== "" && body.toll_amount !== null) body.toll_amount = Math.round(Number(body.toll_amount) * 100); else delete body.toll_amount;
       var r = await api("/api/toll/events", { method: "POST", body: JSON.stringify(body) });
       out.innerHTML = '<div class="card" style="box-shadow:none;padding:10px;margin:0;">' +
         '<div><b>' + esc(r.plate_number) + "</b> → " + (r.compliance_result === "compliant" ? '<span class="pill green">COMPLIANT</span>' : '<span class="pill red">FLAGGED</span>') + "</div>" +

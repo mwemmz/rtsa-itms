@@ -500,7 +500,7 @@ def seed_demo_portal() -> None:
                     reference="CH-2024-0009",
                     violation_id=violation.id,
                     vehicle_id=bal5678.id,
-                    penalty_amount=600,
+                    penalty_amount=60000,
                     due_date=datetime.utcnow() + timedelta(days=14),
                     status=ChallanStatus.UNPAID,
                 )
@@ -518,7 +518,7 @@ def seed_demo_portal() -> None:
             )
 
         db.commit()
-        print("Portal demo created: John Mwale licence expires in 25 days; BAL 5678 has an unpaid ZMW 600 fine")
+        print("Portal demo created: John Mwale licence expires in 25 days; BAL 5678 has an unpaid ZMW 600.00 fine")
     finally:
         db.close()
 

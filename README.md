@@ -436,3 +436,11 @@ These were added with migration `a1c3e5f7b902`. There is no web screen for them 
 | Routing & status board   | `/api/routing`                   |
 | Driver portal            | `/api/portal`                    |
 | Health                   | `/health`                        |
+
+### Demo data
+
+`python scripts/seed_demo.py` fills the database with Zambian demo data: 40 accounts, 64 vehicles, about 190 fines
+(paid, unpaid, overdue and disputed) spread over six months, tolls, PSV permits, accidents and licence applications.
+It goes through the app's own fine and payment code, so the admin totals are real. `--reset` removes what it added and
+rebuilds it. Every demo account uses the password `Demo12345!x`, for example `admin.finance@demo.rtsa.gov.zm`
+and `officer.chanda@demo.rtsa.gov.zm`. Run `python scripts/seed.py` first.

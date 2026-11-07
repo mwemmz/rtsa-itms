@@ -39,7 +39,12 @@ def scan_licence_expiries() -> int:
     """Kept for compatibility: runs the full expiry scan, returns total sent."""
     db = SessionLocal()
     try:
-        return sum(scan_expiries(db).values())
+        from app.services.overdue import mark_overdue_challans
+
+        sent = sum(scan_expiries(db).values())
+        mark_overdue_challans(db)
+        db.commit()
+        return sent
     finally:
         db.close()
 

@@ -54,7 +54,7 @@ def run_report(
     if format != "json":
         limit = svc.MAX_EXPORT_ROWS if limit == 500 else limit
     rows = report.rows(db, start, end, limit)
-    summary = report.summary(db, start, end)
+    summary = svc.readable_summary(report.key, report.summary(db, start, end))
 
     if format == "json":
         return {

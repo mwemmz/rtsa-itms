@@ -14,6 +14,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.services.money import zmw
+
 MEDIA_TYPES = {
     "csv": "text/csv; charset=utf-8",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -139,8 +141,8 @@ def receipt_pdf(receipt: dict) -> bytes:
         ["Payment reference", receipt["reference"]],
         ["Description", receipt.get("description") or receipt["payment_type"]],
         ["Payment type", receipt["payment_type"]],
-        ["Amount", f"{receipt['currency']} {receipt['amount']:,}"],
-        ["Refunded", f"{receipt['currency']} {receipt['refunded_amount']:,}"],
+        ["Amount", zmw(receipt['amount'], receipt['currency'])],
+        ["Refunded", zmw(receipt['refunded_amount'], receipt['currency'])],
         ["Gateway", f"{receipt['gateway']} ({receipt.get('gateway_reference') or '-'})"],
         ["Paid by", receipt.get("paid_by_name") or "-"],
         ["Paid at", str(receipt.get("paid_at") or "-")],

@@ -428,9 +428,55 @@ def report_summary(
         "vehicles": db.query(Vehicle).count(),
         "drivers": db.query(Driver).count(),
         "challans_total": db.query(Challan).count(),
-        "challans_unpaid": db.query(Challan).filter(Challan.status == ChallanStatus.UNPAID).count(),
+        # "Unpaid" means owed: a fine past its due date is overdue, not forgiven.
+        "challans_unpaid": db.query(Challan).filter(Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE])).count(),
+        "challans_overdue": db.query(Challan).filter(Challan.status == ChallanStatus.OVERDUE).count(),
         "challans_paid": db.query(Challan).filter(Challan.status == ChallanStatus.PAID).count(),
         "revenue_collected": db.query(func.sum(Payment.amount)).filter(Payment.status == "completed").scalar() or 0,
+    }
+
+
+@router.get("/reports/fines")
+def fines_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Fines at a glance for the admin: what was issued, collected and is still owed, by offence and by month.
+
+    Amounts are ngwee. "Collected" is money that actually arrived (completed fine payments, less refunds).
+    """
+    from app.models.enforcement import Violation
+    from app.models.payment import PaymentStatus, PaymentType
+    from app.services.reports import month_bucket
+
+    open_states = [ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]
+    paid_q = db.query(Payment).filter(Payment.payment_type == PaymentType.FINE,
+                                      Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]))
+    collected = paid_q.with_entities(func.coalesce(func.sum(Payment.amount - Payment.refunded_amount), 0)).scalar()
+    issued = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).scalar()
+    owed = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status.in_(open_states)).scalar()
+    overdue = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status == ChallanStatus.OVERDUE).scalar()
+
+    by_offence = {}
+    for vt, n, billed in (db.query(Violation.violation_type, func.count(Challan.id), func.sum(Challan.penalty_amount))
+                          .join(Challan, Challan.violation_id == Violation.id).group_by(Violation.violation_type)):
+        by_offence[vt.value] = {"count": n, "issued": int(billed or 0), "collected": 0, "outstanding": 0}
+    for vt, st, total in (db.query(Violation.violation_type, Challan.status, func.sum(Challan.penalty_amount))
+                          .join(Challan, Challan.violation_id == Violation.id).group_by(Violation.violation_type, Challan.status)):
+        if st == ChallanStatus.PAID:
+            by_offence[vt.value]["collected"] += int(total or 0)
+        elif st in open_states:
+            by_offence[vt.value]["outstanding"] += int(total or 0)
+    month = month_bucket(db, Payment.paid_at)
+    by_month = {m: int(t or 0) for m, t in
+                paid_q.with_entities(month, func.sum(Payment.amount - Payment.refunded_amount)).group_by(month).order_by(month)}
+    by_gateway = {g or "unknown": {"count": n, "total": int(t or 0)} for g, n, t in
+                  paid_q.with_entities(Payment.gateway, func.count(), func.sum(Payment.amount - Payment.refunded_amount)).group_by(Payment.gateway)}
+    return {
+        "issued": int(issued), "collected": int(collected), "outstanding": int(owed), "overdue": int(overdue),
+        "collection_rate": round(collected / issued * 100, 1) if issued else None,
+        "by_offence": dict(sorted(by_offence.items(), key=lambda kv: -kv[1]["issued"])),
+        "by_month": by_month, "by_gateway": by_gateway,
     }
 
 
