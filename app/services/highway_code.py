@@ -42,17 +42,43 @@ class Rule:
         return {"rule": self.number, "section": self.section, "text": self.text}
 
 
+# People ask in everyday words; the Code uses its own. Both the rules and the question are
+# passed through the same mapping, so "seatbelt", "highway" and "drunk" find the right rule.
+_COMPOUNDS = (
+    (re.compile(r"\bseat-?belts?\b"), "seat belt"),
+    (re.compile(r"\b(?:cell|mobile|smart)-?phones?\b"), "phone"),
+    (re.compile(r"\bzebra crossings?\b"), "pedestrian crossing"),
+    (re.compile(r"\bround-?abouts?\b"), "roundabout"),
+    (re.compile(r"\byield\b"), "give way"),
+)
+_SYNONYMS = {
+    "highway": "road", "motorway": "road", "expressway": "road",
+    "drunk": "alcohol", "drink": "alcohol", "drinking": "alcohol", "intoxicated": "alcohol", "beer": "alcohol", "liquor": "alcohol",
+    "fast": "speed", "faster": "speed", "speeding": "speed", "kph": "speed", "kmh": "speed",
+    "pass": "overtake", "passing": "overtake", "overtaking": "overtake",
+    "stop": "park", "parking": "park", "parked": "park",
+    "kid": "child", "kids": "child", "children": "child",
+    "walker": "pedestrian", "pedestrians": "pedestrian",
+    "licence": "license", "licenses": "license",
+}
+
+
 def tokenize(text: str) -> list[str]:
-    """Lower-case words, stopwords dropped, plural/verb endings trimmed."""
+    """Lower-case words, everyday wording mapped to the Code's, stopwords dropped, endings trimmed."""
+    text = text.lower()
+    for pattern, repl in _COMPOUNDS:
+        text = pattern.sub(repl, text)
     out = []
-    for w in re.findall(r"[a-z0-9]+", text.lower()):
-        if w in _STOPWORDS or len(w) < 2:
-            continue
-        for suffix in ("ing", "es", "ed", "s"):
-            if w.endswith(suffix) and len(w) - len(suffix) >= 3:
-                w = w[: -len(suffix)]
-                break
-        out.append(w)
+    for w in re.findall(r"[a-z0-9]+", text):
+        w = _SYNONYMS.get(w, w)
+        for part in w.split():
+            if part in _STOPWORDS or len(part) < 2:
+                continue
+            for suffix in ("ing", "es", "ed", "s"):
+                if part.endswith(suffix) and len(part) - len(suffix) >= 3:
+                    part = part[: -len(suffix)]
+                    break
+            out.append(part)
     return out
 
 

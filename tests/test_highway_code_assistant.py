@@ -191,3 +191,29 @@ def test_api_can_be_switched_off(code_file, monkeypatch):
     monkeypatch.setattr(settings, "ASSISTANT_ENABLED", False)
     h = _login("admin")
     assert client.post("/api/assistant/ask", json={"question": "seat belt"}, headers=h).status_code == 503
+
+
+def test_everyday_wording_finds_the_right_rule():
+    """Seatbelt/seat belt, highway/road, drunk/alcohol and fast/speed all match; off-topic questions match nothing."""
+    from app.services.highway_code import Index, Rule, tokenize
+
+    texts = {
+        1: "In a built-up area, do not drive faster than 60 kilometres per hour unless a sign shows a different limit.",
+        2: "On an open road outside a built-up area, the speed limit is 100 kilometres per hour unless a sign shows otherwise.",
+        3: "The driver and every passenger must wear a seat belt when the vehicle is moving.",
+        4: "Do not drive after drinking alcohol. Alcohol slows your reactions and judgement.",
+        5: "Give way to traffic already on the roundabout, which comes from your right.",
+    }
+    rules = []
+    for n, t in texts.items():
+        r = Rule(n, "", t)
+        r.tokens = tokenize(t)
+        rules.append(r)
+    ix = Index(rules)
+    top = lambda q: (ix.search(q) or [(None, 0)])[0][0]
+    assert top("What is the speed limit in a built-up area?").number == 1
+    assert top("do I need a seatbelt in the back").number == 3
+    assert top("how fast can I go on the highway").number == 2
+    assert top("what if I am drunk and driving").number == 4
+    assert top("who goes first at a round-about").number == 5
+    assert ix.search("how do I bake bread") == []
