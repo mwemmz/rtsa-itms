@@ -261,6 +261,7 @@ def test_no_key_answers_lead_with_the_best_sentence_fix_typos_and_read_follow_up
     path.write_text("\n".join(_json.dumps(r) for r in rules), encoding="utf-8")
     monkeypatch.setattr(assistant.settings, "HIGHWAY_CODE_PATH", str(path))
     monkeypatch.setattr(assistant.settings, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(assistant.settings, "ASSISTANT_MIN_SCORE", 0.5)  # three rules give tiny idf values
     highway_code._cache.update(path=None, mtime=None, index=None)
 
     a = assistant.answer_question("do children need to be restrained in a car")
