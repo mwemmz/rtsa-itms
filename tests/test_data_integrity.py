@@ -93,3 +93,12 @@ def test_psv_permit_rules():
     assert client.post("/api/psv/permits", json={**permit, "permit_number": permit["permit_number"] + "X"}, headers=h).status_code == 400  # overlapping
     assert client.post("/api/psv/permits", json={**permit, "permit_number": "PM-" + uuid.uuid4().hex[:6],
                        "issued_date": "2031-01-01T00:00:00", "expiry_date": "2030-06-01T00:00:00"}, headers=h).status_code == 422
+
+
+def test_anpr_confidence_must_be_between_zero_and_one():
+    from app.schemas.anpr import ANPREventCreate
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        ANPREventCreate(plate_number="BAL 1234", location="Great East Rd", confidence=7)
+    assert ANPREventCreate(plate_number="BAL 1234", location="Great East Rd", confidence=0.9).confidence == 0.9

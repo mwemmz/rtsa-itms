@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.fields import LocationStr
 
@@ -12,7 +12,7 @@ class ANPREventCreate(BaseModel):
     plate_number: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
     location: LocationStr
     timestamp: datetime | None = None
-    confidence: float | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     image_url: str | None = None
     camera_id: str | None = None
 
