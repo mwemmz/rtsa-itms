@@ -8,7 +8,8 @@
     NAV[r[0]] = (NAV[r[0]] || []).concat([
       { id: "psv", label: "PSV & routes" },
       { id: "insurance", label: "Insurance" },
-      { id: "insights", label: "Insights" }
+      { id: "insights", label: "Insights" },
+      { id: "bi", label: "Analytics (BI)" }
     ]);
   });
   // The administrator sees every module an officer does, plus the admin ones.
@@ -18,7 +19,7 @@
   NAV.citizen.push({ id: "services", label: "Pay for services" });
 
   var GROUPS = [
-    ["Overview", ["dashboard", "insights", "reports"]],
+    ["Overview", ["dashboard", "bi", "insights", "reports"]],
     ["Vehicles and drivers", ["vehicles", "drivers", "licensing", "inspections", "insurance", "psv"]],
     ["Enforcement", ["violations", "challans", "driver_reports", "anpr", "toll", "accidents"]],
     ["Roads", ["alerts", "planner"]],
@@ -387,3 +388,90 @@ VIEWS.insights = async function () {
   if (content && window.MutationObserver) new MutationObserver(later).observe(content, { childList: true, subtree: true });
   window.addEventListener("resize", later);
 })();
+
+
+/* ---------------- Analytics (BI): instrument cluster and where/when offences happen ---------------- */
+
+var ZONE_COLOUR = { green: "#3fbf8a", amber: "#FFC800", red: "#ff6b5b" };
+
+// A dial like a car's gauge: a 240 degree track with coloured zones, ticks, a needle and a digital readout.
+function dialSvg(d) {
+  var cx = 100, cy = 100, r = 76;
+  function pt(t, rad) { var a = (150 + 240 * t) * Math.PI / 180; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)]; }
+  function arc(t0, t1, rad) {
+    var a = pt(t0, rad), b = pt(t1, rad);
+    return "M" + a[0].toFixed(1) + " " + a[1].toFixed(1) + " A" + rad + " " + rad + " 0 " + ((t1 - t0) * 240 > 180 ? 1 : 0) + " 1 " + b[0].toFixed(1) + " " + b[1].toFixed(1);
+  }
+  var out = '<svg viewBox="0 0 200 150" role="img" aria-label="' + esc(d.label + " " + d.value + d.unit) + '" style="width:100%;max-width:260px;display:block;margin:0 auto">';
+  out += '<path d="' + arc(0, 1, r) + '" fill="none" stroke="var(--line)" stroke-width="12" stroke-linecap="butt"/>';
+  d.zones.forEach(function (z) { out += '<path d="' + arc(z[0] / d.max, z[1] / d.max, r) + '" fill="none" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="12" opacity="0.85"/>'; });
+  for (var i = 0; i <= 10; i++) {
+    var t = i / 10, a = pt(t, r - 10), b = pt(t, r - (i % 5 === 0 ? 20 : 16));
+    out += '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" stroke="var(--ink-2)" stroke-width="' + (i % 5 === 0 ? 1.6 : 0.8) + '"/>';
+  }
+  [0, 0.5, 1].forEach(function (t) { var p = pt(t, r - 30); out += '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] + 3).toFixed(1) + '" fill="var(--ink-3)" font-size="8" text-anchor="middle">' + Math.round(t * d.max) + "</text>"; });
+  var tv = Math.max(0, Math.min(1, d.value / d.max)), n = pt(tv, r - 14);
+  out += '<line x1="' + cx + '" y1="' + cy + '" x2="' + n[0].toFixed(1) + '" y2="' + n[1].toFixed(1) + '" stroke="' + ZONE_COLOUR[d.zone] + '" stroke-width="3" stroke-linecap="round"/>';
+  out += '<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="var(--panel-2)" stroke="var(--ink-2)" stroke-width="1.5"/>';
+  out += '<text x="' + cx + '" y="' + (cy + 32) + '" fill="var(--ink)" font-size="22" font-weight="700" text-anchor="middle" style="font-variant-numeric:tabular-nums">' + esc(String(d.value)) + '<tspan font-size="9" fill="var(--ink-2)"> ' + esc(d.unit) + "</tspan></text>";
+  return out + "</svg>";
+}
+
+function warningLight(l) {
+  var col = l.on ? ZONE_COLOUR[l.level] : "var(--line-strong)";
+  var icon = l.level === "red"
+    ? '<path d="M12 3 L22 20 H2 Z" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/><line x1="12" y1="9" x2="12" y2="14" stroke="' + col + '" stroke-width="2"/><circle cx="12" cy="17" r="1.1" fill="' + col + '"/>'
+    : '<circle cx="12" cy="12" r="9" fill="none" stroke="' + col + '" stroke-width="2"/><line x1="12" y1="7" x2="12" y2="13" stroke="' + col + '" stroke-width="2"/><circle cx="12" cy="16.5" r="1.1" fill="' + col + '"/>';
+  return '<a class="wl' + (l.on ? " on" : "") + '" href="#/' + esc(l.view) + '" style="' + (l.on ? "border-color:" + col + ";" : "") + '">' +
+    '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="' + (l.on ? "filter:drop-shadow(0 0 4px " + col + ");" : "") + '">' + icon + "</svg>" +
+    '<span class="wl-n">' + l.count + '</span><span class="wl-t">' + esc(l.label) + "</span></a>";
+}
+
+function barRows(items, valueKey, fmt, unit) {
+  var max = Math.max.apply(null, items.map(function (i) { return i[valueKey]; }).concat([1]));
+  if (!items.length) return '<div class="empty">No offences in this period.</div>';
+  return items.map(function (i) {
+    return '<div style="margin-bottom:9px"><div class="small" style="display:flex;justify-content:space-between;gap:10px"><span>' + esc(i.name) + '</span><span class="muted">' + (fmt ? fmt(i) : i[valueKey]) + (unit || "") + "</span></div>" +
+      '<div style="height:8px;background:var(--line)"><div style="height:8px;width:' + Math.round(i[valueKey] / max * 100) + '%;background:var(--gold)"></div></div></div>';
+  }).join("");
+}
+
+VIEWS.bi = async function () {
+  var days = 365;
+  $("#content").innerHTML = '<div class="empty">Loading…</div>';
+  async function draw() {
+    var d = await api("/api/bi/?days=" + days);
+    var hmax = Math.max.apply(null, d.heat.rows.map(function (r) { return Math.max.apply(null, r.cells); }).concat([1]));
+    var heat = '<div class="table-wrap"><table><thead><tr><th>Road</th>' + d.heat.seasons.map(function (s) { return "<th>" + esc(s.replace(/ \(.*/, "")) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      d.heat.rows.map(function (r) {
+        return "<tr><td>" + esc(r.road) + "</td>" + r.cells.map(function (c) {
+          return '<td style="background:color-mix(in srgb, var(--gold) ' + Math.round(c / hmax * 70) + '%, transparent);font-weight:' + (c / hmax > 0.6 ? 700 : 400) + '">' + c + "</td>";
+        }).join("") + "</tr>";
+      }).join("") + "</tbody></table></div>";
+    var wmax = Math.max.apply(null, d.weekdays.map(function (w) { return w.count; }).concat([1]));
+    var week = '<div style="display:flex;gap:8px;align-items:flex-end;height:120px">' + d.weekdays.map(function (w) {
+      return '<div style="flex:1;text-align:center"><div class="small muted">' + w.count + '</div><div style="height:' + Math.max(4, Math.round(w.count / wmax * 90)) + 'px;background:var(--gold)"></div><div class="small">' + w.name + "</div></div>";
+    }).join("") + "</div>";
+    var seasons = d.seasons.map(function (s) {
+      var hot = s.name === d.busiest_season;
+      return '<div class="kpi"' + (hot ? ' style="border-left-color:#ff6b5b"' : "") + '><div class="kpi-label">' + esc(s.name) + '</div><div class="kpi-value">' + s.per_month + '<span style="font-size:14px;font-weight:500"> a month</span></div><div class="kpi-sub">' + s.count + " offences over " + s.months + " month" + (s.months === 1 ? "" : "s") + " of data" + (hot ? " · busiest" : "") + "</div></div>";
+    }).join("");
+    $("#content").innerHTML =
+      '<div class="toolbar"><label class="small muted">Period</label><select id="bi-days" style="width:auto;flex:0 0 auto"><option value="90">Last 90 days</option><option value="180">Last 6 months</option><option value="365">Last 12 months</option><option value="1825">Last 5 years</option></select>' +
+      '<span class="small muted">' + d.offences + " offences analysed" + (d.capped ? " (capped)" : "") + "</span></div>" +
+      '<div class="card"><h3>Instrument cluster</h3><div class="cluster">' + d.dials.map(function (g) {
+        return '<div class="dial">' + dialSvg(g) + '<div class="dial-l">' + esc(g.label) + '</div><div class="small muted">' + esc(g.note) + "</div></div>";
+      }).join("") + "</div>" +
+      '<div class="lights">' + d.lights.map(warningLight).join("") + "</div></div>" +
+      '<div class="grid cards" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">' + seasons + "</div>" +
+      '<div class="row"><div class="card"><h3>Roads with the most offences</h3>' + barRows(d.roads, "count", function (i) { return i.count + " · " + money(i.value); }) + "</div>" +
+      '<div class="card"><h3>Provinces</h3>' + barRows(d.regions, "count") + '<p class="small muted" style="margin:8px 0 0">Province comes from the GPS position, or the place name when there is none.</p></div></div>' +
+      '<div class="card"><h3>Road by season</h3>' + heat + '<p class="small muted" style="margin:8px 0 0">Seasons: rainy Nov to Apr, cold dry May to Aug, hot dry Sep to Oct. Darker means more offences. Compare seasons with the per-month figures above, because the data may not cover every month.</p></div>' +
+      '<div class="row"><div class="card"><h3>Day of the week</h3>' + week + "</div>" +
+      '<div class="card"><h3>Time of day</h3>' + barRows(d.day_parts, "count") + "</div>" +
+      '<div class="card"><h3>Offence types</h3>' + barRows(d.types.map(function (t) { return { name: t.name.replace(/_/g, " "), count: t.count }; }), "count") + "</div></div>";
+    $("#bi-days").value = String(days);
+    $("#bi-days").addEventListener("change", function (e) { days = parseInt(e.target.value, 10); draw().catch(function (x) { fail("#content", x); }); });
+  }
+  try { await draw(); } catch (e) { fail("#content", e); }
+};

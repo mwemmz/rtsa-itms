@@ -21,6 +21,7 @@ from app.api import (
     enforcement,
     events,
     inspections,
+    bi,
     insights,
     insurance,
     services,
@@ -90,6 +91,7 @@ app.include_router(inspections.router)
 app.include_router(insurance.router)
 app.include_router(services.router)
 app.include_router(insights.router)
+app.include_router(bi.router)
 app.include_router(verify.router)
 app.include_router(licence.router)
 app.include_router(enforcement.router)

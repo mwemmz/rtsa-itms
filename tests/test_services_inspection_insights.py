@@ -190,3 +190,22 @@ def test_obd_fault_codes_are_decoded_and_blocking_codes_fail_the_test():
     iid2 = _scheduled(officer, vid)
     ok = client.patch(f"/api/inspections/{iid2}", headers=officer, json={"checklist": good, "obd_codes": ["P0128"]}).json()
     assert ok["result"] == "passed"
+
+
+def test_bi_groups_offences_by_road_region_and_season():
+    from app.services.geography import province_of, road_of, season_of
+
+    assert road_of("Great East Road, near UNZA") == "Great East Road"
+    assert province_of(-12.9, 28.65, None) == "Copperbelt"
+    assert province_of(None, None, "Livingstone-Maramba Road") == "Southern"
+    assert season_of(1) == "Rainy season (Nov to Apr)" and season_of(7).startswith("Cold dry") and season_of(10).startswith("Hot dry")
+    citizen, _, _ = _login("citizen")
+    assert client.get("/api/bi/", headers=citizen).status_code == 403
+    officer, _, _ = _login("officer")
+    d = client.get("/api/bi/", headers=officer)
+    assert d.status_code == 200
+    j = d.json()
+    assert {x["id"] for x in j["dials"]} == {"collection", "insured", "fit", "overdue", "pace"}
+    assert all(0 <= x["value"] <= x["max"] and x["zone"] in ("green", "amber", "red") and x["zones"] for x in j["dials"])
+    assert [s["name"][:4] for s in j["seasons"]] == ["Rain", "Cold", "Hot "]
+    assert len(j["lights"]) == 6 and all("on" in l for l in j["lights"])
