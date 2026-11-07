@@ -18,7 +18,7 @@ class Settings(BaseSettings):
                 return "postgresql+psycopg2://" + url[len(scheme):]
         return url
     SECRET_KEY: str = "change-me-in-production"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # absolute cap on one sign-in (8 h); idle timeout below is the real guard
     ENVIRONMENT: str = "development"
     RUN_MIGRATIONS_ON_STARTUP: bool = False
 
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # When off, the header is ignored so clients cannot spoof their IP.
     TRUST_PROXY_HEADERS: bool = False
     CORS_ORIGINS: str = ""  # comma separated; empty = same-origin only
-    SESSION_IDLE_MINUTES: int = 30
+    SESSION_IDLE_MINUTES: int = 60
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15
     PASSWORD_MIN_LENGTH: int = 8

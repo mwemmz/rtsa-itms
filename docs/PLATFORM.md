@@ -68,7 +68,7 @@ Events currently wired: `payment_receipt`, `payment_failed`, `refund_issued`,
   only actually renders the sandbox widget - wiring a real provider's JS + CSP allowance into the page is a
   deployment step, not code (`app/services/captcha.py`).
 * **Sessions**: every JWT carries a session id (`sid`) checked against `user_sessions` on each request –
-  logout, idle timeout (default 30 min), password change, role change, deactivation and admin revoke all take effect immediately.
+  logout, idle timeout (default 60 min), password change, role change, deactivation and admin revoke all take effect immediately.
   Only requests the user makes count as activity: the web app sends `X-Background-Refresh: 1` on requests it makes by
   itself (live-update reloads, the notification bell, stream reconnects), and those don't push back the idle timeout -
   otherwise a screen left open on a busy page would never sign out. They're still refused once the session has idled out.

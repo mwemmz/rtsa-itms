@@ -65,7 +65,7 @@ scripts/       seed data (demo users, vehicles, Lusaka road network)
    |-----------------|----------------------------------------------------|
    | `DATABASE_URL`  | Postgres connection string (Neon supports `?sslmode=require`) |
    | `SECRET_KEY`    | Secret used to sign JWTs — use a strong random value in production |
-   | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT lifetime (default 30)                 |
+   | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT lifetime (default 480)                |
    | `ENVIRONMENT`   | `development` or `production`                       |
 
    The team's local PostgreSQL listens on **port 3330**, so locally use
