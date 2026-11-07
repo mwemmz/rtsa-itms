@@ -58,7 +58,18 @@ def seed_demo_data() -> None:
     subprocess.Popen([sys.executable, str(PROJECT_ROOT / "scripts" / "seed_demo.py")], stdout=sys.stdout, stderr=sys.stderr)
 
 
+def warn_about_weak_secrets() -> None:
+    """Loudly log, but do not refuse to start: a default signing key lets anyone forge a sign-in token."""
+    from app.core.config import settings
+    if settings.SECRET_KEY in ("change-me-in-production", "") or len(settings.SECRET_KEY) < 32:
+        logger.error("SECURITY: SECRET_KEY is the default or shorter than 32 characters. "
+                     "Set a long random SECRET_KEY in the environment; until then sign-in tokens can be forged.")
+    if not settings.ENCRYPTION_KEY:
+        logger.warning("ENCRYPTION_KEY is not set; the encryption key is derived from SECRET_KEY.")
+
+
 def run_startup_tasks() -> None:
+    warn_about_weak_secrets()
     logger.info("Running startup tasks: migrations then seed")
     try:
         upgrade_database()
