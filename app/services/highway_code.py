@@ -51,7 +51,11 @@ _COMPOUNDS = (
     (re.compile(r"\bzebra crossings?\b"), "pedestrian crossing"),
     (re.compile(r"\bround-?abouts?\b"), "roundabout"),
     (re.compile(r"\byield\b"), "give way"),
-    (re.compile(r"\b(?:car|vehicle) in front\b|\bbehind the (?:car|vehicle)\b|\bstay(?:ing)? behind\b|\btailgat\w*|\bfollowing distance\b"), "gap distance vehicle in front"),
+)
+# Only applied to questions (never to the rule text): people ask how far to stay behind the car in
+# front; the Code answers with "gap" and "two-second".
+_QUERY_ONLY = (
+    (re.compile(r"\b(?:stay(?:ing)? )?(?:behind|after) (?:the )?(?:car|vehicle)(?: in front)?\b|\b(?:car|vehicle) in front\b|\bstay(?:ing)? behind\b|\btailgat\w*|\bfollowing distance\b"), "gap two second distance"),
 )
 _SYNONYMS = {
     "highway": "road", "motorway": "road", "expressway": "road",
@@ -65,10 +69,10 @@ _SYNONYMS = {
 }
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str, query: bool = False) -> list[str]:
     """Lower-case words, everyday wording mapped to the Code's, stopwords dropped, endings trimmed."""
     text = text.lower()
-    for pattern, repl in _COMPOUNDS:
+    for pattern, repl in _COMPOUNDS + (_QUERY_ONLY if query else ()):
         text = pattern.sub(repl, text)
     out = []
     for w in re.findall(r"[a-z0-9]+", text):
@@ -99,13 +103,40 @@ _RULE_START = re.compile(r"^\s*(\d{1,3})\.\s+(\S.*)$")
 _SECTION = re.compile(r"^\s*(SECTION\s+\d+\s*[:\-–.]?\s*.*)$", re.IGNORECASE)
 
 
-_LIGATURES = str.maketrans({"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl"})
+_LIGATURES = str.maketrans({"\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl", "\uf001": "fi", "\uf002": "fl", "\u0178": "-"})
 _PAGE_FOOTER = re.compile(r"(?:\s+[A-Z][A-Z ,&()/-]{7,})?\s*ZAMBIAN HIGHWAY CODE\s*\d*")
+
+
+# A chapter heading the PDF repeats on every page ends up glued to the end of the last rule on the page.
+_RUNNING_HEAD = re.compile(
+    r"(?:\s+(?:USING THE ROAD|LINES AND LANES|SPEED LIMITS|VEHICLE LIGHTS|USE OF THE HORN|WAITING AND PARKING|"
+    r"BRAKING|VEHICLE MARKINGS NIGHT CONDITION|WHEELBARROWS AND HUMAN DRAWN CARTS|"
+    r"PARENTS AND OTHERS IN CHARGE OF CHILDREN))+\s*$"
+)
+
+
+def _strip_trailing_heading(text: str) -> str:
+    """Drop an ALL-CAPS page heading left after the last sentence of a rule ("... see you. RULES FOR PASSENGERS")."""
+    words = text.split()
+    i = len(words)
+    while i > 0 and re.fullmatch(r"[A-Z0-9(),&'/:-]+", words[i - 1]) and not words[i - 1].isdigit():
+        i -= 1
+    tail = words[i:]
+    # Only a real heading: at least two capitalised words, and the text before it ends a sentence.
+    if i > 0 and words[i - 1][-1] in ".!?)\"”" and (len(tail) >= 2 or len(tail[0]) >= 5 if tail else False):
+        return " ".join(words[:i])
+    return text
 
 
 def _tidy(text: str) -> str:
     """Undo PDF quirks: ligature glyphs (traffic written as one 'ffi' character) and page footers."""
-    text = _PAGE_FOOTER.sub(" ", text.translate(_LIGATURES))
+    text = text.translate(_LIGATURES)
+    text = re.sub(r"\b([Tt]raf)f?\s?ic", r"\1fic", text)  # "Traff ic" -> "Traffic"
+    text = re.sub(r"Road Traffic ?Signs and Markings", " ", text)
+    text = _PAGE_FOOTER.sub(" ", text)
+    text = re.sub(r"\s*\(RULE \d+(?: TO \d+)?\)", "", text, flags=re.IGNORECASE)  # picture-caption markers
+    text = _RUNNING_HEAD.sub("", text)
+    text = _strip_trailing_heading(text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -176,7 +207,7 @@ class Index:
     def expand(self, query: str) -> list[str]:
         """Query tokens, with a misspelt word replaced by the closest word the Code actually uses."""
         out = []
-        for t in tokenize(query):
+        for t in tokenize(query, query=True):
             if t not in self.idf and len(t) >= 4:
                 close = difflib.get_close_matches(t, self.vocab, n=1, cutoff=0.82)
                 if close:

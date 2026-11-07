@@ -270,3 +270,20 @@ def test_no_key_answers_lead_with_the_best_sentence_fix_typos_and_read_follow_up
     follow = assistant.answer_question("and at night?", [{"role": "user", "content": "can i overtake on a solid white line"}, {"role": "assistant", "content": "x"}])
     assert follow["sources"] and follow["sources"][0]["rule"] == 1
     assert assistant.answer_question("how do i bake bread")["mode"] == "no_match"
+
+
+def test_pdf_artefacts_are_cleaned_from_rules():
+    from app.services.highway_code import parse_rules
+    text = "SECTION 1\n1. Use the footpath where trafc is heavy.\nZAMBIAN HIGHWAY CODE 2\nPASSENGERS (RULE 53 TO 57) PASSENGERS\n2. Keep left. Traff ic is busy. USING THE ROAD\n"
+    rules = parse_rules(text)
+    assert "traffic" in rules[0]["text"] and "" not in rules[0]["text"]
+    assert "ZAMBIAN" not in rules[0]["text"]
+    assert rules[1]["text"].endswith("Traffic is busy.")
+
+
+def test_shipped_highway_code_data_is_complete_and_clean():
+    import json
+    from pathlib import Path
+    rows = [json.loads(x) for x in Path("data/highway_code.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["rule"] for r in rows] == list(range(1, 298))
+    assert not any("ZAMBIAN HIGHWAY CODE" in r["text"] or "" in r["text"] for r in rows)
