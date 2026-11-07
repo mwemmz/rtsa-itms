@@ -195,7 +195,7 @@ def test_api_can_be_switched_off(code_file, monkeypatch):
 
 def test_everyday_wording_finds_the_right_rule():
     """Seatbelt/seat belt, highway/road, drunk/alcohol and fast/speed all match; off-topic questions match nothing."""
-    from app.services.highway_code import Index, Rule, tokenize
+    from app.services.highway_code import Index, Rule, rule_tokens
 
     texts = {
         1: "In a built-up area, do not drive faster than 60 kilometres per hour unless a sign shows a different limit.",
@@ -207,7 +207,7 @@ def test_everyday_wording_finds_the_right_rule():
     rules = []
     for n, t in texts.items():
         r = Rule(n, "", t)
-        r.tokens = tokenize(t)
+        r.tokens = rule_tokens("", t)
         rules.append(r)
     ix = Index(rules)
     top = lambda q: (ix.search(q) or [(None, 0)])[0][0]
@@ -246,3 +246,26 @@ def test_question_cannot_break_out_of_the_data_blocks(monkeypatch):
 def json_dump(x):
     import json
     return json.dumps(x)
+
+
+def test_no_key_answers_lead_with_the_best_sentence_fix_typos_and_read_follow_ups(tmp_path, monkeypatch):
+    import json as _json
+    from app.services import assistant, highway_code
+
+    rules = [
+        {"rule": 1, "section": "Overtaking", "text": "Never overtake where there is a solid white line on your side of the road. Overtake only when the road ahead is clear."},
+        {"rule": 2, "section": "Seat belts", "text": "The driver and every passenger must wear a seat belt when the vehicle is moving. Children must be properly restrained."},
+        {"rule": 3, "section": "Alcohol", "text": "Do not drive after drinking alcohol."},
+    ]
+    path = tmp_path / "rules.jsonl"
+    path.write_text("\n".join(_json.dumps(r) for r in rules), encoding="utf-8")
+    monkeypatch.setattr(assistant.settings, "HIGHWAY_CODE_PATH", str(path))
+    monkeypatch.setattr(assistant.settings, "ANTHROPIC_API_KEY", "")
+    highway_code._cache.update(path=None, mtime=None, index=None)
+
+    a = assistant.answer_question("do children need to be restrained in a car")
+    assert a["mode"] == "extract" and "Children must be properly restrained" in a["answer"] and "(Rule 2" in a["answer"]
+    assert assistant.answer_question("can i overtaek on a solid white line")["sources"][0]["rule"] == 1  # typo
+    follow = assistant.answer_question("and at night?", [{"role": "user", "content": "can i overtake on a solid white line"}, {"role": "assistant", "content": "x"}])
+    assert follow["sources"] and follow["sources"][0]["rule"] == 1
+    assert assistant.answer_question("how do i bake bread")["mode"] == "no_match"

@@ -12,6 +12,7 @@ the tests can exercise it without a PDF.
 
 from __future__ import annotations
 
+import difflib
 import json
 import math
 import re
@@ -82,6 +83,15 @@ def tokenize(text: str) -> list[str]:
     return out
 
 
+_EXCLUDED = re.compile(r"\b(?:outside|except|apart from|other than)\s+(?:of\s+)?(?:a|an|the)?\s*[\w-]+(?:\s+[\w-]+){0,1}", re.IGNORECASE)
+
+
+def rule_tokens(section: str, text: str) -> list[str]:
+    """Index tokens for a rule. A place the rule excludes ("outside a built-up area") is left out,
+    so a question about built-up areas does not land on the rule for open roads."""
+    return tokenize(section + " " + _EXCLUDED.sub(" ", text))
+
+
 # ---------------------------------------------------------------- parsing
 
 _RULE_START = re.compile(r"^\s*(\d{1,3})\.\s+(\S.*)$")
@@ -132,6 +142,13 @@ _lock = threading.Lock()
 _cache: dict = {"path": None, "mtime": None, "index": None}
 
 
+_SENTENCE = re.compile(r"(?<=[.;:!?])\s+(?=[A-Z(\[])")
+
+
+def split_sentences(text: str) -> list[str]:
+    return [p.strip() for p in _SENTENCE.split(text) if p.strip()]
+
+
 class Index:
     def __init__(self, rules: list[Rule]):
         self.rules = rules
@@ -142,12 +159,26 @@ class Index:
         for r in rules:
             df.update(set(r.tokens))
         self.idf = {t: math.log(1 + (self.n - c + 0.5) / (c + 0.5)) for t, c in df.items()}
+        self.vocab = list(df)
+        self._bigrams = {r.number: set(zip(r.tokens, r.tokens[1:])) for r in rules}
+
+    def expand(self, query: str) -> list[str]:
+        """Query tokens, with a misspelt word replaced by the closest word the Code actually uses."""
+        out = []
+        for t in tokenize(query):
+            if t not in self.idf and len(t) >= 4:
+                close = difflib.get_close_matches(t, self.vocab, n=1, cutoff=0.82)
+                if close:
+                    t = close[0]
+            out.append(t)
+        return out
 
     def search(self, query: str, k: int = 4) -> list[tuple[Rule, float]]:
-        q = tokenize(query)
+        q = self.expand(query)
         if not q or not self.n:
             return []
         k1, b = 1.5, 0.75
+        qpairs = set(zip(q, q[1:]))
         scored = []
         for r in self.rules:
             tf = Counter(r.tokens)
@@ -158,9 +189,44 @@ class Index:
                 if f:
                     s += self.idf.get(t, 0.0) * f * (k1 + 1) / (f + k1 * (1 - b + b * dl / (self.avg_len or 1)))
             if s > 0:
+                # words that sit side by side in both the question and the rule are a much stronger sign
+                s *= 1 + 0.25 * len(qpairs & self._bigrams[r.number])
                 scored.append((r, s))
         scored.sort(key=lambda x: -x[1])
-        return scored[:k]
+        if not scored:
+            return []
+        # keep the rules that are close to the best one; a long tail of weak matches is noise
+        top = scored[0][1]
+        return [x for x in scored if x[1] >= 0.45 * top][:k]
+
+    def best_sentences(self, rule: Rule, query: str, n: int = 2) -> list[str]:
+        """The sentences of a rule that answer the question best, in their original order."""
+        sents = split_sentences(rule.text)
+        if len(sents) <= 1:
+            return sents
+        q = set(self.expand(query))
+        scored = []
+        for i, sent in enumerate(sents):
+            toks = set(tokenize(sent))
+            scored.append((sum(self.idf.get(t, 0.0) for t in toks & q), i))
+        keep = sorted(i for sc, i in sorted(scored, reverse=True)[:n] if sc > 0)
+        return [sents[i] for i in keep] or sents[:1]
+
+    def near_topics(self, query: str, k: int = 3) -> list[str]:
+        """Section names of the rules that share at least a word with the question (for 'did you mean')."""
+        q = set(self.expand(query))
+        seen, out = set(), []
+        ranked = sorted(self.rules, key=lambda r: -sum(self.idf.get(t, 0.0) for t in set(r.tokens) & q))
+        for r in ranked:
+            if not (set(r.tokens) & q):
+                break
+            sec = r.section.strip()
+            if sec and sec not in seen:
+                seen.add(sec)
+                out.append(sec)
+            if len(out) >= k:
+                break
+        return out
 
 
 def load_index(path: str | None = None) -> Index | None:
@@ -181,7 +247,7 @@ def load_index(path: str | None = None) -> Index | None:
                     continue
                 d = json.loads(line)
                 r = Rule(number=int(d["rule"]), section=d.get("section", ""), text=d["text"])
-                r.tokens = tokenize(r.section + " " + r.text)
+                r.tokens = rule_tokens(r.section, r.text)
                 rules.append(r)
         idx = Index(rules)
         _cache.update(path=str(p), mtime=mtime, index=idx)

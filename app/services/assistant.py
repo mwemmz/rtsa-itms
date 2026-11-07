@@ -114,11 +114,14 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
         return {"mode": "unavailable", "answer": "The Highway Code has not been loaded on this server yet.",
                 "sources": [], "disclaimer": DISCLAIMER}
 
-    hits = [(r, s) for r, s in index.search(question, TOP_K) if s > 0]
+    search_text = _with_follow_up(question, history or [])
+    hits = [(r, s) for r, s in index.search(search_text, TOP_K) if s > 0]
     if not hits or hits[0][1] < settings.ASSISTANT_MIN_SCORE:
+        topics = index.near_topics(search_text)
+        hint = f" Related topics in the Code: {', '.join(topics)}." if topics else ""
         return {"mode": "no_match",
                 "answer": "I could not find that in the Highway Code. Try asking in different words, "
-                          "or contact RTSA for questions about a specific case.",
+                          "or contact RTSA for questions about a specific case." + hint,
                 "sources": [], "disclaimer": DISCLAIMER}
 
     rules = [r for r, _ in hits]
@@ -135,7 +138,27 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
         except AssistantError:
             pass  # fall through to the plain rule text
 
-    lines = [f"Rule {r.number}: {r.text}" for r in rules[:3]]
-    return {"mode": "extract",
-            "answer": "Here is what the Highway Code says:\n" + "\n".join(lines),
-            "sources": sources, "disclaimer": DISCLAIMER}
+    # No AI: lead with the sentences of the best rule that answer the question, then point to the rest.
+    best = rules[0]
+    lead = " ".join(index.best_sentences(best, search_text))
+    parts = [f"{lead} (Rule {best.number}{', ' + best.section if best.section else ''})"]
+    if len(rules) > 1:
+        parts.append("Also relevant: " + ", ".join(f"Rule {r.number}" for r in rules[1:3]) + ". Their full text is listed below.")
+    for s in sources[:1]:
+        s["cited"] = True
+    return {"mode": "extract", "answer": "\n".join(parts), "sources": sources, "disclaimer": DISCLAIMER}
+
+
+_FOLLOW_UP_WORDS = 4
+
+
+def _with_follow_up(question: str, history: list[dict]) -> str:
+    """A very short question ("and at night?") is read together with the previous question."""
+    if len(highway_code.tokenize(question)) > _FOLLOW_UP_WORDS:
+        return question
+    for h in reversed(history[-MAX_HISTORY_TURNS:]):
+        if h.get("role") != "assistant":
+            prev = _clean(h.get("content", ""))[:MAX_QUESTION]
+            if prev and prev.lower() != question.lower():
+                return f"{prev} {question}"
+    return question
