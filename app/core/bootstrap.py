@@ -6,6 +6,7 @@ data are applied when the web service boots (gated by
 redeploy or a free-tier wake-up is a safe no-op after the first run.
 """
 
+import os
 import subprocess
 import sys
 import traceback
@@ -44,11 +45,25 @@ def seed_database() -> None:
     logger.info("Database seed completed")
 
 
+def seed_demo_data() -> None:
+    """Optional: load the Zambian demo data when SEED_DEMO_DATA=true. Does nothing if it is already there.
+
+    Render's free tier has no shell, so this is how the demo data reaches the live database. A failure
+    here never stops the app from starting.
+    """
+    if os.environ.get("SEED_DEMO_DATA", "").lower() not in ("1", "true", "yes"):
+        return
+    # In the background: over a remote database this takes a few minutes, and the app must be up before then.
+    logger.info("SEED_DEMO_DATA is on: loading demo data in the background (skipped if already present)")
+    subprocess.Popen([sys.executable, str(PROJECT_ROOT / "scripts" / "seed_demo.py")], stdout=sys.stdout, stderr=sys.stderr)
+
+
 def run_startup_tasks() -> None:
     logger.info("Running startup tasks: migrations then seed")
     try:
         upgrade_database()
         seed_database()
+        seed_demo_data()
     except Exception:
         logger.exception("Startup migration or seed failed; application cannot start")
         print("STARTUP DATABASE ERROR", file=sys.stderr, flush=True)

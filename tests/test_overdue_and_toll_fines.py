@@ -100,3 +100,15 @@ def test_admin_fines_report_adds_up():
     assert s["challans_overdue"] >= 1 and s["challans_unpaid"] >= s["challans_overdue"]
     citizen_h = _login("citizen")
     assert client.get("/api/admin/reports/fines", headers=citizen_h).status_code == 403
+
+
+def test_demo_data_loads_only_when_asked(monkeypatch):
+    from app.core import bootstrap
+    calls = []
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", lambda *a, **k: calls.append(a))
+    monkeypatch.delenv("SEED_DEMO_DATA", raising=False)
+    bootstrap.seed_demo_data()
+    assert calls == []
+    monkeypatch.setenv("SEED_DEMO_DATA", "true")
+    bootstrap.seed_demo_data()
+    assert len(calls) == 1 and calls[0][0][-1].endswith("seed_demo.py")
