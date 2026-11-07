@@ -17,7 +17,7 @@ a licence, with or without a vehicle).
 
 import uuid
 
-from sqlalchemy import or_
+from sqlalchemy import and_, not_, or_
 from sqlalchemy.orm import Query, Session
 
 from app.models.driver import Driver
@@ -59,7 +59,10 @@ def owner_user_id(db: Session, vehicle: Vehicle | None) -> uuid.UUID | None:
 def owed_challans_query(db: Session, user: User) -> Query:
     """Every e-Challan this user is liable to pay, paid or not."""
     vehicle_ids = owned_vehicles_query(db, user).with_entities(Vehicle.id)
-    owed = [Challan.vehicle_id.in_(vehicle_ids), Challan.user_id == user.id]
+    # An owner is let off a driver-only fine once the driver they named accepts it.
+    driver_only = db.query(Violation.id).filter(Violation.liable_party == "driver")
+    relieved = and_(Challan.nomination_status == "accepted", Challan.violation_id.in_(driver_only))
+    owed = [and_(Challan.vehicle_id.in_(vehicle_ids), not_(relieved)), Challan.user_id == user.id]
     driver_ids = [d.id for d in _linked_drivers(db, user).with_entities(Driver.id)]
     if driver_ids:
         # Fines for offences they committed as the driver, including ones recorded

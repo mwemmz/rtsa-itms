@@ -70,6 +70,8 @@ class VehicleResponse(BaseModel):
     chassis_number: str | None
     fastag_id: str | None = None
     status: VehicleStatus
+    police_report_number: str | None = None
+    stolen_reported_at: datetime | None = None
     is_blacklisted: bool
     blacklist_reason: str | None
     registration_date: datetime

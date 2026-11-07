@@ -26,5 +26,8 @@ def mark_overdue_challans(db: Session, now: datetime | None = None) -> dict[str,
         added += surcharge
         log_action(db, "challan_overdue", "challan", str(c.id),
                    f"{c.reference} overdue; late surcharge {surcharge} ngwee ({percent}%)", None)
+    from app.services.nomination import expire_nominations
+
+    expired = expire_nominations(db, now)
     db.flush()
-    return {"challans_overdue": len(late), "surcharge_ngwee": added}
+    return {"challans_overdue": len(late), "surcharge_ngwee": added, "nominations_lapsed": expired}

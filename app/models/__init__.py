@@ -5,7 +5,7 @@ from app.models.audit_log import AuditLog
 from app.models.inspection import Inspection, FitnessCertificate
 from app.models.insurance import Insurance
 from app.models.licence import LicenceApplication
-from app.models.enforcement import Violation, Challan, ViolationPhoto
+from app.models.enforcement import Appeal, Challan, DemeritPoint, Violation, ViolationPhoto
 from app.models.driver_report import DriverReport
 from app.models.anpr import ANPREvent
 from app.models.toll import TollTransaction

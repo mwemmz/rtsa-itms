@@ -21,6 +21,8 @@ from app.schemas.toll import (
     TollTransactionResponse,
 )
 from app.services.audit import log_action
+from app.services.nomination import open_nomination
+from app.services.stolen import sighting_alert, stolen_at
 from app.services.ownership import owner_user_id
 from app.services import settings as runtime_settings
 from app.services.compliance import check_vehicle_compliance
@@ -102,7 +104,12 @@ def _process_toll_event(
     # (insurance, fitness, permit, blacklist, registration). Having an unpaid fine is
     # a reason to stop the vehicle, not a new offence: fining it would add a fresh
     # challan at every gate, each of which guarantees the next flag.
-    chargeable = [
+    # A vehicle reported stolen is evidence of a crime, not an offence by its owner: no fine, and the
+    # sighting goes to officers instead.
+    stolen_now = stolen_at(vehicle, transaction.timestamp)
+    if stolen_now:
+        sighting_alert(db, vehicle, f"toll gate {gate_id}")
+    chargeable = [] if stolen_now else [
         i for i in compliance.issues
         if not i.endswith("outstanding challan(s)") and not i.endswith("unpaid toll due(s)") and not i.startswith("Tag and plate mismatch")
     ]
@@ -112,7 +119,7 @@ def _process_toll_event(
         .join(Violation, Violation.id == Challan.violation_id)
         .filter(
             Challan.vehicle_id == vehicle.id,
-            Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]),
+            Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE]),
             Violation.location.like("Toll gate %"),
             Violation.description == description,
         )
@@ -145,6 +152,8 @@ def _process_toll_event(
             reference=generate_challan_reference(),
         )
         db.add(challan)
+        db.flush()
+        open_nomination(db, challan, violation)
         challan_created = True
 
     log_action(
@@ -154,7 +163,7 @@ def _process_toll_event(
 
     # Notify the account the vehicle is registered to. (Never match on owner name:
     # two people can share a name, and the other one would receive this plate's offences.)
-    owner_id = owner_user_id(db, vehicle) if result == TollComplianceResult.FLAGGED else None
+    owner_id = owner_user_id(db, vehicle) if result == TollComplianceResult.FLAGGED and not stolen_now else None
     if owner_id:
         notify(
             db,

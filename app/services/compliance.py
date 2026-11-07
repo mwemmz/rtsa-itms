@@ -17,7 +17,10 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
     now = datetime.utcnow()
 
     # 1. Registration status
-    if vehicle.status != VehicleStatus.ACTIVE:
+    if vehicle.status == VehicleStatus.STOLEN:
+        result.issues.append(f"Reported stolen (police report {vehicle.police_report_number or 'on file'})")
+        result.checks.append({"check": "registration_status", "status": "fail", "detail": "Reported stolen: alert police, do not fine the owner"})
+    elif vehicle.status != VehicleStatus.ACTIVE:
         result.issues.append(f"Vehicle status is {vehicle.status.value}")
         result.checks.append({
             "check": "registration_status",
@@ -90,7 +93,7 @@ def check_vehicle_compliance(db: Session, vehicle: Vehicle) -> VehicleCompliance
         db.query(Challan)
         .filter(
             Challan.vehicle_id == vehicle.id,
-            Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]),
+            Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE]),  # an appealed (disputed) fine does not stop the vehicle
         )
         .count()
     )

@@ -42,6 +42,10 @@ class Vehicle(Base):
     fastag_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     is_blacklisted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blacklist_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Theft: reported by the owner (with the police report number) until the vehicle is recovered.
+    stolen_reported_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    police_report_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    recovered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     registration_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

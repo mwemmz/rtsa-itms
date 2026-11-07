@@ -97,6 +97,8 @@ def resolve_payable(db: Session, user: User, payment_type: PaymentType,
             raise HTTPException(status.HTTP_404_NOT_FOUND, "e-Challan not found")
         if challan.status == ChallanStatus.PAID:
             raise HTTPException(status.HTTP_409_CONFLICT, "This e-Challan is already paid")
+        if challan.status == ChallanStatus.CANCELLED:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This e-Challan was cancelled, nothing is due")
         amount = challan.penalty_amount
         if requested_amount is not None and requested_amount != amount:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Amount due is {amount}")
@@ -230,6 +232,9 @@ def complete_payment(db: Session, payment: Payment, actor_id=None) -> Payment:
         if payment.payment_type == PaymentType.FINE:
             challan = db.get(Challan, payment.related_entity_id)
             if challan is not None:
+                from app.services.appeals import withdraw_on_payment
+
+                withdraw_on_payment(db, challan)
                 challan.status = ChallanStatus.PAID
         elif payment.payment_type == PaymentType.TOLL:
             toll = db.get(TollTransaction, payment.related_entity_id)

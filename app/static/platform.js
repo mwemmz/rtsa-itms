@@ -601,13 +601,25 @@ VIEWS.vehicles = async function () {
     var details = await Promise.all(vs.map(function (v) { return api("/api/citizen/vehicles/" + v.id); }));
     $("#cv-list").innerHTML = details.map(function (d) {
       var v = d.vehicle;
-      return '<div class="card"><h3><span class="mono">' + esc(v.registration_number) + "</span> " + pill(d.compliant ? "All in order" : "Needs attention", d.compliant ? "green" : "amber") + "</h3>" +
+      var stolen = v.status === "stolen";
+      return '<div class="card"><h3><span class="mono">' + esc(v.registration_number) + "</span> " + (stolen ? pill("Reported stolen", "red") : pill(d.compliant ? "All in order" : "Needs attention", d.compliant ? "green" : "amber")) + "</h3>" +
+        (stolen ? '<p class="small muted">Reported stolen, police report ' + esc(v.police_report_number || "on file") + ". Fines for offences after the theft are waived, and sightings are sent to officers.</p>"
+          : '<p><button class="btn sm cvstolen" data-id="' + esc(v.id) + '" data-plate="' + esc(v.registration_number) + '">Report stolen</button></p>') +
         '<p class="muted">' + esc(v.year + " " + v.make + " " + v.model) + "</p>" +
         tbl(["Check", "Result", "Detail"], d.checks.map(function (c) {
           return [esc(CHECK_LABELS[c.check] || c.check.replace(/_/g, " ")), pill(c.status === "pass" ? "OK" : "Problem", c.status === "pass" ? "green" : "red"),
             '<span class="small">' + esc(c.detail || "") + "</span>" + (c.check === "outstanding_fines" && c.status === "fail" ? ' <a class="small" href="#/fines">Pay</a>' : "")];
         })) + "</div>";
     }).join("");
+    $$("#cv-list .cvstolen").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var no = prompt("Police report number for the theft of " + btn.dataset.plate + ":", "");
+        if (!no || no.trim().length < 3) return;
+        api("/api/portal/vehicles/" + btn.dataset.id + "/report-stolen", { method: "POST", body: JSON.stringify({ police_report_number: no.trim() }) })
+          .then(function (r) { toast("Reported. " + (r.fines_waived ? r.fines_waived + " fine(s) waived." : "Officers have been alerted."), "ok"); go("vehicles"); })
+          .catch(function (e) { toast(e.message, "err"); });
+      });
+    });
   } catch (e) { fail("#cv-list", e); }
 };
 

@@ -444,3 +444,26 @@ These were added with migration `a1c3e5f7b902`. There is no web screen for them 
 It goes through the app's own fine and payment code, so the admin totals are real. `--reset` removes what it added and
 rebuilds it. Every demo account uses the password `Demo12345!x`, for example `admin.finance@demo.rtsa.gov.zm`
 and `officer.chanda@demo.rtsa.gov.zm`. Run `python scripts/seed.py` first.
+
+
+## Driver nomination ("who was driving?")
+
+When a driver offence is recorded against a vehicle with no driver on the spot (a toll gate, a camera, an officer with only the plate), the owner is asked to name the driver.
+
+1. The owner is notified, and a prompt appears as soon as they sign in. They name the driver by licence number (or say it was them) within `enforcement.nomination_days` (default 14, an admin setting).
+2. The named driver is notified and, on signing in, accepts the fine or says it was not them. Accepting moves a driver-only fine from the owner to the driver.
+3. A rejection goes to an officer (Challans screen, "Disputed driver nominations"), who decides who pays.
+4. No answer by the deadline: the request lapses and the owner stays liable. Vehicle offences (fitness, road tax, overloading, ...) are never asked about: they stay with the owner.
+
+Endpoints: `GET /api/portal/nominations`, `POST /api/portal/fines/{id}/nominate`, `POST /api/portal/nominations/{id}/respond`, `GET /api/enforcement/nominations/rejected`, `POST /api/enforcement/challans/{id}/nomination/resolve`. The demo data includes two live cases for the first demo citizen.
+
+
+## Appeals, demerit points and stolen vehicles
+
+**Appeals.** A citizen can appeal a fine within `enforcement.appeal_days` (default 14) of its issue, giving a reason and an explanation. The fine becomes *disputed*: it stops accruing the late surcharge and no longer flags the vehicle at toll gates. An officer (Challans screen, "Appeals to decide") upholds it (the fine is *cancelled*, nothing is due, and its demerit points are removed) or dismisses it (the fine returns to how it was, with 7 days to pay). Paying a disputed fine withdraws the appeal. `POST /api/portal/fines/{id}/appeal`, `GET /api/portal/appeals`, `GET /api/enforcement/appeals`, `POST /api/enforcement/appeals/{id}/decide`.
+
+**Demerit points.** Driver offences add points to the driver once a driver is known (named at the roadside, or by an owner's nomination that the driver accepts): phone 3, seat belt 2, red light 4, speeding 3 to 5 depending on how far over the limit, reckless 5, drink driving 6. Vehicle offences carry none. Reaching `enforcement.demerit_limit` (default 12) within `enforcement.demerit_window_months` (default 24) suspends the licence and notifies the driver. **These values are illustrative, not RTSA's official schedule.** The points show on My licence.
+
+**Stolen vehicles.** An owner reports a theft with the police report number (My vehicles, "Report stolen"). From then until an officer marks it recovered, a fine for an offence by the vehicle is cancelled automatically instead of charged to the owner, the owner is not notified or asked to name a driver, and a toll-gate sighting alerts officers and admins ("STOLEN VEHICLE SIGHTED") instead of creating a fine. `POST /api/portal/vehicles/{id}/report-stolen`, `POST /api/enforcement/vehicles/{id}/recovered`.
+
+The demo data includes an appealable fine, a citizen with 9 of 12 points, and a vehicle reported stolen.

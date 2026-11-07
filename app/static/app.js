@@ -88,7 +88,7 @@ var VO_TYPES = VO_DRIVER_TYPES.concat(VO_VEHICLE_TYPES, VO_BOTH_TYPES);
 var VO_LICENCE_TYPES = VO_DRIVER_TYPES.map(function (t) { return t[0]; });
 var VO_IMPOUND_TYPES = VO_VEHICLE_TYPES.map(function (t) { return t[0]; });
 var VEHICLE_STATUSES = ["active", "suspended", "deregistered", "stolen"];
-var CHALLAN_STATUSES = ["unpaid", "paid", "overdue", "disputed"];
+var CHALLAN_STATUSES = ["unpaid", "paid", "overdue", "disputed", "cancelled"];
 var DRIVER_STATUSES = ["active", "suspended", "disqualified", "expired"];
 var LICENCE_CLASSES = ["A", "B", "C", "D", "E", "F"];
 
@@ -634,6 +634,7 @@ async function bootstrapApp() {
   mountAssistant();
   await loadRouter();
   openLiveStream();
+  promptNominations();
 }
 
 /* ---------------- live updates (SSE) ---------------- */
@@ -812,6 +813,10 @@ async function refreshBell() {
 // scroll to: a reference (fine CH-…, report DR-…, receipt RCT-…) or a plate.
 var NOTIFICATION_TARGETS = {
   challan_created: { views: ["fines", "challans"], focus: "ref" },
+  driver_nomination_requested: { views: ["fines"], focus: "ref" },
+  driver_named: { views: ["fines"], focus: "ref" },
+  nomination_accepted: { views: ["fines", "challans"], focus: "ref" },
+  nomination_rejected: { views: ["fines", "challans"], focus: "ref" },
   toll_flagged: { views: ["fines", "challans", "toll"], focus: "plate" },
   payment_receipt: { views: ["receipts", "payments", "challans"], focus: "ref" },
   payment_failed: { views: ["receipts", "fines", "payments"], focus: "ref" },
@@ -925,7 +930,7 @@ function statusPill(status) {
   var cls = "gray";
   if (status === "active" || status === "paid" || status === "valid" || status === "passed" || status === "issued") cls = "green";
   else if (status === "suspended" || status === "expired" || status === "overdue" || status === "deregistered" || status === "failed" || status === "rejected") cls = "red";
-  else if (status === "unpaid" || status === "pending") cls = "amber";
+  else if (status === "unpaid" || status === "pending" || status === "disputed") cls = "amber";
   return '<span class="pill ' + cls + '">' + esc(status) + "</span>";
 }
 
@@ -1370,7 +1375,7 @@ function photoButtonLabel(n) { return n ? "Photos (" + n + ")" : "Add photos"; }
 
 // A due date, flagged when it has passed and the fine is still open.
 function dueCell(c) {
-  var late = c.status !== "paid" && utcDate(c.due_date) < new Date();
+  var late = c.status !== "paid" && c.status !== "cancelled" && c.status !== "disputed" && utcDate(c.due_date) < new Date();
   return dday(c.due_date) + (late ? ' <span class="pill red">overdue</span>' : "");
 }
 
@@ -1721,7 +1726,64 @@ VIEWS.challans = async function () {
   $("#c-btn").addEventListener("click", loadChallans);
   $("#c-status").addEventListener("change", loadChallans);
   await loadChallans();
+  loadAppeals();
+  loadRejectedNominations();
 };
+
+// Appeals waiting for an officer: uphold (the fine is cancelled and its demerit points removed) or dismiss.
+async function loadAppeals() {
+  if (!/officer|admin/.test((USER && USER.role) || "")) return;
+  try {
+    var rows = await api("/api/enforcement/appeals");
+    if (!rows.length) return;
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = "<h3>Appeals to decide</h3>" +
+      '<div class="table-wrap"><table class="stack"><tr><th>Fine</th><th>Vehicle</th><th>Appellant</th><th>Their case</th><th></th></tr>' +
+      rows.map(function (r) {
+        return "<tr><td data-label='Fine'><span class='mono'>" + esc(r.reference) + "</span><div class='small muted'>" + esc(offenceTypeLabel(r.violation_type || "")) + " · " + money(r.amount || 0) + "</div></td>" +
+          "<td data-label='Vehicle' class='mono'>" + esc(r.registration_number || "") + "</td><td data-label='Appellant'>" + esc(r.appellant || "") + "</td>" +
+          "<td data-label='Their case' class='small'><b>" + esc(String(r.reason || "").replace(/_/g, " ")) + "</b><br>" + esc(r.details || "") + "</td>" +
+          "<td><button class='btn gold sm apdec' data-id='" + esc(r.id) + "' data-d='upheld'>Uphold, cancel fine</button> <button class='btn sm apdec' data-id='" + esc(r.id) + "' data-d='dismissed'>Dismiss</button></td></tr>";
+      }).join("") + "</table></div>";
+    $("#content").appendChild(card);
+    $$(".apdec").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var note = prompt("Note for the citizen (optional):", "") || "";
+        api("/api/enforcement/appeals/" + b.dataset.id + "/decide", { method: "POST", body: JSON.stringify({ decision: b.dataset.d, note: note }) })
+          .then(function () { toast("Decision recorded.", "ok"); go("challans"); })
+          .catch(function (e) { toast(e.message, "err"); });
+      });
+    });
+  } catch (e) { /* the challans table above is the page */ }
+}
+
+// Fines where the driver the owner named says "that was not me": an officer decides who pays.
+async function loadRejectedNominations() {
+  if (!/officer|admin/.test((USER && USER.role) || "")) return;
+  try {
+    var rows = await api("/api/enforcement/nominations/rejected");
+    if (!rows.length) return;
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = "<h3>Disputed driver nominations</h3><p class='small muted'>The owner named a driver, and that driver says it was not them. Decide who the fine belongs to.</p>" +
+      '<div class="table-wrap"><table class="stack"><tr><th>Fine</th><th>Vehicle</th><th>Named driver</th><th>What they said</th><th></th></tr>' +
+      rows.map(function (r) {
+        return "<tr><td data-label='Fine'><span class='mono'>" + esc(r.reference) + "</span><div class='small muted'>" + esc(offenceTypeLabel(r.violation_type || "")) + "</div></td>" +
+          "<td data-label='Vehicle' class='mono'>" + esc(r.registration_number || "") + "</td><td data-label='Named driver'>" + esc(r.named_driver || "") + "</td>" +
+          "<td data-label='What they said' class='small'>Owner: " + esc(r.owner_statement || "no comment") + "<br>Driver: " + esc(r.driver_note || "no comment") + "</td>" +
+          "<td><button class='btn gold sm nomres' data-id='" + esc(r.id) + "' data-d='driver'>Fine the driver</button> <button class='btn sm nomres' data-id='" + esc(r.id) + "' data-d='owner'>Keep with owner</button></td></tr>";
+      }).join("") + "</table></div>";
+    $("#content").appendChild(card);
+    $$(".nomres").forEach(function (b) {
+      b.addEventListener("click", function () {
+        api("/api/enforcement/challans/" + b.dataset.id + "/nomination/resolve", { method: "POST", body: JSON.stringify({ decision: b.dataset.d }) })
+          .then(function () { toast("Decision recorded.", "ok"); go("challans"); })
+          .catch(function (e) { toast(e.message, "err"); });
+      });
+    });
+  } catch (e) { /* the list is a convenience; the challans table above is the page */ }
+}
 
 async function loadChallans() {
   var table = $("#challan-table");
@@ -2742,6 +2804,121 @@ async function loadTollEvents() {
 
 /* ---------------- citizen: fines ---------------- */
 
+
+
+/* ---------------- appeals ---------------- */
+
+var APPEAL_REASONS = [["not_me", "I was not the driver"], ["wrong_vehicle", "Wrong vehicle or plate"], ["wrong_details", "The details are wrong"],
+  ["already_paid", "I already paid"], ["emergency", "It was an emergency"], ["other", "Another reason"]];
+
+function openAppealModal(id, ref) {
+  var old = $("#appeal-modal");
+  if (old) old.remove();
+  var box = document.createElement("div");
+  box.id = "appeal-modal";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  box.style.cssText = "position:fixed;inset:0;background:rgba(10,20,35,.72);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px;";
+  box.innerHTML = '<div class="card" style="max-width:520px;width:100%;margin:auto;"><h3>Appeal e-Challan ' + esc(ref) + "</h3>" +
+    '<p class="small muted">While an officer reviews your appeal, the fine will not go overdue. If it is dismissed you get 7 more days to pay. If you pay now, the appeal ends.</p>' +
+    '<label class="small" style="display:block;margin-bottom:4px;">Reason</label><select id="ap-reason" style="width:100%;">' +
+    APPEAL_REASONS.map(function (r) { return '<option value="' + r[0] + '">' + esc(r[1]) + "</option>"; }).join("") + "</select>" +
+    '<label class="small" style="display:block;margin:10px 0 4px;">What happened (at least 15 characters)</label><textarea id="ap-details" style="width:100%;" rows="4" maxlength="1000"></textarea>' +
+    '<div id="ap-error" class="error-box hidden" style="margin-top:8px;"></div>' +
+    '<div style="display:flex;gap:8px;margin-top:14px;"><button class="btn gold" id="ap-send">Send appeal</button><button class="btn" id="ap-cancel">Cancel</button></div></div>';
+  document.body.appendChild(box);
+  $("#ap-cancel").addEventListener("click", function () { box.remove(); });
+  $("#ap-send").addEventListener("click", function () {
+    api("/api/portal/fines/" + id + "/appeal", { method: "POST", body: JSON.stringify({ reason: $("#ap-reason").value, details: $("#ap-details").value.trim() }) })
+      .then(function () { box.remove(); toast("Appeal sent. You will be told the outcome.", "ok"); go("fines"); })
+      .catch(function (e) { $("#ap-error").textContent = e.message; $("#ap-error").classList.remove("hidden"); });
+  });
+}
+
+/* ---------------- driver nomination: "who was driving?" ---------------- */
+
+// Shown as soon as someone signs in: a fine on their vehicle that asks who was
+// driving, or a fine that names them. Answering is optional right now, but an
+// unanswered request lapses and the owner stays liable.
+async function promptNominations() {
+  var items;
+  try { items = await api("/api/portal/nominations"); } catch (e) { return; }
+  if (!items || !items.length) return;
+  var old = $("#nomination-modal");
+  if (old) old.remove();
+  var box = document.createElement("div");
+  box.id = "nomination-modal";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  box.style.cssText = "position:fixed;inset:0;background:rgba(10,20,35,.72);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px;";
+  var inner = document.createElement("div");
+  inner.className = "card";
+  inner.style.cssText = "max-width:560px;width:100%;margin:auto;";
+  box.appendChild(inner);
+  document.body.appendChild(box);
+
+  function close() { box.remove(); }
+  function when(i) { return dt(i.occurred_at) + (i.location ? " at " + esc(i.location) : ""); }
+
+  function render() {
+    if (!items.length) { close(); return; }
+    var i = items[0];
+    var more = items.length > 1 ? '<p class="small muted">' + (items.length - 1) + " more waiting after this one.</p>" : "";
+    if (i.role === "owner") {
+      inner.innerHTML =
+        "<h3>Who was driving your vehicle?</h3>" +
+        "<p>Your vehicle <b class='mono'>" + esc(i.registration_number || "") + "</b> was involved in an offence: <b>" + esc(offenceTypeLabel(i.violation_type)) + "</b>, " + when(i) + ". " +
+        "e-Challan <span class='mono'>" + esc(i.reference) + "</span>, " + money(i.penalty_amount) + ".</p>" +
+        "<p class='small muted'>Name the person who was driving by their licence number. They will be asked to accept the fine or say it was not them." +
+        (i.deadline ? " If you do nothing by <b>" + dday(i.deadline) + "</b>, you remain liable for it." : "") + "</p>" +
+        '<label class="small" style="display:block;margin-bottom:4px;">Driver\'s licence number</label><input id="nom-licence" style="width:100%;" placeholder="e.g. DL-123456" autocomplete="off">' +
+        '<label class="small" style="margin-top:8px;display:block;">Anything to add (optional)</label><textarea id="nom-note" style="width:100%;" rows="2" maxlength="500" placeholder="e.g. My brother had the car that day"></textarea>' +
+        '<div id="nom-error" class="error-box hidden" style="margin-top:8px;"></div>' + more +
+        '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;"><button class="btn gold" id="nom-submit">Name the driver</button>' +
+        '<button class="btn" id="nom-me">It was me</button><button class="btn" id="nom-later">Later</button></div>';
+      var submit = function (licence) {
+        if (!licence.trim()) { $("#nom-error").textContent = "Enter the driver's licence number."; $("#nom-error").classList.remove("hidden"); return; }
+        api("/api/portal/fines/" + i.id + "/nominate", { method: "POST", body: JSON.stringify({ licence_number: licence.trim(), statement: ($("#nom-note").value || "").trim() || null }) })
+          .then(function (r) {
+            toast(r.status === "accepted" ? "Recorded. The fine is yours." : "Driver named. They have been asked to respond.", "ok");
+            items.shift(); render();
+            if (typeof VIEWS !== "undefined" && location.hash.indexOf("fines") !== -1) go("fines");
+          })
+          .catch(function (e) { $("#nom-error").textContent = e.message; $("#nom-error").classList.remove("hidden"); });
+      };
+      $("#nom-submit").addEventListener("click", function () { submit($("#nom-licence").value); });
+      $("#nom-me").addEventListener("click", function () {
+        api("/api/portal/licence").then(function (l) { submit(l.licence_number || ""); })
+          .catch(function () { $("#nom-error").textContent = "You have no licence linked to your account. Enter the licence number instead."; $("#nom-error").classList.remove("hidden"); });
+      });
+    } else {
+      inner.innerHTML =
+        "<h3>You were named as the driver</h3>" +
+        "<p><b>" + esc(i.named_by || "A vehicle owner") + "</b> says you were driving <b class='mono'>" + esc(i.registration_number || "") + "</b> when it was involved in <b>" + esc(offenceTypeLabel(i.violation_type)) + "</b>, " + when(i) + ". " +
+        "e-Challan <span class='mono'>" + esc(i.reference) + "</span>, " + money(i.penalty_amount) + ".</p>" +
+        (i.statement ? "<p class='small muted'>They added: " + esc(i.statement) + "</p>" : "") +
+        "<p class='small muted'>If you accept, the fine moves to you (and counts against your licence if it is a driving offence). If it was not you, an officer will look into it.</p>" +
+        '<label class="small" style="display:block;margin-bottom:4px;">Note (optional)</label><textarea id="nom-note" style="width:100%;" rows="2" maxlength="500"></textarea>' +
+        '<div id="nom-error" class="error-box hidden" style="margin-top:8px;"></div>' + more +
+        '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;"><button class="btn gold" id="nom-accept">I was driving, accept</button>' +
+        '<button class="btn" id="nom-reject">That was not me</button><button class="btn" id="nom-later">Later</button></div>';
+      var answer = function (accept) {
+        api("/api/portal/nominations/" + i.id + "/respond", { method: "POST", body: JSON.stringify({ accept: accept, note: ($("#nom-note").value || "").trim() || null }) })
+          .then(function () {
+            toast(accept ? "Accepted. The fine is now on your account." : "Recorded. An officer will review it.", "ok");
+            items.shift(); render();
+            if (location.hash.indexOf("fines") !== -1) go("fines");
+          })
+          .catch(function (e) { $("#nom-error").textContent = e.message; $("#nom-error").classList.remove("hidden"); });
+      };
+      $("#nom-accept").addEventListener("click", function () { answer(true); });
+      $("#nom-reject").addEventListener("click", function () { answer(false); });
+    }
+    $("#nom-later").addEventListener("click", close);
+  }
+  render();
+}
+
 VIEWS.fines = async function () {
   $("#content").innerHTML = '<div class="card"><h3>My fines &amp; payments</h3><div id="fine-list"><div class="empty">Loading…</div></div></div>';
   try {
@@ -2750,18 +2927,27 @@ VIEWS.fines = async function () {
     if (!items.length) { list.innerHTML = '<div class="empty">You have no fines.</div>'; return; }
     // Open fines first, the most overdue at the top; paid ones after, as a record.
     items.sort(function (a, b) {
-      if ((a.status === "paid") !== (b.status === "paid")) return a.status === "paid" ? 1 : -1;
+      var ad = a.status === "paid" || a.status === "cancelled", bd = b.status === "paid" || b.status === "cancelled";
+      if (ad !== bd) return ad ? 1 : -1;
       return utcDate(a.due_date) - utcDate(b.due_date);
     });
-    var open = items.filter(function (f) { return f.status !== "paid"; });
+    var open = items.filter(function (f) { return f.status !== "paid" && f.status !== "cancelled"; });
     var total = open.reduce(function (sum, f) { return sum + f.penalty_amount; }, 0);
     list.innerHTML = (open.length
         ? '<p style="margin:0 0 12px;">' + open.length + " to pay, <b>" + money(total) + "</b> in total. Paid fines stay below as a record; receipts are in <a href=\"#/receipts\">Payment history</a>.</p>"
         : '<p class="muted" style="margin:0 0 12px;">All paid. Receipts are in <a href="#/receipts">Payment history</a>.</p>') +
       '<div class="table-wrap"><table class="stack"><tr><th>Offence</th><th>When &amp; where</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (f) {
-        var pay = f.status !== "paid"
-          ? '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '" data-amount="' + f.penalty_amount + '">Pay now</button>'
+        var nom = "";
+        if (f.nomination_status === "requested") nom = '<button class="btn sm finnominate">Name the driver</button> ';
+        else if (f.nomination_status === "nominated") nom = '<span class="small muted">Driver named, waiting</span> ';
+        else if (f.nomination_status === "rejected") nom = '<span class="small muted">Disputed, with an officer</span> ';
+        var appeal = "";
+        if (f.can_appeal) appeal = '<button class="btn sm finappeal" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '">Appeal</button> ';
+        else if (f.appeal_status === "pending") appeal = '<span class="small muted">Appeal under review</span> ';
+        else if (f.appeal_status === "dismissed") appeal = '<span class="small muted">Appeal dismissed</span> ';
+        var pay = f.status === "cancelled" ? '<span class="small muted">Cancelled, nothing to pay</span>' : f.status !== "paid"
+          ? appeal + nom + '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '" data-amount="' + f.penalty_amount + '">Pay now</button>'
           : "";
         return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(f.violation_type)) + "</b>" +
             (f.registration_number ? " <span class='mono small'>" + esc(f.registration_number) + "</span>" : "") +
@@ -2771,6 +2957,10 @@ VIEWS.fines = async function () {
           '<td data-label="Due" class="small">' + dueCell(f) + "</td>" +
           '<td data-label="Status">' + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
+    $$("#fine-list .finappeal").forEach(function (btn) {
+      btn.addEventListener("click", function () { openAppealModal(btn.dataset.id, btn.dataset.ref); });
+    });
+    $$("#fine-list .finnominate").forEach(function (btn) { btn.addEventListener("click", promptNominations); });
     $$("#fine-list .finpay").forEach(function (btn) {
       btn.addEventListener("click", function () {
         if (!confirm("Pay " + money(Number(btn.dataset.amount)) + " for " + btn.dataset.ref + "?")) return;
@@ -2810,6 +3000,9 @@ VIEWS.licence = async function () {
         "<tr><td>Issued</td><td>" + dday(l.issue_date) + "</td></tr>" +
         "<tr><td>Expires</td><td>" + dday(l.expiry_date) + " (" + (days < 0 ? Math.abs(days) + " days ago" : days + " days left") + ")</td></tr>" +
         "<tr><td>Restrictions</td><td>" + esc(l.restrictions || "None") + "</td></tr>" +
+        "<tr><td>Demerit points</td><td><b>" + l.demerit_points + "</b> of " + l.demerit_limit +
+          (l.status === "suspended" ? ' <span class="pill red">licence suspended</span>' : l.demerit_points >= l.demerit_limit * 0.75 ? ' <span class="pill amber">close to the limit</span>' : "") +
+          '<div class="small muted">Driving offences add points. Reaching ' + l.demerit_limit + " suspends your licence. They count for two years.</div></td></tr>" +
       "</table></div>" + renewal;
     if ($("#renew-btn")) $("#renew-btn").addEventListener("click", async function () {
       if (!confirm("Renew your licence for 5 years for " + money(350000) + "?")) return;

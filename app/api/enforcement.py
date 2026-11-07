@@ -34,6 +34,10 @@ from app.models.payment import PaymentType
 from app.services import exporters
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
+from app.schemas.portal import AppealDecisionIn, NominationDecisionIn
+from app.services.demerits import award_points
+from app.services.stolen import waive_if_stolen
+from app.services.nomination import open_nomination, resolve as resolve_nomination
 from app.services.delivery import send_sms
 from app.services.evidence import MAX_PHOTOS_PER_VIOLATION, new_photo, photo_out, photo_response, read_photo
 from app.services.money import zmw
@@ -242,6 +246,13 @@ def create_challan_for_violation(
         db, "generate_challan", "challan", str(challan.id),
         f"Generated {challan.reference} for {violation.violation_type.value}", actor_id
     )
+    vehicle = db.get(Vehicle, violation.vehicle_id) if violation.vehicle_id else None
+    if waive_if_stolen(db, challan, violation, vehicle):
+        return challan
+    open_nomination(db, challan, violation)
+    driver = db.get(Driver, violation.driver_id) if violation.driver_id else None
+    if driver is not None and violation.liable_party in ("driver", "both"):
+        award_points(db, violation, driver, actor_id)
     return challan
 
 
@@ -294,6 +305,8 @@ def record_violation_for(db: Session, payload: ViolationCreate, officer: User) -
     # The vehicle owner hears about every fine on their vehicle; the driver
     # about the ones they are liable for, since those carry licence points.
     vehicle = db.query(Vehicle).filter(Vehicle.id == violation.vehicle_id).first()
+    if challan.status == ChallanStatus.CANCELLED:  # waived (vehicle was stolen): nobody to charge or tell
+        return violation
     owner_id = owner_user_id(db, vehicle)
     if owner_id:
         _notify_challan(db, owner_id, challan)
@@ -649,3 +662,94 @@ def pay_challan(
         status=challan.status,
         message="Payment successful",
     )
+
+
+@router.get("/nominations/rejected")
+def rejected_nominations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """Nominations the named driver rejected: each needs an officer's decision."""
+    rows = db.query(Challan).filter(Challan.nomination_status == "rejected").order_by(Challan.created_at.desc()).limit(100).all()
+    out = []
+    for c in rows:
+        v = db.get(Violation, c.violation_id)
+        veh = db.get(Vehicle, c.vehicle_id) if c.vehicle_id else None
+        drv = db.get(Driver, c.nominated_driver_id) if c.nominated_driver_id else None
+        out.append({
+            "id": str(c.id), "reference": c.reference,
+            "registration_number": veh.registration_number if veh else None,
+            "violation_type": v.violation_type.value if v else None,
+            "location": v.location if v else None,
+            "named_driver": (f"{drv.first_name} {drv.last_name}") if drv else None,
+            "owner_statement": c.nomination_statement, "driver_note": c.nominee_note,
+        })
+    return out
+
+
+@router.post("/challans/{challan_id}/nomination/resolve")
+def resolve_rejected_nomination(
+    challan_id: str,
+    payload: NominationDecisionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """Decide a rejected nomination: the fine goes to the named driver, or stays with the owner."""
+    c = resolve_nomination(db, current_user, challan_id, payload.decision, payload.note)
+    db.commit()
+    return {"reference": c.reference, "nomination_status": c.nomination_status}
+
+
+@router.get("/appeals")
+def list_appeals(
+    status_filter: str = Query("pending", alias="status"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """Appeals against fines, newest first. Defaults to the ones waiting for a decision."""
+    from app.models.enforcement import Appeal
+
+    rows = db.query(Appeal).filter(Appeal.status == status_filter).order_by(Appeal.created_at.desc()).limit(100).all()
+    out = []
+    for a in rows:
+        c = db.get(Challan, a.challan_id)
+        v = db.get(Violation, c.violation_id) if c else None
+        veh = db.get(Vehicle, c.vehicle_id) if c and c.vehicle_id else None
+        who = db.get(User, a.appellant_id)
+        out.append({
+            "id": str(a.id), "reference": c.reference if c else None, "amount": c.penalty_amount if c else None,
+            "violation_type": v.violation_type.value if v else None, "location": v.location if v else None,
+            "registration_number": veh.registration_number if veh else None,
+            "appellant": who.full_name if who else None, "reason": a.reason, "details": a.details,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        })
+    return out
+
+
+@router.post("/appeals/{appeal_id}/decide")
+def decide_appeal_endpoint(
+    appeal_id: str,
+    payload: AppealDecisionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """Uphold an appeal (the fine is cancelled and its demerit points removed) or dismiss it."""
+    from app.services.appeals import decide_appeal
+
+    a = decide_appeal(db, current_user, appeal_id, payload.decision, payload.note)
+    db.commit()
+    return {"id": str(a.id), "status": a.status}
+
+
+@router.post("/vehicles/{vehicle_id}/recovered")
+def vehicle_recovered(
+    vehicle_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*OFFICERS)),
+):
+    """A stolen vehicle has been found: it returns to normal and offences from now on count again."""
+    from app.services.stolen import mark_recovered
+
+    v = mark_recovered(db, current_user, vehicle_id)
+    db.commit()
+    return {"registration_number": v.registration_number, "status": v.status.value}

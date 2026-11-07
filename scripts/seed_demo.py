@@ -382,6 +382,73 @@ def make_fines(db, vehicles, drivers, officers, citizens):
     return stats
 
 
+def make_nomination_demo(db, vehicles, drivers, officers, citizens):
+    """Two live "who was driving?" cases, so the feature can be shown the moment a demo citizen signs in.
+
+    Older fines were issued long ago, so any request to name a driver on those is closed first.
+    """
+    from app.models.enforcement import Challan as _Challan
+    from app.services.nomination import nominate
+
+    db.query(_Challan).filter(_Challan.nomination_status == "requested").update({"nomination_status": "none"})
+    # The six months of bulk fines predate demerit points: clear the points (and any suspension they caused)
+    # so the demo starts clean, then give one citizen a realistic near-limit record below.
+    from app.models.driver import DriverStatus
+    from app.models.enforcement import DemeritPoint
+
+    db.query(DemeritPoint).delete()
+    for d in drivers:
+        if d.status == DriverStatus.SUSPENDED and d.licence_expiry_date > NOW:
+            d.status = DriverStatus.ACTIVE
+    db.flush()
+    driver_of = {d.user_id: d for d in drivers}
+    owner_a, owner_b = citizens[0], citizens[1]
+    officer = officers[0]
+
+    def fine_for(owner, minutes_ago):
+        v = next(x for x in vehicles if x.user_id == owner.id)
+        viol = Violation(
+            vehicle_id=v.id, driver_id=None, violation_type=ViolationType.USING_PHONE, location="Cairo Road, Lusaka",
+            latitude=-15.4167, longitude=28.2833, gps_accuracy_m=8, evidence_source="cctv",
+            timestamp=NOW - timedelta(minutes=minutes_ago), recorded_by=officer.id, liable_party="driver",
+            description="Driver seen holding a phone (camera frame)",
+        )
+        db.add(viol)
+        db.flush()
+        return create_challan_for_violation(db, viol, officer.id)
+
+    # A: asks citizens[0], the owner, who was driving.
+    fine_for(owner_a, 90)
+    # B: citizens[1] already named citizens[0] as the driver, so citizens[0] is also asked to accept or deny.
+    ch = fine_for(owner_b, 240)
+    target = driver_of.get(owner_a.id)
+    if target is not None:
+        nominate(db, owner_b, ch.id, target.licence_number, "I lent the car to my cousin that afternoon")
+    # citizens[2]: points near the limit (one more offence suspends the licence) and a vehicle reported stolen.
+    from app.models.vehicle import VehicleStatus
+    from app.services.demerits import award_points
+
+    owner_c = citizens[2]
+    drv_c = driver_of.get(owner_c.id)
+    if drv_c is not None:
+        drv_c.licence_expiry_date = NOW + timedelta(days=400)
+        drv_c.status = DriverStatus.ACTIVE
+        for vt, mins in ((ViolationType.REAR_SEAT_BELT, 60 * 24 * 40), (ViolationType.RUNNING_RED_LIGHT, 60 * 24 * 22), (ViolationType.USING_PHONE, 60 * 24 * 9)):
+            v = next(x for x in vehicles if x.user_id == owner_c.id)
+            viol = Violation(vehicle_id=v.id, driver_id=drv_c.id, violation_type=vt, location="Independence Avenue, Lusaka",
+                             timestamp=NOW - timedelta(minutes=mins), recorded_by=officer.id, liable_party="driver")
+            db.add(viol)
+            db.flush()
+            create_challan_for_violation(db, viol, officer.id)
+    stolen = next((x for x in vehicles if x.user_id == citizens[3].id), None)
+    if stolen is not None:
+        stolen.status = VehicleStatus.STOLEN
+        stolen.stolen_reported_at = NOW - timedelta(days=2)
+        stolen.police_report_number = "CR-4471/26"
+    return {"asks_owner": owner_a.email, "names_driver": owner_a.email if target else None,
+            "near_demerit_limit": owner_c.email, "stolen_vehicle_owner": citizens[3].email}
+
+
 def make_tolls(db, vehicles, toll_ops, citizens):
     by_user = {u.id: u for u in citizens}
     tagged = [v for v in vehicles if v.fastag_id]
@@ -558,6 +625,8 @@ def main() -> int:
         acc = make_accidents(db, vehicles, drivers, officers)
         inc = make_incidents(db)
         make_licence_applications(db, citizens)
+        nom = make_nomination_demo(db, vehicles, drivers, officers, citizens)
+        print(f"Driver-nomination demo: {nom}")
         from app.services.overdue import mark_overdue_challans
         overdue = mark_overdue_challans(db)
         db.commit()

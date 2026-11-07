@@ -198,7 +198,7 @@ def fine_detail(
             "type": violation.violation_type.value, "category": violation.violation_type.category,
             "location": violation.location,
             "time": violation.timestamp.isoformat(), "description": violation.description},
-        "overdue": challan.status != ChallanStatus.PAID and challan.due_date < datetime.utcnow(),
+        "overdue": challan.status not in (ChallanStatus.PAID, ChallanStatus.CANCELLED) and challan.due_date < datetime.utcnow(),
         "payments": [PaymentResponse.model_validate(p).model_dump(mode="json") for p in payments],
     }
 

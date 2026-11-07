@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.driver import DriverStatus, LicenceClass
 from app.models.enforcement import ChallanStatus
@@ -18,6 +18,8 @@ class LicenceStatusOut(BaseModel):
     restrictions: str | None = None
     can_renew: bool = False
     renewal_opens: datetime | None = None
+    demerit_points: int = 0
+    demerit_limit: int = 12
 
 
 class FineOut(BaseModel):
@@ -33,6 +35,70 @@ class FineOut(BaseModel):
     penalty_amount: int
     due_date: datetime
     status: ChallanStatus
+    nomination_status: str = "none"
+    nomination_deadline: datetime | None = None
+    appeal_status: str | None = None
+    can_appeal: bool = False
+
+
+class AppealIn(BaseModel):
+    reason: str
+    details: str = Field(min_length=15, max_length=1000)
+
+
+class AppealOut(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    challan_id: uuid.UUID
+    reason: str
+    details: str
+    status: str
+    decision_note: str | None = None
+    created_at: datetime | None = None
+    decided_at: datetime | None = None
+
+
+class AppealDecisionIn(BaseModel):
+    decision: str = Field(pattern="^(upheld|dismissed)$")
+    note: str | None = Field(default=None, max_length=500)
+
+
+class StolenReportIn(BaseModel):
+    police_report_number: str = Field(min_length=3, max_length=60)
+    stolen_at: datetime | None = None
+
+
+class NominationOut(BaseModel):
+    """A question put to the signed-in user about a fine: who was driving, or was it you."""
+
+    id: uuid.UUID
+    reference: str
+    role: str  # "owner": name the driver. "driver": you were named.
+    status: str
+    registration_number: str | None = None
+    violation_type: str
+    location: str
+    occurred_at: datetime
+    penalty_amount: int
+    deadline: datetime | None = None
+    named_by: str | None = None
+    statement: str | None = None
+
+
+class NominateIn(BaseModel):
+    licence_number: str = Field(min_length=3, max_length=40)
+    statement: str | None = Field(default=None, max_length=500)
+
+
+class NominationResponseIn(BaseModel):
+    accept: bool
+    note: str | None = Field(default=None, max_length=500)
+
+
+class NominationDecisionIn(BaseModel):
+    decision: str = Field(pattern="^(driver|owner)$")
+    note: str | None = Field(default=None, max_length=500)
 
 
 class PortalDashboard(BaseModel):

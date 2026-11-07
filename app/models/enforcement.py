@@ -93,6 +93,7 @@ class ChallanStatus(str, enum.Enum):
     PAID = "paid"
     OVERDUE = "overdue"
     DISPUTED = "disputed"
+    CANCELLED = "cancelled"  # waived: appeal upheld, or the vehicle was reported stolen at the time
 
 
 # Resolved after the enum body so the properties above can reference them.
@@ -228,6 +229,20 @@ class Challan(Base):
     status: Mapped[ChallanStatus] = mapped_column(
         Enum(ChallanStatus), default=ChallanStatus.UNPAID, nullable=False
     )
+    # Driver nomination: when the driver wasn't caught at the roadside, the owner is
+    # asked who was driving. none -> requested -> nominated -> accepted | rejected;
+    # or requested -> expired when the owner never answers (they stay liable).
+    nomination_status: Mapped[str] = mapped_column(String(20), default="none", nullable=False)
+    nomination_deadline: Mapped[datetime | None] = mapped_column(nullable=True)
+    nominated_driver_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("drivers.id"), nullable=True
+    )
+    nominated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("users.id"), nullable=True
+    )
+    nominated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    nomination_statement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nominee_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -267,3 +282,37 @@ class ViolationPhoto(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class Appeal(Base):
+    """A citizen contesting an e-Challan. While it is pending the fine is DISPUTED and stops accruing a surcharge."""
+
+    __tablename__ = "appeals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
+    challan_id: Mapped[uuid.UUID] = mapped_column(UUIDType, ForeignKey("challans.id"), nullable=False, index=True)
+    appellant_id: Mapped[uuid.UUID] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    details: Mapped[str] = mapped_column(Text, nullable=False)
+    # the fine's status before the appeal, restored if it is dismissed
+    prior_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)  # pending|upheld|dismissed|withdrawn
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DemeritPoint(Base):
+    """Points a driver earned for one violation. Voided (not deleted) if the fine is cancelled on appeal."""
+
+    __tablename__ = "demerit_points"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
+    driver_id: Mapped[uuid.UUID] = mapped_column(UUIDType, ForeignKey("drivers.id"), nullable=False, index=True)
+    violation_id: Mapped[uuid.UUID] = mapped_column(UUIDType, ForeignKey("violations.id"), unique=True, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(100), nullable=False)
+    awarded_at: Mapped[datetime] = mapped_column(nullable=False)
+    voided_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    voided_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
