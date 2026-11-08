@@ -375,6 +375,7 @@ The script prints the rule count, sections and any **missing rule numbers**. Che
 | `ASSISTANT_ENABLED` | `true` | Switch the feature off (API returns 503) |
 | `HIGHWAY_CODE_PATH` | `data/highway_code.jsonl` | Ingested rules file |
 | `ANTHROPIC_API_KEY` | empty | Enables AI summaries; leave empty for extract mode |
+| `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` | empty | Alternative: any OpenAI-compatible provider (Gemini, Groq, OpenRouter). Set all three. Used only when `ANTHROPIC_API_KEY` is empty |
 | `ASSISTANT_MODEL` | `claude-haiku-5-5` | Model used for summaries |
 | `ASSISTANT_MIN_SCORE` | `2.0` | Minimum match score before the model is called |
 | `ASSISTANT_RATE_PER_5MIN` | `20` | Questions per user per 5 minutes |

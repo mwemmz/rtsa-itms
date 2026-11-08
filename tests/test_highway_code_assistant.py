@@ -338,3 +338,25 @@ def test_retrieval_quality_does_not_regress():
     highway_code._cache.update(path=None, mtime=None, index=None)
     top1, top4 = eval_assistant.run(verbose=False)
     assert top1 >= 0.85 and top4 >= 0.95
+
+
+def test_openai_compatible_provider_is_used_and_citations_are_still_checked(code_file, monkeypatch):
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "k")
+    monkeypatch.setattr(settings, "LLM_BASE_URL", "https://llm.example/v1/")
+    monkeypatch.setattr(settings, "LLM_MODEL", "m")
+    assert assistant.ai_enabled()
+    seen = {}
+
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "Yes, wear one [Rule 3] [Rule 999]."}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.update(url=url, auth=headers["Authorization"], model=json["model"])
+        return Resp()
+
+    monkeypatch.setattr(assistant.httpx, "post", fake_post)
+    out = assistant.answer_question("Do I need a seat belt?")
+    assert out["mode"] == "ai" and "[Rule 3]" in out["answer"] and "999" not in out["answer"]
+    assert seen == {"url": "https://llm.example/v1/chat/completions", "auth": "Bearer k", "model": "m"}

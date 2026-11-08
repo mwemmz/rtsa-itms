@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     ASSISTANT_ENABLED: bool = True
     HIGHWAY_CODE_PATH: str = "data/highway_code.jsonl"
     ANTHROPIC_API_KEY: str = ""
+    # Any OpenAI-compatible provider works instead (Google Gemini, Groq, OpenRouter...): set all three.
+    # Gemini: https://generativelanguage.googleapis.com/v1beta/openai  Groq: https://api.groq.com/openai/v1
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = ""
+    LLM_MODEL: str = ""
     ASSISTANT_MODEL: str = "claude-haiku-5-5"
     ASSISTANT_TIMEOUT: float = 20.0
     ASSISTANT_MIN_SCORE: float = 2.0  # below this nothing in the Code matches; the model is not called

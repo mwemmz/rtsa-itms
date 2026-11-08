@@ -42,8 +42,12 @@ class AssistantError(Exception):
     """The AI provider failed; the caller falls back to the plain rule text."""
 
 
+def _generic_enabled() -> bool:
+    return bool(settings.LLM_API_KEY and settings.LLM_BASE_URL and settings.LLM_MODEL)
+
+
 def ai_enabled() -> bool:
-    return bool(settings.ANTHROPIC_API_KEY)
+    return bool(settings.ANTHROPIC_API_KEY) or _generic_enabled()
 
 
 def _clean(text: str) -> str:
@@ -74,6 +78,8 @@ def _history_messages(history: list[dict]) -> list[dict]:
 def _call_llm(question: str, rules: list[highway_code.Rule], history: list[dict]) -> str:
     block = "\n".join(f"[Rule {r.number}] ({r.section}) {r.text}" for r in rules)
     user = f"<rules>\n{block}\n</rules>\n\n<question>{_clean(question)}</question>"
+    if not settings.ANTHROPIC_API_KEY and _generic_enabled():
+        return _call_openai_compatible(user, history)
     try:
         res = httpx.post(
             "https://api.anthropic.com/v1/messages",
@@ -87,6 +93,24 @@ def _call_llm(question: str, rules: list[highway_code.Rule], history: list[dict]
         parts = res.json().get("content", [])
         return "".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
     except (httpx.HTTPError, ValueError) as exc:
+        log.warning("assistant provider error: %s", type(exc).__name__)
+        raise AssistantError from exc
+
+
+def _call_openai_compatible(user: str, history: list[dict]) -> str:
+    """Same prompt, sent to any provider that speaks the OpenAI chat format (Gemini, Groq, OpenRouter...)."""
+    try:
+        res = httpx.post(
+            settings.LLM_BASE_URL.rstrip("/") + "/chat/completions",
+            headers={"Authorization": f"Bearer {settings.LLM_API_KEY}", "content-type": "application/json"},
+            json={"model": settings.LLM_MODEL, "max_tokens": 500, "temperature": 0.2,
+                  "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + _history_messages(history)
+                  + [{"role": "user", "content": user}]},
+            timeout=settings.ASSISTANT_TIMEOUT,
+        )
+        res.raise_for_status()
+        return (res.json()["choices"][0]["message"]["content"] or "").strip()
+    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
         log.warning("assistant provider error: %s", type(exc).__name__)
         raise AssistantError from exc
 
