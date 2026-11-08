@@ -287,3 +287,18 @@ def test_shipped_highway_code_data_is_complete_and_clean():
     rows = [json.loads(x) for x in Path("data/highway_code.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [r["rule"] for r in rows] == list(range(1, 298))
     assert not any("ZAMBIAN HIGHWAY CODE" in r["text"] or "" in r["text"] for r in rows)
+
+
+def test_rear_end_question_uses_tokens_for_following_distance_not_reversing():
+    toks = highway_code.tokenize("who is at fault when I hit someone from the back", query=True)
+    assert "gap" in toks and "distance" in toks and "back" not in toks
+    assert "gap" in highway_code.tokenize("what if I rear-ended a car", query=True)
+    assert "back" in highway_code.tokenize("Rule says reverse back slowly")  # rule text is untouched
+
+
+def test_fault_questions_say_the_code_does_not_decide_fault(code_file, monkeypatch):
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+    out = assistant.answer_question("Who is to blame if I do not wear a seat belt?")
+    assert out["answer"].startswith(assistant.FAULT_NOTE) and out["note"] == "fault"
+    plain = assistant.answer_question("Do I need a seat belt?")
+    assert "note" not in plain and not plain["answer"].startswith(assistant.FAULT_NOTE)

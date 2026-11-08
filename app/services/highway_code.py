@@ -57,6 +57,11 @@ _COMPOUNDS = (
 _QUERY_ONLY = (
     (re.compile(r"\b(?:stay(?:ing)? )?(?:behind|after) (?:the )?(?:car|vehicle)(?: in front)?\b|\b(?:car|vehicle) in front\b|\bstay(?:ing)? behind\b|\btailgat\w*|\bfollowing distance\b"), "gap two second distance"),
 )
+# Questions about a rear-end crash are about keeping a safe gap, not about reversing.
+_QUERY_ONLY += (
+    (re.compile(r"\b(?:hit|hits|hitting|crash(?:ed|es)? into|ran into|run into|bump(?:ed)? into|slam(?:med)? into)\b[^.?!]{0,40}?\b(?:from )?(?:behind|the back|the rear|rear)\b|\brear-?end\w*|\bhit (?:the )?back of\b"),
+     "gap two second distance"),
+)
 _SYNONYMS = {
     "highway": "road", "motorway": "road", "expressway": "road",
     "drunk": "alcohol", "drink": "alcohol", "drinking": "alcohol", "intoxicated": "alcohol", "beer": "alcohol", "liquor": "alcohol",

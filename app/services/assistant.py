@@ -108,6 +108,10 @@ def _verify_citations(answer: str, allowed: set[int]) -> tuple[str, set[int]]:
 
 
 def answer_question(question: str, history: list[dict] | None = None) -> dict:
+    return _with_fault_note(question, _answer(question, history))
+
+
+def _answer(question: str, history: list[dict] | None = None) -> dict:
     question = _clean(question)[:MAX_QUESTION]
     index = highway_code.load_index()
     if index is None:
@@ -147,6 +151,19 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
     for s in sources[:1]:
         s["cited"] = True
     return {"mode": "extract", "answer": "\n".join(parts), "sources": sources, "disclaimer": DISCLAIMER}
+
+
+_FAULT = re.compile(r"\b(?:fault|blame|blamed|liable|liability|responsible|who pays|who is to blame)\b", re.IGNORECASE)
+FAULT_NOTE = ("The Highway Code sets the standard of driving. It does not decide who is at fault in a crash: "
+              "that is for the police, the courts and the insurers. These are the rules that apply.")
+
+
+def _with_fault_note(question: str, answer: dict) -> dict:
+    """"Who is at fault?" is a legal question. Say so, then show the rules that bear on it."""
+    if answer.get("sources") and _FAULT.search(question):
+        answer["answer"] = FAULT_NOTE + "\n" + answer["answer"]
+        answer["note"] = "fault"
+    return answer
 
 
 _FOLLOW_UP_WORDS = 4
