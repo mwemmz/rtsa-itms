@@ -108,13 +108,16 @@ def _call_llm(question: str, rules: list[highway_code.Rule], history: list[dict]
 
 def _call_openai_compatible(user: str, history: list[dict]) -> str:
     """Same prompt, sent to any provider that speaks the OpenAI chat format (Gemini, Groq, OpenRouter...)."""
+    body = {"model": settings.LLM_MODEL, "max_tokens": settings.LLM_MAX_TOKENS, "temperature": 0.2,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + _history_messages(history)
+            + [{"role": "user", "content": user}]}
+    if settings.LLM_REASONING_EFFORT:
+        body["reasoning_effort"] = settings.LLM_REASONING_EFFORT
     try:
         res = httpx.post(
             settings.LLM_BASE_URL.rstrip("/") + "/chat/completions",
             headers={"Authorization": f"Bearer {settings.LLM_API_KEY}", "content-type": "application/json"},
-            json={"model": settings.LLM_MODEL, "max_tokens": 500, "temperature": 0.2,
-                  "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + _history_messages(history)
-                  + [{"role": "user", "content": user}]},
+            json=body,
             timeout=settings.ASSISTANT_TIMEOUT,
         )
         res.raise_for_status()

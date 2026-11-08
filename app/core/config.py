@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
+    # Reasoning models (gpt-oss, qwen3...) spend tokens thinking before they answer, so leave room.
+    LLM_MAX_TOKENS: int = 2000
+    # Optional: "low" / "medium" / "high" for reasoning models that accept it (Groq gpt-oss, Gemini 2.5).
+    # Leave empty for ordinary chat models, some of which reject the field.
+    LLM_REASONING_EFFORT: str = ""
     ASSISTANT_MODEL: str = "claude-haiku-5-5"
     ASSISTANT_TIMEOUT: float = 20.0
     ASSISTANT_MIN_SCORE: float = 2.0  # below this nothing in the Code matches; the model is not called
