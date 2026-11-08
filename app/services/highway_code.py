@@ -69,7 +69,25 @@ _QUERY_ONLY += (
     (re.compile(r"\b(?:double |single )?yellow lines?\b"), "yellow lines kerb park stand"),
     (re.compile(r"\bbrakes? (?:fail\w*|not working|stopped working|gone|give out)\b|\bno brakes\b"), "emergency brake immediately skid lock wheels"),
 )
+_QUERY_ONLY += (
+    (re.compile(r"\b(?:break|breaks|broke|broken)(?:ing)? down\b|\bstalled\b|\bflat tyre\b|\bpuncture\w*"), "breakdown vehicle off road warn other traffic triangle"),
+    (re.compile(r"\b(?:not allowed|allowed|can i|may i|where (?:can|may|must not)|where am i not)\b[^.?!]{0,15}\bpark\w*"), "do not park stand kerb signs"),
+    (re.compile(r"\bwhich side\b[^.?!]{0,25}\bovertak\w*|\bovertak\w* on (?:the )?(?:left|right)\b"), "overtake only on the right"),
+    (re.compile(r"\b(?:when|where)\b[^.?!]{0,20}\b(?:not|never|must not|should not|shouldn't)\b[^.?!]{0,10}\bovertak\w*"), "do not overtake junction bend crossing narrows brow"),
+    (re.compile(r"\b(?:ambulance|fire engine|fire truck|siren|police car|emergency vehicle)s?\b"), "emergency vehicles ambulance give way"),
+    (re.compile(r"\b(?:change|changing|switch|switching|merge|merging)\b[^.?!]{0,10}\blanes?\b"), "change lane mirrors blind spots signal"),
+    (re.compile(r"\b(?:helmet|crash helmet)s?\b"), "motor cyclists protective clothing helmet"),
+)
+_QUERY_ONLY += (
+    (re.compile(r"\b(?:around|near|behind|past|passing|next to|beside)\b[^.?!]{0,10}\b(?:cyclists?|bicycles?|bikes?)\b"), "overtaking cyclists do not drive too close leave room"),
+)
 _SYNONYMS = {
+    "rest": "break", "resting": "break", "stopped": "park", "stopping": "park", "stops": "park",
+    "dirty": "clean", "bicycle": "cycle", "bicycles": "cycle", "bike": "cycle", "bikes": "cycle", "cyclist": "cycle", "cyclists": "cycle",
+    "motorbike": "motorcycle", "motorbikes": "motorcycle", "motorcyclist": "motorcycle", "motorcyclists": "motorcycle",
+    "medication": "medicine", "medications": "medicine", "pills": "medicine", "prescription": "medicine",
+    "rain": "wet weather", "raining": "wet weather", "rainy": "wet weather", "storm": "wet weather", "slippery": "wet weather",
+    "ambulances": "ambulance",
     "highway": "road", "motorway": "road", "expressway": "road",
     "drunk": "alcohol", "drink": "alcohol", "drinking": "alcohol", "intoxicated": "alcohol", "beer": "alcohol", "liquor": "alcohol",
     "fast": "speed", "faster": "speed", "speeding": "speed", "kph": "speed", "kmh": "speed",

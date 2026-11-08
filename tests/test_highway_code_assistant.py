@@ -318,3 +318,23 @@ def test_general_speed_limit_questions_say_the_extract_has_no_general_limit(code
     assert out["answer"].startswith(assistant.SPEED_NOTE) and out["note"] == "speed"
     gravel = assistant.answer_question("What is the speed limit on gravel roads?")
     assert "note" not in gravel
+
+
+def test_long_rules_are_shortened_without_cutting_a_bracket():
+    long = "Stop the vehicle; " * 30 + "(If you use a phone, first check your location " + "x " * 40 + ")"
+    out = assistant._shorten(long)
+    assert len(out) < 500 and out.endswith("(full rule below)")
+    assert out.count("(") == out.count(")")
+    assert "(If" not in out
+    assert assistant._shorten("Short rule.") == "Short rule."
+
+
+def test_retrieval_quality_does_not_regress():
+    """scripts/eval_assistant.py holds 50 everyday questions with known answers; keep the hit rates up."""
+    import os
+    if not os.path.exists(settings.HIGHWAY_CODE_PATH) and not os.path.exists("data/highway_code.jsonl"):
+        pytest.skip("Highway Code data file not present")
+    from scripts import eval_assistant
+    highway_code._cache.update(path=None, mtime=None, index=None)
+    top1, top4 = eval_assistant.run(verbose=False)
+    assert top1 >= 0.85 and top4 >= 0.95

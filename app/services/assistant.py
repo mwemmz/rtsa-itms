@@ -22,6 +22,7 @@ log = logging.getLogger("rtsa.assistant")
 MAX_QUESTION = 500
 MAX_HISTORY_TURNS = 6
 TOP_K = 4
+CLOSE_SECOND = 0.75  # a runner-up this close to the best rule is quoted too
 
 DISCLAIMER = ("General information from the Zambian Highway Code, not legal advice. "
               "Penalties and the latest law are set by RTSA and the courts.")
@@ -144,13 +145,31 @@ def _answer(question: str, history: list[dict] | None = None) -> dict:
 
     # No AI: lead with the sentences of the best rule that answer the question, then point to the rest.
     best = rules[0]
-    lead = " ".join(index.best_sentences(best, search_text))
+    lead = _shorten(" ".join(index.best_sentences(best, search_text)))
     parts = [f"{lead} (Rule {best.number}{', ' + best.section if best.section else ''})"]
-    if len(rules) > 1:
-        parts.append("Also relevant: " + ", ".join(f"Rule {r.number}" for r in rules[1:3]) + ". Their full text is listed below.")
-    for s in sources[:1]:
-        s["cited"] = True
+    shown = 1
+    # A second rule that scores nearly as well is often the other half of the answer (stop and help, then report).
+    if len(hits) > 1 and hits[1][1] >= CLOSE_SECOND * hits[0][1]:
+        second = rules[1]
+        parts.append(_shorten(" ".join(index.best_sentences(second, search_text, 1))) + f" (Rule {second.number})")
+        sources[1]["cited"] = True
+        shown = 2
+    rest = rules[shown:shown + 2]
+    if rest:
+        parts.append("Also relevant: " + ", ".join(f"Rule {r.number}" for r in rest) + ". Their full text is listed below.")
+    sources[0]["cited"] = True
     return {"mode": "extract", "answer": "\n".join(parts), "sources": sources, "disclaimer": DISCLAIMER}
+
+
+def _shorten(text: str, limit: int = 420) -> str:
+    """A long rule is cut at a clause boundary so the answer stays readable; the full text is in the sources."""
+    if len(text) <= limit:
+        return text
+    cut = max(text.rfind(c, 0, limit) for c in ("; ", ". ", ", "))
+    head = text[: cut if cut > limit // 2 else limit]
+    if head.count("(") > head.count(")"):  # do not stop inside a bracket
+        head = head[: head.rfind("(")]
+    return head.rstrip(" ;,.") + " … (full rule below)"
 
 
 _FAULT = re.compile(r"\b(?:fault|blame|blamed|liable|liability|responsible|who pays|who is to blame)\b", re.IGNORECASE)
