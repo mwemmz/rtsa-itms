@@ -513,6 +513,68 @@ VIEWS.insights = async function () {
 })();
 
 
+
+/* ---------------- Money charts: monthly columns, the fines split, fines by offence ---------------- */
+
+function shortMoney(n) { n = n / 100; return n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)); }
+function niceMax(n) { var p = Math.pow(10, Math.floor(Math.log10(Math.max(n, 1)))), m = n / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Columns for money by month: gridlines, a value axis, the biggest month in the accent, the unfinished month shown as such.
+function monthColumns(byMonth) {
+  var keys = Object.keys(byMonth).sort();
+  if (!keys.length) return '<div class="empty">No fines paid yet</div>';
+  var vals = keys.map(function (k) { return byMonth[k]; }), top = niceMax(Math.max.apply(null, vals)), best = vals.indexOf(Math.max.apply(null, vals));
+  var now = new Date(), cur = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2), last = keys.length - 1;
+  var cols = keys.map(function (k, n) {
+    var v = byMonth[k], part = k === cur, mm = MONTHS[parseInt(k.slice(5), 10) - 1] || k;
+    return '<div class="mc-col' + (n === best ? " top" : "") + (part ? " part" : "") + '" tabindex="0" data-tip="' + esc(mm + " " + k.slice(0, 4) + ": " + money(v) + (part ? " so far (month not over)" : "")) + '">' +
+      ((n === best || n === last) ? '<span class="mc-v">' + shortMoney(v) + "</span>" : "") +
+      '<div class="mc-bar" style="--h:' + Math.max(v > 0 ? 2 : 0, v / top * 100).toFixed(1) + '"></div><span class="mc-n">' + mm + (mm === "Jan" || n === 0 ? "<small>" + k.slice(2, 4) + "</small>" : "") + "</span></div>";
+  }).join("");
+  return '<div class="mc"><div class="mc-y"><span>' + shortMoney(top) + "</span><span>" + shortMoney(top / 2) + "</span><span>0</span></div><div class=\"mc-plot\">" + cols + "</div></div>" +
+    '<div class="small muted" style="margin-top:6px">ZMW paid each month. The lighter outlined column is a month still in progress.</div>';
+}
+
+// One whole split into a few parts: a segmented bar with the amounts in its legend.
+function splitBar(parts) {
+  var total = parts.reduce(function (a, p) { return a + p.value; }, 0) || 1;
+  return '<div class="sp">' + parts.map(function (p) {
+    var pct = p.value / total * 100;
+    return '<div class="sp-seg ' + p.cls + '" style="flex:' + Math.max(pct, 0.5) + '" tabindex="0" data-tip="' + esc(p.name + ": " + money(p.value) + " (" + Math.round(pct) + "%)") + '">' + (pct >= 12 ? Math.round(pct) + "%" : "") + "</div>";
+  }).join("") + '</div><div class="sp-key small">' + parts.map(function (p) {
+    return '<span><i class="sp-dot ' + p.cls + '"></i>' + esc(p.name) + ' <b>' + money(p.value) + "</b></span>";
+  }).join("") + "</div>";
+}
+
+// Fines by offence: bar length is the value issued; the filled part is what came in, the red part is still owed.
+function offenceBars(byOffence) {
+  var rows = Object.keys(byOffence).map(function (k) { var o = byOffence[k]; return { name: k.replace(/_/g, " "), o: o }; })
+    .sort(function (a, b) { return b.o.issued - a.o.issued; });
+  var max = Math.max.apply(null, rows.map(function (r) { return r.o.issued; }).concat([1]));
+  return '<div class="ob-key small"><span><i class="sp-dot got"></i>collected</span><span><i class="sp-dot owed"></i>still owed</span></div><div class="hb">' + rows.map(function (r) {
+    var o = r.o, w = o.issued / max * 100, got = o.issued ? o.collected / o.issued * 100 : 0, owedPct = 100 - got;
+    var tip = r.name + ": " + o.count + (o.count === 1 ? " fine" : " fines") + ", issued " + money(o.issued) + ", collected " + money(o.collected) + (o.outstanding ? ", owed " + money(o.outstanding) : "");
+    return '<div class="hb-row ob" tabindex="0" data-tip="' + esc(tip) + '"><div class="hb-head"><span class="hb-name">' + esc(r.name) + ' <span class="muted small">· ' + o.count + (o.count === 1 ? ' fine' : ' fines') + '</span></span>' +
+      '<span class="hb-val">' + money(o.issued) + (o.outstanding ? ' <b class="owed-t">' + shortMoney(o.outstanding) + " owed</b>" : "") + "</span></div>" +
+      '<div class="hb-track"><div class="ob-bar" style="width:' + w.toFixed(1) + '%"><span class="ob-got" style="width:' + got.toFixed(1) + '%"></span><span class="ob-owed" style="width:' + owedPct.toFixed(1) + '%"></span></div></div></div>';
+  }).join("") + "</div>";
+}
+
+// The admin's fines panel, rebuilt on these.
+function finesPanel(f) {
+  var otherOwed = Math.max(0, f.outstanding - f.overdue);
+  return '<div class="grid cards">' +
+      kpi("Fines issued", money(f.issued)) +
+      kpi("Fines collected", money(f.collected), f.collection_rate == null ? "" : f.collection_rate + "% of issued") +
+      kpi("Still owed", money(f.outstanding), "includes disputed") +
+      kpi("Overdue", money(f.overdue), "with late surcharge") +
+    "</div>" +
+    cars("Where the money issued has gone", splitBar([
+      { name: "Collected", value: f.collected, cls: "got" }, { name: "Owed, not yet due", value: otherOwed, cls: "wait" }, { name: "Overdue", value: f.overdue, cls: "owed" }])) +
+    '<div class="row">' + cars("Fines paid by month", monthColumns(f.by_month)) + cars("Fines by offence", offenceBars(f.by_offence)) + "</div>";
+}
+
 /* ---------------- Analytics (BI): instrument cluster and where/when offences happen ---------------- */
 
 var ZONE_COLOUR = { green: "var(--ok)", amber: "var(--warn)", red: "var(--err)" };
@@ -543,7 +605,7 @@ function vcols(items, valueKey) {
   return '<div class="vc">' + items.map(function (i, n) {
     var v = i[valueKey], h = Math.max(v > 0 ? 3 : 0, Math.round(v / max * 100));
     return '<div class="vc-col' + (n === best && v > 0 ? " top" : "") + '" tabindex="0" data-tip="' + esc(i.name + ": " + v) + '">' +
-      '<span class="vc-v">' + v + '</span><div class="vc-bar" style="--h:' + h + '%"></div><span class="vc-n">' + esc(i.name) + "</span></div>";
+      '<span class="vc-v">' + v + '</span><div class="vc-bar" style="--h:' + h + '"></div><span class="vc-n">' + esc(i.name) + "</span></div>";
   }).join("") + "</div>";
 }
 

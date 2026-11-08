@@ -94,7 +94,7 @@ async function loadReportKpis() {
       kpi("Accidents", k.accidents["Accidents"],
         (k.accidents["  Fatal"] || 0) + " fatal · " + (k.accidents["  Serious"] || 0) + " serious" +
         (k.accidents["Accident hotspot"] ? " · hotspot: " + k.accidents["Accident hotspot"] : "")) +
-      kpi("Revenue collected", money(k.revenue["Net revenue"]), "fines, fees, permits and tolls") +
+      kpi("Revenue collected", money(k.revenue["Revenue collected"]), "fines, fees, permits and tolls, this period") +
       kpi("Toll non-compliance", k.toll["Non-compliance rate"], k.toll["Flagged"] + " of " + k.toll["Vehicles checked"] + " checks") +
       kpi("PSV permits valid", k.psv["Permits currently valid"], k.psv["Permits expired"] + " expired") +
       "</div>";
@@ -166,7 +166,7 @@ VIEWS.payments = async function () {
     try {
       var s = await api("/api/payments/summary?days=30");
       $("#pay-kpis").innerHTML = '<div class="grid cards">' + kpi("Revenue collected (30 days)", money(s.gross)) +
-        kpi("By type", Object.keys(s.by_type).map(function (t) { return esc(t) + ": " + money(s.by_type[t].total); }).join("<br>") || "—") + "</div>";
+        '</div><div class="card"><h3>Revenue by type, last 30 days</h3>' + hbars(Object.keys(s.by_type).map(function (t) { return { name: t.charAt(0).toUpperCase() + t.slice(1) + "s", total: s.by_type[t].total, n: s.by_type[t].count }; }).sort(function (a, b) { return b.total - a.total; }), "total", function (i) { return money(i.total); }, "", "No payments in the last 30 days.") + "</div>";
     } catch (e) { fail("#pay-kpis", e); }
   }
   async function loadList() {
