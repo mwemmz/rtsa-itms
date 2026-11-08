@@ -204,8 +204,11 @@ html[data-theme] .login-card input { background: var(--panel-2); }
 
 
 /* plate scanner */
-.scan-box { margin: 0 0 14px; padding: 10px 12px; border: 1px dashed var(--line-strong, var(--line)); }
-.scan-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.scan-result { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.scan-result img { max-height: 110px; max-width: 220px; border: 1px solid var(--line); }
-.scan-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.scan-box { margin: 10px 0 0; }
+.scan-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; font-size: 1rem; cursor: pointer; box-sizing: border-box; }
+.scan-status { margin-top: 10px; }
+.scan-result { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; padding: 12px; border: 1px solid var(--line); }
+.scan-result img { width: 100%; max-height: 160px; object-fit: contain; background: #000; border: 1px solid var(--line); }
+.scan-chips { display: flex; flex-direction: column; gap: 8px; }
+.scan-chips .btn { width: 100%; min-height: 48px; font-size: 1.05rem; letter-spacing: .06em; }
+@media (min-width: 700px) { .scan-btn { width: auto; min-width: 260px; } .scan-result { flex-direction: row; align-items: center; } .scan-result img { width: auto; max-width: 220px; max-height: 110px; } .scan-chips { flex-direction: row; flex-wrap: wrap; } .scan-chips .btn { width: auto; } }

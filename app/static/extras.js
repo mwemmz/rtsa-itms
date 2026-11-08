@@ -335,9 +335,10 @@ function driverHtml(d) {
 var SCAN_N = 0;
 function plateScanHtml() {
   var id = "scan" + (++SCAN_N);
-  return '<div class="scan-box" data-scan="' + id + '"><div class="scan-row"><label class="btn ghost sm" for="' + id + '-file">Scan plate with camera</label>' +
+  var cam = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  return '<div class="scan-box" data-scan="' + id + '"><label class="btn ghost scan-btn" for="' + id + '-file">' + cam + ' Scan plate with camera</label>' +
     '<input id="' + id + '-file" type="file" accept="image/*" capture="environment" style="display:none">' +
-    '<span class="small muted scan-status">Take a clear, straight-on photo of the plate. The photo stays on this device.</span></div><div class="scan-out"></div></div>';
+    '<div class="small muted scan-status" hidden></div><div class="scan-out"></div></div>';
 }
 
 function wirePlateScan(root, onPick) {
@@ -345,7 +346,7 @@ function wirePlateScan(root, onPick) {
   var input = box.querySelector("input[type=file]"), status = box.querySelector(".scan-status"), out = box.querySelector(".scan-out");
   input.addEventListener("change", async function () {
     var file = input.files && input.files[0]; if (!file) return;
-    out.innerHTML = ""; status.textContent = "Loading the scanner…";
+    out.innerHTML = ""; status.hidden = false; status.textContent = "Loading the scanner…";
     try {
       var res = await PlateScan.scan(file, function (s, pr) { status.textContent = "Reading the plate: " + s + (pr ? " " + Math.round(pr * 100) + "%" : ""); });
       status.textContent = res.candidates.length ? "Is this the plate? Check the letters against the real plate, then pick it." : "Could not read a plate. Retake it closer and straight-on, or type it in.";
@@ -372,7 +373,7 @@ VIEWS.insights = async function () {
     }).join("") : '<div class="empty">No accidents recorded in the last year.</div>';
     var pipe = Object.keys(d.expiry_pipeline).map(function (k) { var p = d.expiry_pipeline[k]; return [esc(k), p["30"], p["60"], p["90"]]; });
     $("#content").innerHTML =
-      '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Number plate (e.g. BAK 123) or licence number"><button class="btn gold" id="pp-go">Open passport</button></div>' + plateScanHtml() + '<div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
+      '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Plate (BAK 123) or licence no."><button class="btn gold" id="pp-go">Open passport</button></div>' + plateScanHtml() + '<div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
       '<div class="grid cards"><div class="kpi"><div class="kpi-label">Fitness fees expected</div><div class="kpi-value">' + money(d.fitness_fees_expected_90d) + '</div><div class="kpi-sub">from certificates ending in 90 days</div></div></div>' +
       '<div class="row">' +
         '<div class="card"><h3>Vehicles to look at first</h3>' +
