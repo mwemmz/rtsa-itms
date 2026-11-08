@@ -654,6 +654,43 @@ function dialSvg(d) {
   return out + "</svg>";
 }
 
+// A ring split into parts (like online / offline / alerts): the dots are shared out in proportion, the centre holds the total.
+function ringSplitSvg(parts, centre, unit) {
+  var N = 54, cx = 100, cy = 92, r = 70, total = parts.reduce(function (a, p) { return a + p.value; }, 0) || 1, out = '<svg viewBox="0 0 200 172" role="img" aria-label="' + esc(centre + " " + unit + ": " + parts.map(function (p) { return p.value + " " + p.name; }).join(", ")) + '" style="width:100%;max-width:240px;display:block;margin:0 auto">';
+  var counts = parts.map(function (p) { return Math.round(p.value / total * N); }), sum = counts.reduce(function (a, b) { return a + b; }, 0);
+  counts[counts.indexOf(Math.max.apply(null, counts))] += N - sum;
+  var k = 0, part = 0, used = 0;
+  for (var i = 0; i < N; i++) {
+    while (part < parts.length - 1 && used >= counts[part]) { part++; used = 0; }
+    used++;
+    var a = (135 + 270 * i / (N - 1)) * Math.PI / 180, x = cx + r * Math.cos(a), y = cy + r * Math.sin(a), p = parts[part];
+    out += '<circle class="dot on" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.8" fill="' + p.col + '" style="--i:' + i + '"><title>' + esc(p.name + ": " + p.value) + "</title></circle>";
+  }
+  out += '<text x="' + cx + '" y="' + (cy + 4) + '" fill="var(--ink)" font-size="30" font-weight="700" text-anchor="middle" class="led">' + esc(String(centre)) + "</text>";
+  out += '<text x="' + cx + '" y="' + (cy + 22) + '" fill="var(--ink-2)" font-size="10" text-anchor="middle" class="led">' + esc(unit) + "</text>";
+  return out + "</svg>";
+}
+
+function ringSplitTile(title, parts, centre, unit, note) {
+  return '<div class="dial">' + ringSplitSvg(parts, centre, unit) + '<div class="dial-l">' + esc(title) + '</div><div class="ring-key small">' +
+    parts.map(function (p) { return '<span><i class="sp-dot" style="background:' + p.col + '"></i>' + esc(p.name) + " <b>" + p.value + "</b></span>"; }).join("") + '</div><div class="small muted">' + esc(note) + "</div></div>";
+}
+
+// The admin's home gets the gauges too, so the first screen shows how the system is doing, not only totals.
+(function () {
+  var base = adminDashboard;
+  adminDashboard = async function () {
+    var html = await base();
+    try {
+      var bi = await api("/api/bi/?days=365"), sm = await api("/api/admin/reports/summary");
+      var paid = Math.max(0, sm.challans_total - sm.challans_unpaid);  // the unpaid count already includes the overdue ones
+      var tiles = bi.dials.map(function (g) { return '<div class="dial">' + dialSvg(g) + '<div class="dial-l">' + esc(g.label) + '</div><div class="dial-s ' + g.zone + '">' + ZONE_GLYPH[g.zone] + " " + ZONE_WORD[g.zone] + '</div><div class="small muted">' + esc(g.note) + "</div></div>"; });
+      tiles.push(ringSplitTile("Fines by status", [{ name: "paid", value: paid, col: "var(--ok)" }, { name: "unpaid", value: sm.challans_unpaid - sm.challans_overdue, col: "var(--warn)" }, { name: "overdue", value: sm.challans_overdue, col: "var(--err)" }], sm.challans_total, "fines issued", "every fine, by where it stands"));
+      return '<div class="card"><h3>How the system is doing</h3><div class="cluster six">' + tiles.join("") + '</div><div class="lights">' + bi.lights.map(warningLight).join("") + "</div></div>" + html;
+    } catch (e) { return html; }
+  };
+})();
+
 function warningLight(l) {
   var col = l.on ? ZONE_COLOUR[l.level] : "var(--line-strong)";
   var icon = l.level === "red"
