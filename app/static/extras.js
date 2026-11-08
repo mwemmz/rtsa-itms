@@ -758,3 +758,40 @@ VIEWS.bi = async function () {
     });
   };
 })();
+
+// Gauges for every role: the officer and the citizen get the same instrument style as the admin's home.
+function pctDial(label, num, den, note, goodHigh) {
+  var v = den ? Math.round(num / den * 1000) / 10 : 100;
+  var zone = v >= 80 ? "green" : v >= 60 ? "amber" : "red";
+  return { label: label, value: v, max: 100, unit: "%", zone: zone, note: note, zones: [[0, 60, "red"], [60, 80, "amber"], [80, 100, "green"]] };
+}
+function dialTile(g) {
+  return '<div class="dial">' + dialSvg(g) + '<div class="dial-l">' + esc(g.label) + '</div><div class="dial-s ' + g.zone + '">' + ZONE_GLYPH[g.zone] + " " + ZONE_WORD[g.zone] + '</div><div class="small muted">' + esc(g.note) + "</div></div>";
+}
+(function () {
+  var baseOfficer = officerDashboard;
+  officerDashboard = async function () {
+    var html = await baseOfficer();
+    try {
+      var inc = await api("/api/incidents/alerts"), rec = await api("/api/enforcement/violations/summary");
+      var open = inc.length, reviewed = inc.filter(function (a) { return a.verification !== "unverified"; }).length;
+      var tiles = [pctDial("Road reports reviewed", reviewed, open, open ? reviewed + " of " + open + " active reports" : "no active reports")];
+      if (rec && rec.last_24h) tiles.push(pctDial("Your share, last 24h", rec.last_24h_by_me, rec.last_24h, rec.last_24h_by_me + " of " + rec.last_24h + " violations"));
+      return '<div class="card"><h3>Your shift at a glance</h3><div class="cluster">' + tiles.map(dialTile).join("") + "</div></div>" + html;
+    } catch (e) { return html; }
+  };
+  var baseCitizen = citizenDashboard;
+  citizenDashboard = async function () {
+    var html = await baseCitizen();
+    try {
+      var d = await api("/api/portal/dashboard"), vs = d.vehicles || [];
+      if (!vs.length) return html;
+      var cs = (await Promise.all(vs.map(function (v) { return api("/api/citizen/vehicles/" + v.id).catch(function () { return null; }); }))).filter(Boolean);
+      var okv = cs.filter(function (c) { return c.compliant; }).length, tot = 0, pass = 0;
+      cs.forEach(function (c) { c.checks.forEach(function (ch) { tot++; if (ch.status === "pass") pass++; }); });
+      var tiles = [pctDial("Vehicles compliant", okv, cs.length, okv + " of " + cs.length + " vehicles fully legal")];
+      if (tot) tiles.push(pctDial("Checks passed", pass, tot, "insurance, fitness, road tax, fines"));
+      return '<div class="card"><h3>Your compliance</h3><div class="cluster">' + tiles.map(dialTile).join("") + "</div></div>" + html;
+    } catch (e) { return html; }
+  };
+})();
