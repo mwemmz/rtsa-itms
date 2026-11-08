@@ -634,40 +634,36 @@ function meterHtml(value, limit, opts) {
   window.addEventListener("scroll", hide, true);
 })();
 
-// A gauge drawn as a ring of dots: the lit dots climb to the value, the dim ones are what is left. State is written out too.
+// A solid 270-degree gauge: dark track, coloured arc up to the value, zone ticks, the state written out as well.
 function dialSvg(d) {
-  var N = 54, cx = 100, cy = 92, r = 70, start = 135, span = 270;
-  var tv = Math.max(0, Math.min(1, d.value / d.max)), lit = Math.round(tv * N), col = ZONE_COLOUR[d.zone];
+  var cx = 100, cy = 92, r = 70, start = 135, span = 270;
+  var tv = Math.max(0, Math.min(1, d.value / d.max)), col = ZONE_COLOUR[d.zone];
   var out = '<svg viewBox="0 0 200 172" role="img" aria-label="' + esc(d.label + ": " + d.value + d.unit + ", " + ZONE_WORD[d.zone]) + '" style="width:100%;max-width:240px;display:block;margin:0 auto">';
-  for (var i = 0; i < N; i++) {
-    var a = (start + span * i / (N - 1)) * Math.PI / 180, x = cx + r * Math.cos(a), y = cy + r * Math.sin(a), on = i < lit;
-    out += '<circle class="dot' + (on ? " on" : "") + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (on ? 2.9 : 2.1) + '" style="--i:' + i + '"' + (on ? ' fill="' + col + '"' : ' fill="var(--line-strong)"') + "/>";
-  }
-  d.zones.forEach(function (z) {  // a small tick on the ring where each zone starts, so the thresholds are visible
+  var tf = 'rotate(' + start + ' ' + cx + ' ' + cy + ')';
+  out += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--line-strong)" stroke-opacity=".55" stroke-width="14" stroke-linecap="round" pathLength="100" stroke-dasharray="75 100" transform="' + tf + '"/>';
+  out += '<circle class="dial-arc" cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + col + '" stroke-width="14" stroke-linecap="round" pathLength="100" style="--v:' + (tv * 75).toFixed(1) + '" transform="' + tf + '"/>';
+  d.zones.forEach(function (z) {  // a small tick where each zone starts, so the thresholds are visible
     if (z[0] <= 0) return;
-    var a = (start + span * (z[0] / d.max)) * Math.PI / 180, p1 = [cx + (r + 8) * Math.cos(a), cy + (r + 8) * Math.sin(a)], p2 = [cx + (r + 13) * Math.cos(a), cy + (r + 13) * Math.sin(a)];
-    out += '<line x1="' + p1[0].toFixed(1) + '" y1="' + p1[1].toFixed(1) + '" x2="' + p2[0].toFixed(1) + '" y2="' + p2[1].toFixed(1) + '" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="1.6" opacity=".8"/>';
+    var a = (start + span * (z[0] / d.max)) * Math.PI / 180, p1 = [cx + (r + 12) * Math.cos(a), cy + (r + 12) * Math.sin(a)], p2 = [cx + (r + 17) * Math.cos(a), cy + (r + 17) * Math.sin(a)];
+    out += '<line x1="' + p1[0].toFixed(1) + '" y1="' + p1[1].toFixed(1) + '" x2="' + p2[0].toFixed(1) + '" y2="' + p2[1].toFixed(1) + '" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="1.8" opacity=".85"/>';
   });
-  out += '<text x="' + cx + '" y="' + (cy + 4) + '" fill="var(--ink)" font-size="30" font-weight="700" text-anchor="middle" class="led">' + esc(String(d.value)) + "</text>";
-  out += '<text x="' + cx + '" y="' + (cy + 22) + '" fill="var(--ink-2)" font-size="10" text-anchor="middle" class="led">' + esc(d.unit) + "</text>";
-  [0, 1].forEach(function (t) { var a = (start + span * t) * Math.PI / 180; out += '<text x="' + (cx + (r - 2) * Math.cos(a) + (t ? 6 : -6)).toFixed(1) + '" y="' + (cy + (r + 14) * Math.sin(a)).toFixed(1) + '" fill="var(--ink-3)" font-size="8.5" text-anchor="' + (t ? "start" : "end") + '" class="led">' + Math.round(t * d.max) + "</text>"; });
+  out += '<text x="' + cx + '" y="' + (cy + 8) + '" fill="var(--ink)" font-size="32" font-weight="700" text-anchor="middle">' + esc(String(d.value)) + "</text>";
+  out += '<text x="' + cx + '" y="' + (cy + 26) + '" fill="var(--ink-2)" font-size="11" text-anchor="middle">' + esc(d.unit) + "</text>";
   return out + "</svg>";
 }
 
-// A ring split into parts (like online / offline / alerts): the dots are shared out in proportion, the centre holds the total.
+// A ring split into parts (paid / unpaid / overdue): each arc is its share of the total, the centre holds the total.
 function ringSplitSvg(parts, centre, unit) {
-  var N = 54, cx = 100, cy = 92, r = 70, total = parts.reduce(function (a, p) { return a + p.value; }, 0) || 1, out = '<svg viewBox="0 0 200 172" role="img" aria-label="' + esc(centre + " " + unit + ": " + parts.map(function (p) { return p.value + " " + p.name; }).join(", ")) + '" style="width:100%;max-width:240px;display:block;margin:0 auto">';
-  var counts = parts.map(function (p) { return Math.round(p.value / total * N); }), sum = counts.reduce(function (a, b) { return a + b; }, 0);
-  counts[counts.indexOf(Math.max.apply(null, counts))] += N - sum;
-  var k = 0, part = 0, used = 0;
-  for (var i = 0; i < N; i++) {
-    while (part < parts.length - 1 && used >= counts[part]) { part++; used = 0; }
-    used++;
-    var a = (135 + 270 * i / (N - 1)) * Math.PI / 180, x = cx + r * Math.cos(a), y = cy + r * Math.sin(a), p = parts[part];
-    out += '<circle class="dot on" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.8" fill="' + p.col + '" style="--i:' + i + '"><title>' + esc(p.name + ": " + p.value) + "</title></circle>";
-  }
-  out += '<text x="' + cx + '" y="' + (cy + 4) + '" fill="var(--ink)" font-size="30" font-weight="700" text-anchor="middle" class="led">' + esc(String(centre)) + "</text>";
-  out += '<text x="' + cx + '" y="' + (cy + 22) + '" fill="var(--ink-2)" font-size="10" text-anchor="middle" class="led">' + esc(unit) + "</text>";
+  var cx = 100, cy = 92, r = 62, total = parts.reduce(function (a, p) { return a + p.value; }, 0) || 1;
+  var out = '<svg viewBox="0 0 200 172" role="img" aria-label="' + esc(centre + " " + unit + ": " + parts.map(function (p) { return p.value + " " + p.name; }).join(", ")) + '" style="width:100%;max-width:240px;display:block;margin:0 auto">', off = 0;
+  parts.forEach(function (p) {
+    var share = p.value / total * 100;
+    if (share <= 0) return;
+    out += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + p.col + '" stroke-width="18" pathLength="100" stroke-dasharray="' + Math.max(share - 0.6, 0.4).toFixed(2) + ' 100" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 ' + cx + ' ' + cy + ')"><title>' + esc(p.name + ": " + p.value) + "</title></circle>";
+    off += share;
+  });
+  out += '<text x="' + cx + '" y="' + (cy + 8) + '" fill="var(--ink)" font-size="32" font-weight="700" text-anchor="middle">' + esc(String(centre)) + "</text>";
+  out += '<text x="' + cx + '" y="' + (cy + 26) + '" fill="var(--ink-2)" font-size="11" text-anchor="middle">' + esc(unit) + "</text>";
   return out + "</svg>";
 }
 
