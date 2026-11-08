@@ -480,3 +480,11 @@ The demo data includes an appealable fine, a citizen with 9 of 12 points, and a 
 * The administrator's menu now includes every officer module.
 * **OBD-II**: an officer can type or paste fault codes into the inspection form, or read them from a Bluetooth LE ELM327 adapter in Chrome (experimental, untested without hardware). Codes are explained, and misfire, catalytic-converter, ABS and airbag codes fail the test; others are advisory. The code table is a small illustrative set, not the full SAE list.
 * **Analytics (BI)** (officer and admin): an instrument cluster of five dials (fines collected, vehicles insured, fitness certified, fines overdue, offences this month against the average) with green/amber/red zones, a row of warning lights that click through to the screen that needs attention, and offences by road, province, season, road-by-season heat grid, weekday and time of day. Region comes from GPS (or the place name), season from the Zambian calendar.
+
+### Decision tools (beyond CRUD)
+- **Live verdict**: `POST /api/inspections/evaluate` judges checklist, readings and OBD-II codes as the officer types, without saving.
+- **Vehicle passport** `GET /api/insights/vehicle/{id}`: registration, fitness, insurance, fines and status in one view, a visible risk score with reasons, a risk-based inspection interval (low 365, medium 180, high 90 days) and the next actions.
+- **Driver profile** `GET /api/insights/driver/{id}`: demerit points against the limit, 90-day offence trend, licence expiry and advice.
+- **Insurance gaps** `GET /api/insights/insurance-gaps`: uninsured active vehicles ranked by offences and crashes, plus cover ending in 30 days.
+- **Accident factors** `GET /api/insights/accident-factors`: what crashed vehicles share compared with the whole fleet (association, not cause).
+- **Inspection analytics** `GET /api/bi/inspections`: top defects, failure rate by make and centre, monthly trend.

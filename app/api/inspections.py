@@ -59,6 +59,22 @@ def decode_obd(payload: ObdDecodeIn, current_user: User = Depends(require_role(*
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/evaluate")
+def evaluate_live(payload: InspectionUpdate, current_user: User = Depends(require_role(*FIELD_STAFF))):
+    """Judge the readings entered so far without saving anything, so the screen can show the verdict live."""
+    from app.services import inspection_rules
+
+    checklist, readings, codes = payload.checklist, payload.readings, payload.obd_codes
+    try:
+        verdict, reasons = inspection_rules.evaluate(checklist, readings, codes)
+    except ValueError:
+        done = len(checklist or {})
+        total = len(inspection_rules.CHECKLIST)
+        return {"verdict": "incomplete", "reasons": [], "progress": f"{done} of {total} checklist items answered"}
+    return {"verdict": verdict or "nothing", "reasons": reasons,
+            "progress": f"{len(checklist or {})} of {len(inspection_rules.CHECKLIST)} checklist items answered"}
+
+
 @router.get("/checklist-spec")
 def checklist_spec(current_user: User = Depends(require_role(*FIELD_STAFF))):
     """The checklist items and instrument limits the test is judged against."""

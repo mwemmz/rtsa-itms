@@ -2618,7 +2618,8 @@ VIEWS.inspections = async function () {
         '<div class="field"><label>Vehicle plate (lookup)</label>' +
           '<div class="toolbar" style="margin-bottom:0;"><input type="text" id="insp-plate" placeholder="e.g. BAK 123">' +
           '<button type="button" class="btn ghost sm" id="insp-plate-go">Look up</button></div>' +
-          '<div class="small muted" id="insp-vehicle-result" style="margin-top:6px;"></div></div>' +
+          '<div class="small muted" id="insp-vehicle-result" style="margin-top:6px;"></div>' +
+          '<div id="insp-passport" class="small" style="margin-top:10px"></div></div>' +
         '<form id="insp-schedule-form" style="display:none;">' +
           '<div class="field"><label>Inspection centre</label><input name="inspection_centre" placeholder="e.g. Lusaka Main VID Centre" required></div>' +
           '<div class="field"><label>Scheduled date &amp; time</label><input name="scheduled_date" type="datetime-local" required></div>' +
@@ -2627,6 +2628,7 @@ VIEWS.inspections = async function () {
         '<form id="insp-result-form" style="display:none; margin-top:16px; border-top:1px solid var(--border, #333); padding-top:16px;">' +
           '<h4 style="margin:0 0 4px;">Roadworthiness test</h4>' +
           '<p class="small muted" style="margin:0 0 10px;">Tick each item. The checks decide the result: any fail, or a reading outside its limit, fails the vehicle.</p>' +
+          '<div id="insp-verdict" class="small" style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--line);border-left-width:4px"></div>' +
           '<div id="insp-checks"><div class="empty">Loading checklist…</div></div>' +
           '<div class="field"><label>Findings (optional)</label><textarea name="findings" rows="2"></textarea></div>' +
           '<div class="field"><label>Inspected by (optional)</label><input name="inspected_by" placeholder="Inspector name"></div>' +
@@ -2649,6 +2651,7 @@ VIEWS.inspections = async function () {
       out.innerHTML = 'Found <b>' + esc(v.registration_number) + "</b> (" + esc(v.make) + " " + esc(v.model) + ") · " + statusPill(v.status);
       $("#insp-schedule-form").style.display = "";
       $("#insp-result-form").style.display = "none";
+      try { $("#insp-passport").innerHTML = '<div class="card" style="margin:0">' + passportHtml(await api("/api/insights/vehicle/" + v.id)) + "</div>"; } catch (pe) { $("#insp-passport").innerHTML = ""; }
       await loadInspectionsForVehicle(v.id);
     } catch (e) {
       CURRENT_INSPECTION_VEHICLE = null;
@@ -2711,11 +2714,30 @@ async function renderChecklist() {
         '<div class="small muted" id="insp-obd-note" style="margin-top:6px">A misfire, catalytic-converter, ABS or airbag code fails the test. The adapter button needs Chrome and a Bluetooth LE ELM327 adapter in the vehicle. It is experimental.</div>' +
         '<div id="insp-obd-out"></div></div>';
     $("#insp-obd-decode").addEventListener("click", decodeObdBox);
+    box.addEventListener("input", liveVerdict); box.addEventListener("change", liveVerdict); liveVerdict();
     $("#insp-obd-read").addEventListener("click", readObdAdapter);
   } catch (e) { box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
 }
 
-function obdCodes() { return ($("#insp-obd").value || "").split(/[\s,;]+/).filter(Boolean); }
+var VERDICT_TIMER = null;
+function liveVerdict() {
+  clearTimeout(VERDICT_TIMER);
+  VERDICT_TIMER = setTimeout(async function () {
+    var box = $("#insp-verdict"); if (!box) return;
+    var body = { checklist: {}, readings: {}, obd_codes: obdCodes() };
+    $$("#insp-checks select[data-item]").forEach(function (sel) { body.checklist[sel.dataset.item] = sel.value; });
+    $$("#insp-checks input[data-reading]").forEach(function (inp) { if (inp.value !== "") body.readings[inp.dataset.reading] = parseFloat(inp.value); });
+    try {
+      var r = await api("/api/inspections/evaluate", { method: "POST", body: JSON.stringify(body) });
+      var col = r.verdict === "failed" ? "#ff6b5b" : r.verdict === "passed" ? "#4cc38a" : "var(--gold)";
+      var head = r.verdict === "failed" ? "WOULD FAIL" : r.verdict === "passed" ? "WOULD PASS" : "IN PROGRESS";
+      box.style.borderLeftColor = col;
+      box.innerHTML = '<b style="color:' + col + '">' + head + "</b> · " + esc(r.progress) + (r.reasons.length ? "<ul style=\"margin:6px 0 0 18px\">" + r.reasons.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>" : "") +
+        '<div class="muted" style="margin-top:4px">Updates as you enter readings. Nothing is saved until you press Save result.</div>';
+    } catch (e) { /* the verdict is advisory; saving still enforces the rules */ }
+  }, 250);
+}
+function obdCodes() { var o = $("#insp-obd"); return ((o && o.value) || "").split(/[\s,;]+/).filter(Boolean); }
 
 async function decodeObdBox() {
   var out = $("#insp-obd-out");

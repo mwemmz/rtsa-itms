@@ -251,3 +251,64 @@ def test_registration_renewal_window_and_licence_application_fee():
     assert ok.status_code == 200, ok.text
     assert client.post("/api/services/pay", headers=citizen, json={"service": "licence_application", "application_id": aid}).status_code == 409
     assert client.post("/api/services/pay", headers=other, json={"service": "licence_application", "application_id": aid}).status_code == 404
+
+
+def test_live_verdict_passport_and_failure_analytics():
+    officer, _, _ = _login("officer")
+    citizen, uid, _ = _login("citizen")
+    vid = _vehicle(officer, uid)
+    items = [c["id"] for c in client.get("/api/inspections/checklist-spec", headers=officer).json()["checklist"]]
+
+    # live verdict: nothing saved, answer changes as readings arrive
+    ev = lambda body: client.post("/api/inspections/evaluate", headers=officer, json=body).json()
+    assert ev({})["verdict"] == "nothing"
+    assert ev({"checklist": {items[0]: "pass"}})["verdict"] == "incomplete"
+    bad = ev({"checklist": {k: "pass" for k in items}, "readings": {"tyre_tread_mm": 1.0}})
+    assert bad["verdict"] == "failed" and "Tyre" in bad["reasons"][0]
+    assert ev({"checklist": {k: "pass" for k in items}, "readings": {"tyre_tread_mm": 4}})["verdict"] == "passed"
+    assert client.post("/api/inspections/evaluate", headers=citizen, json={}).status_code == 403
+
+    # passport: no cover, no fitness certificate -> cannot operate, high-ish risk, actions listed
+    p = client.get(f"/api/insights/vehicle/{vid}", headers=officer).json()
+    assert p["can_operate"] is False and p["next_actions"] and p["risk_band"] in ("low", "medium", "high")
+    assert {c["name"] for c in p["checks"]} >= {"Registration", "Fitness certificate", "Insurance", "Fines", "Status"}
+    assert any("insurance" in f["why"] for f in p["factors"])
+    assert client.get(f"/api/insights/vehicle/{vid}", headers=citizen).status_code == 403
+    assert client.get(f"/api/insights/vehicle/{uuid4()}", headers=officer).status_code == 404
+
+    # a failed test raises the score
+    iid = _scheduled(officer, vid)
+    client.patch(f"/api/inspections/{iid}", headers=officer, json={"checklist": {k: "pass" for k in items}, "readings": {"tyre_tread_mm": 1.0}})
+    p2 = client.get(f"/api/insights/vehicle/{vid}", headers=officer).json()
+    assert p2["risk_score"] > p["risk_score"]
+
+    # analytics and other decision tools answer for staff only
+    a = client.get("/api/bi/inspections", headers=officer)
+    assert a.status_code == 200 and a.json()["failed"] >= 1 and a.json()["top_defects"]
+    assert client.get("/api/bi/inspections", headers=citizen).status_code == 403
+    g = client.get("/api/insights/insurance-gaps", headers=officer).json()
+    assert g["uninsured"] >= 1 and "role" in g
+    f = client.get("/api/insights/accident-factors", headers=officer).json()
+    assert "factors" in f and "reading" in f
+    assert client.get("/api/insights/insurance-gaps", headers=citizen).status_code == 403
+
+
+def test_driver_profile_reports_points_trend_and_advice():
+    from app.models.driver import Driver, DriverStatus, LicenceClass
+    officer, _, _ = _login("officer")
+    citizen, _, _ = _login("citizen")
+    db = SessionLocal()
+    try:
+        d = Driver(licence_number=f"DP-{uuid4().hex[:8].upper()}", first_name="Test", last_name="Driver", id_number=uuid4().hex[:9],
+                   date_of_birth=datetime(1990, 1, 1), licence_class=LicenceClass.B, licence_issue_date=datetime(2020, 1, 1),
+                   licence_expiry_date=datetime.utcnow() + timedelta(days=20), status=DriverStatus.ACTIVE)
+        db.add(d); db.commit(); did = str(d.id)
+    finally:
+        db.close()
+    r = client.get(f"/api/insights/driver/{did}", headers=officer)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["points"] == 0 and j["points_left"] == j["limit"] and j["trend"] == "steady"
+    assert any("expires" in a for a in j["advice"])
+    assert client.get(f"/api/insights/driver/{did}", headers=citizen).status_code == 403
+    assert client.get(f"/api/insights/driver/{uuid4()}", headers=officer).status_code == 404

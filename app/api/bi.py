@@ -17,7 +17,7 @@ from app.core.security import OFFICERS, require_role
 from app.models.anpr import ANPREvent
 from app.models.driver_report import DriverReport
 from app.models.enforcement import Appeal, Challan, ChallanStatus, Violation
-from app.models.inspection import FitnessCertificate
+from app.models.inspection import FitnessCertificate, Inspection, InspectionResult
 from app.models.insurance import Insurance
 from app.models.psv import PSVRouteAlert
 from app.models.user import User
@@ -131,3 +131,46 @@ def bi(days: int = Query(365, ge=30, le=1825), db: Session = Depends(get_db),
         "day_parts": [{"name": n, "count": sum(hour[h] for h in r)} for n, r in bands],
         "types": top(kind, 8),
     }
+
+
+@router.get("/inspections")
+def inspection_analytics(days: int = Query(365, ge=30, le=1825), db: Session = Depends(get_db),
+                         current_user: User = Depends(require_role(*OFFICERS)), _perm: User = Depends(require_permission("reports:view"))):
+    """Why vehicles fail: top defects, failure rate by make and by centre, and the monthly trend."""
+    import json
+    from app.services import inspection_rules
+
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = (db.query(Inspection, Vehicle.make).join(Vehicle, Vehicle.id == Inspection.vehicle_id)
+            .filter(Inspection.created_at >= since, Inspection.result.in_([InspectionResult.PASSED, InspectionResult.FAILED])).limit(ROW_CAP).all())
+    defects, by_make, by_centre, by_month = Counter(), defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+    for insp, make in rows:
+        failed = insp.result == InspectionResult.FAILED
+        for bucket, key in ((by_make, make), (by_centre, insp.inspection_centre), (by_month, insp.created_at.strftime("%Y-%m"))):
+            bucket[key][0] += 1
+            bucket[key][1] += 1 if failed else 0
+        if failed:
+            try:
+                _, reasons = inspection_rules.evaluate(json.loads(insp.checklist or "{}"), json.loads(insp.readings or "{}"),
+                                                       json.loads(insp.obd_codes or "[]"))
+            except (ValueError, TypeError):
+                reasons = []
+            for r in reasons:
+                key = r.split(" failed")[0]
+                for label, *_ in inspection_rules.READINGS.values():  # group a reading by its name, not its value
+                    if r.startswith(label) and (" is below" in r or " is above" in r):
+                        key = f"{label} outside limit"
+                if r.startswith("OBD-II fault"):
+                    key = "OBD-II fault: " + r.split(":")[0].split()[-1]
+                defects[key] += 1
+            if not reasons:
+                defects["Other (free-text finding)"] += 1
+
+    def rate(d, min_n=1):
+        return sorted(({"name": k, "tested": t, "failed": f, "fail_rate": round(100 * f / t)} for k, (t, f) in d.items() if t >= min_n),
+                      key=lambda r: (-r["fail_rate"], -r["tested"]))
+    total, failed_n = len(rows), sum(1 for i, _ in rows if i.result == InspectionResult.FAILED)
+    return {"tested": total, "failed": failed_n, "fail_rate": round(100 * failed_n / total) if total else 0,
+            "top_defects": [{"defect": k, "count": n} for k, n in defects.most_common(8)],
+            "by_make": rate(by_make)[:8], "by_centre": rate(by_centre)[:8],
+            "by_month": [{"month": k, "tested": t, "failed": f} for k, (t, f) in sorted(by_month.items())]}

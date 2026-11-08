@@ -304,12 +304,40 @@ VIEWS.services = async function () {
   } catch (e) { fail("#content", e); }
 };
 
+/* ---------------- Passport, driver profile (shared by Insights and Inspections) ---------------- */
+
+function bandPill(b) { return '<span class="pill ' + (b === "high" ? "red" : b === "medium" ? "amber" : "green") + '">' + esc(b) + " risk</span>"; }
+
+function passportHtml(p) {
+  return '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><b class="mono">' + esc(p.plate) + "</b> · " + esc(p.vehicle) +
+    '<div class="small muted">Owner: ' + esc(p.owner) + "</div></div><div>" + bandPill(p.risk_band) + ' <b>' + p.risk_score + "</b> pts · " +
+    (p.can_operate ? '<span class="pill green">can operate</span>' : '<span class="pill red">not road-legal</span>') + "</div></div>" +
+    '<div class="table-wrap" style="margin-top:8px"><table><tbody>' + p.checks.map(function (c) {
+      return "<tr><td>" + esc(c.name) + '</td><td><span class="pill ' + (c.ok ? "green" : "red") + '">' + (c.ok ? "OK" : "Problem") + '</span></td><td class="small muted">' + esc(c.detail) + "</td></tr>";
+    }).join("") + "</tbody></table></div>" +
+    (p.factors.length ? '<div class="small" style="margin-top:8px"><b>Why this score:</b> ' + p.factors.map(function (f) { return esc(f.why) + " (+" + f.points + ")"; }).join(", ") + "</div>" : "") +
+    '<div class="small" style="margin-top:8px"><b>Next inspection:</b> every ' + p.recommended_interval_days + " days for this risk level, due " + new Date(p.recommended_next_inspection).toLocaleDateString() +
+    '<div class="muted">' + esc(p.interval_rule) + "</div></div>" +
+    '<div style="margin-top:8px"><b class="small">What to do:</b><ul style="margin:4px 0 0 18px">' + p.next_actions.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>";
+}
+
+function driverHtml(d) {
+  var pct = Math.min(100, Math.round(d.points / d.limit * 100));
+  return '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>' + esc(d.name) + '</b> · <span class="mono">' + esc(d.licence) + '</span><div class="small muted">Licence ' + esc(d.status) + "</div></div><div>" + bandPill(d.risk_band) + " · offences " + esc(d.trend) + "</div></div>" +
+    '<div class="small" style="margin-top:10px">Demerit points: <b>' + d.points + "</b> of " + d.limit + ' (suspension)</div><div style="height:10px;background:var(--line);margin:4px 0"><div style="height:10px;width:' + pct + "%;background:" + (pct >= 75 ? "#ff6b5b" : "var(--gold)") + '"></div></div>' +
+    '<div class="small muted">Offences: ' + d.offences_90d + " in the last 90 days, " + d.offences_prior_90d + " in the 90 before.</div>" +
+    (d.by_type.length ? '<div class="small" style="margin-top:6px">' + d.by_type.map(function (t) { return esc(t.type.replace(/_/g, " ")) + " ×" + t.count; }).join(" · ") + "</div>" : "") +
+    '<div style="margin-top:8px"><b class="small">What to do:</b><ul style="margin:4px 0 0 18px">' + d.advice.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>";
+}
+
 /* ---------------- Insights (staff) ---------------- */
 
 VIEWS.insights = async function () {
   $("#content").innerHTML = '<div class="empty">Loading…</div>';
   try {
     var d = await api("/api/insights/");
+    var gaps = await api("/api/insights/insurance-gaps");
+    var fac = await api("/api/insights/accident-factors");
     var max = Math.max.apply(null, d.accident_hotspots.map(function (h) { return h.weight; }).concat([1]));
     var bars = d.accident_hotspots.length ? d.accident_hotspots.map(function (h) {
       return '<div style="margin-bottom:10px"><div class="small" style="display:flex;justify-content:space-between"><span>' + esc(h.location) + "</span><span class=\"muted\">" + h.accidents + " accidents</span></div>" +
@@ -317,6 +345,7 @@ VIEWS.insights = async function () {
     }).join("") : '<div class="empty">No accidents recorded in the last year.</div>';
     var pipe = Object.keys(d.expiry_pipeline).map(function (k) { var p = d.expiry_pipeline[k]; return [esc(k), p["30"], p["60"], p["90"]]; });
     $("#content").innerHTML =
+      '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Number plate (e.g. BAK 123) or licence number"><button class="btn gold" id="pp-go">Open passport</button></div><div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
       '<div class="grid cards"><div class="kpi"><div class="kpi-label">Fitness fees expected</div><div class="kpi-value">' + money(d.fitness_fees_expected_90d) + '</div><div class="kpi-sub">from certificates ending in 90 days</div></div></div>' +
       '<div class="row">' +
         '<div class="card"><h3>Vehicles to look at first</h3>' +
@@ -329,7 +358,30 @@ VIEWS.insights = async function () {
         '<div class="card"><h3>What expires soon</h3>' + tbl(["Document", "30 days", "60 days", "90 days"], pipe) +
           '<p class="small muted" style="margin:10px 0 0">Counts are cumulative: the 90-day column includes the first two.</p></div>' +
         '<div class="card"><h3>Where offences happen</h3>' + tbl(["Location", "Offences"], d.offence_hotspots.map(function (h) { return [esc(h.location), h.offences]; })) + "</div>" +
+      "</div>" +
+      '<div class="row">' +
+        '<div class="card"><h3>Insurance: who is on the road without cover</h3><p class="small" style="margin:0 0 8px"><b>' + gaps.uninsured + "</b> of " + gaps.fleet + " active vehicles (" + gaps.uninsured_pct + "%) have no valid policy. " + gaps.uninsured_with_offences + " of them had offences and " + gaps.uninsured_in_crashes + " were in crashes.</p>" +
+          tbl(["Plate", "Owner", "Priority"], gaps.worklist.map(function (w) { return ['<span class="mono">' + esc(w.plate) + "</span>", esc(w.owner), '<span class="pill ' + (w.priority === "high" ? "red" : "amber") + '">' + w.priority + "</span>"]; })) +
+          (gaps.expiring_30d.length ? '<p class="small" style="margin:10px 0 0"><b>Cover ending within 30 days:</b> ' + gaps.expiring_30d.map(function (x) { return esc(x.plate); }).join(", ") + "</p>" : "") +
+          '<p class="small muted" style="margin:8px 0 0">' + esc(gaps.role) + "</p></div>" +
+        '<div class="card"><h3>What crashed vehicles have in common</h3>' +
+          (fac.crashed_vehicles ? tbl(["Factor", "Crashed", "Whole fleet", "Lift"], fac.factors.map(function (f) { return [esc(f.factor), f.crashed_pct + "%", f.fleet_pct + "%", "<b>" + (f.lift == null ? "-" : f.lift + "×") + "</b>"]; })) : '<div class="empty">No crashes with vehicles recorded yet.</div>') +
+          '<p class="small muted" style="margin:8px 0 0">' + esc(fac.reading) + "</p></div>" +
       "</div>";
+    $("#pp-go").addEventListener("click", async function () {
+      var q = $("#pp-q").value.trim(), out = $("#pp-out");
+      if (!q) return;
+      out.innerHTML = "Looking…";
+      try {
+        try {
+          var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(q));
+          out.innerHTML = passportHtml(await api("/api/insights/vehicle/" + v.id));
+        } catch (e1) {
+          var dr = await api("/api/drivers/by-licence/" + encodeURIComponent(q));
+          out.innerHTML = driverHtml(await api("/api/insights/driver/" + dr.id));
+        }
+      } catch (e) { out.innerHTML = '<span style="color:var(--err)">No vehicle or driver found for "' + esc(q) + '".</span>'; }
+    });
   } catch (e) { fail("#content", e); }
 };
 
@@ -443,6 +495,7 @@ VIEWS.bi = async function () {
   $("#content").innerHTML = '<div class="empty">Loading…</div>';
   async function draw() {
     var d = await api("/api/bi/?days=" + days);
+    var ia = await api("/api/bi/inspections?days=" + days);
     var hmax = Math.max.apply(null, d.heat.rows.map(function (r) { return Math.max.apply(null, r.cells); }).concat([1]));
     var heat = '<div class="table-wrap"><table><thead><tr><th>Road</th>' + d.heat.seasons.map(function (s) { return "<th>" + esc(s.replace(/ \(.*/, "")) + "</th>"; }).join("") + "</tr></thead><tbody>" +
       d.heat.rows.map(function (r) {
@@ -471,7 +524,11 @@ VIEWS.bi = async function () {
       '<div class="card"><h3>Road by season</h3>' + heat + '<p class="small muted" style="margin:8px 0 0">Seasons: rainy Nov to Apr, cold dry May to Aug, hot dry Sep to Oct. Darker means more offences. Compare seasons with the per-month figures above, because the data may not cover every month.</p></div>' +
       '<div class="row"><div class="card"><h3>Day of the week</h3>' + week + "</div>" +
       '<div class="card"><h3>Time of day</h3>' + barRows(d.day_parts, "count") + "</div>" +
-      '<div class="card"><h3>Offence types</h3>' + barRows(d.types.map(function (t) { return { name: t.name.replace(/_/g, " "), count: t.count }; }), "count") + "</div></div>";
+      '<div class="card"><h3>Offence types</h3>' + barRows(d.types.map(function (t) { return { name: t.name.replace(/_/g, " "), count: t.count }; }), "count") + "</div></div>" +
+      '<div class="row"><div class="card"><h3>Why vehicles fail inspection</h3><p class="small" style="margin:0 0 8px"><b>' + ia.failed + "</b> of " + ia.tested + " tests failed (" + ia.fail_rate + "%).</p>" +
+        barRows(ia.top_defects.map(function (x) { return { name: x.defect, count: x.count }; }), "count") + "</div>" +
+      '<div class="card"><h3>Failure rate by make</h3>' + barRows(ia.by_make.map(function (m) { return { name: m.name + " (" + m.tested + " tested)", count: m.fail_rate }; }), "count", null, "%") +
+        '<h3 style="margin-top:14px">By centre</h3>' + barRows(ia.by_centre.map(function (m) { return { name: m.name + " (" + m.tested + ")", count: m.fail_rate }; }), "count", null, "%") + "</div></div>";
     $("#bi-days").value = String(days);
     $("#bi-days").addEventListener("change", function (e) { days = parseInt(e.target.value, 10); draw().catch(function (x) { fail("#content", x); }); });
   }
