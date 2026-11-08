@@ -330,6 +330,33 @@ function driverHtml(d) {
     '<div style="margin-top:8px"><b class="small">What to do:</b><ul style="margin:4px 0 0 18px">' + d.advice.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>";
 }
 
+/* ---------------- Plate scanner widget (ANPR and Insights) ---------------- */
+
+var SCAN_N = 0;
+function plateScanHtml() {
+  var id = "scan" + (++SCAN_N);
+  return '<div class="scan-box" data-scan="' + id + '"><div class="scan-row"><label class="btn ghost sm" for="' + id + '-file">Scan plate with camera</label>' +
+    '<input id="' + id + '-file" type="file" accept="image/*" capture="environment" style="display:none">' +
+    '<span class="small muted scan-status">Take a clear, straight-on photo of the plate. The photo stays on this device.</span></div><div class="scan-out"></div></div>';
+}
+
+function wirePlateScan(root, onPick) {
+  var box = root.querySelector(".scan-box"); if (!box) return;
+  var input = box.querySelector("input[type=file]"), status = box.querySelector(".scan-status"), out = box.querySelector(".scan-out");
+  input.addEventListener("change", async function () {
+    var file = input.files && input.files[0]; if (!file) return;
+    out.innerHTML = ""; status.textContent = "Loading the scanner…";
+    try {
+      var res = await PlateScan.scan(file, function (s, pr) { status.textContent = "Reading the plate: " + s + (pr ? " " + Math.round(pr * 100) + "%" : ""); });
+      status.textContent = res.candidates.length ? "Is this the plate? Check the letters against the real plate, then pick it." : "Could not read a plate. Retake it closer and straight-on, or type it in.";
+      out.innerHTML = '<div class="scan-result"><img alt="Photo you took" src="' + res.preview + '">' + '<div class="scan-chips">' +
+        res.candidates.slice(0, 4).map(function (c) { return '<button type="button" class="btn gold sm scan-pick" data-p="' + esc(c.plate) + '" data-c="' + c.confidence + '">' + esc(c.plate) + ' <span class="small">(' + c.confidence + '%)</span></button>'; }).join("") + "</div></div>";
+      $$(".scan-pick", out).forEach(function (b) { b.addEventListener("click", function () { onPick(b.dataset.p, Number(b.dataset.c)); status.textContent = "Using " + b.dataset.p + ". Edit it if the letters are wrong."; }); });
+    } catch (e) { status.textContent = "Scanner problem: " + e.message; }
+    input.value = "";
+  });
+}
+
 /* ---------------- Insights (staff) ---------------- */
 
 VIEWS.insights = async function () {
@@ -345,7 +372,7 @@ VIEWS.insights = async function () {
     }).join("") : '<div class="empty">No accidents recorded in the last year.</div>';
     var pipe = Object.keys(d.expiry_pipeline).map(function (k) { var p = d.expiry_pipeline[k]; return [esc(k), p["30"], p["60"], p["90"]]; });
     $("#content").innerHTML =
-      '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Number plate (e.g. BAK 123) or licence number"><button class="btn gold" id="pp-go">Open passport</button></div><div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
+      '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Number plate (e.g. BAK 123) or licence number"><button class="btn gold" id="pp-go">Open passport</button></div>' + plateScanHtml() + '<div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
       '<div class="grid cards"><div class="kpi"><div class="kpi-label">Fitness fees expected</div><div class="kpi-value">' + money(d.fitness_fees_expected_90d) + '</div><div class="kpi-sub">from certificates ending in 90 days</div></div></div>' +
       '<div class="row">' +
         '<div class="card"><h3>Vehicles to look at first</h3>' +
@@ -368,6 +395,7 @@ VIEWS.insights = async function () {
           (fac.crashed_vehicles ? tbl(["Factor", "Crashed", "Whole fleet", "Lift"], fac.factors.map(function (f) { return [esc(f.factor), f.crashed_pct + "%", f.fleet_pct + "%", "<b>" + (f.lift == null ? "-" : f.lift + "×") + "</b>"]; })) : '<div class="empty">No crashes with vehicles recorded yet.</div>') +
           '<p class="small muted" style="margin:8px 0 0">' + esc(fac.reading) + "</p></div>" +
       "</div>";
+    wirePlateScan($("#content"), function (plate) { $("#pp-q").value = plate; $("#pp-go").click(); });
     $("#pp-go").addEventListener("click", async function () {
       var q = $("#pp-q").value.trim(), out = $("#pp-out");
       if (!q) return;
@@ -563,3 +591,21 @@ VIEWS.bi = async function () {
   }
   try { await draw(); } catch (e) { fail("#content", e); }
 };
+
+
+/* The ANPR screen gets the scanner above its plate field: scan, confirm, then record the sighting. */
+(function () {
+  var original = VIEWS.anpr;
+  VIEWS.anpr = async function () {
+    await original();
+    var form = $("#anpr-form"); if (!form) return;
+    var holder = document.createElement("div");
+    holder.innerHTML = plateScanHtml();
+    form.insertBefore(holder.firstChild, form.firstChild);
+    wirePlateScan(form, function (plate, conf) {
+      form.elements.plate_number.value = plate;
+      form.elements.confidence.value = (conf / 100).toFixed(2);
+      form.elements.camera_id.value = form.elements.camera_id.value || "OFFICER-PHONE";
+    });
+  };
+})();

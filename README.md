@@ -489,3 +489,7 @@ The demo data includes an appealable fine, a citizen with 9 of 12 points, and a 
 - **Insurance gaps** `GET /api/insights/insurance-gaps`: uninsured active vehicles ranked by offences and crashes, plus cover ending in 30 days.
 - **Accident factors** `GET /api/insights/accident-factors`: what crashed vehicles share compared with the whole fleet (association, not cause).
 - **Inspection analytics** `GET /api/bi/inspections`: top defects, failure rate by make and centre, monthly trend.
+
+## Officer plate scan
+
+On the ANPR and Insights screens an officer can photograph a number plate ("Scan plate with camera"). The text is read **on the officer's device** with Tesseract (WebAssembly, bundled in `app/static/vendor/tesseract`, Apache-2.0), so the photo never leaves the phone and no OCR service or API key is needed. The reading is a suggestion: candidates are shown with a confidence and the officer taps the right one (or retypes it) before anything is looked up or recorded. Plates are three letters then three or four digits. Tested on generated plates only; glare, steep angles, dirt and distance can defeat it, in which case the officer retakes the photo or types the plate.

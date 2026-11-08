@@ -46,7 +46,7 @@ _CSP = (
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
     "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; font-src 'self'; "
     "connect-src 'self' https://cdn.jsdelivr.net; "
-    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    "worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 _HEALTH_PATHS = {"/health", "/health/live", "/health/ready"}
 
