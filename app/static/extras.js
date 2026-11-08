@@ -322,9 +322,8 @@ function passportHtml(p) {
 }
 
 function driverHtml(d) {
-  var pct = Math.min(100, Math.round(d.points / d.limit * 100));
   return '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>' + esc(d.name) + '</b> · <span class="mono">' + esc(d.licence) + '</span><div class="small muted">Licence ' + esc(d.status) + "</div></div><div>" + bandPill(d.risk_band) + " · offences " + esc(d.trend) + "</div></div>" +
-    '<div class="small" style="margin-top:10px">Demerit points: <b>' + d.points + "</b> of " + d.limit + ' (suspension)</div><div style="height:10px;background:var(--line);margin:4px 0"><div style="height:10px;width:' + pct + "%;background:" + (pct >= 75 ? "#ff6b5b" : "var(--gold)") + '"></div></div>' +
+    '<div class="small" style="margin-top:10px">Demerit points (suspension at ' + d.limit + ')</div>' + meterHtml(d.points, d.limit, { what: "points" }) +
     '<div class="small muted">Offences: ' + d.offences_90d + " in the last 90 days, " + d.offences_prior_90d + " in the 90 before.</div>" +
     (d.by_type.length ? '<div class="small" style="margin-top:6px">' + d.by_type.map(function (t) { return esc(t.type.replace(/_/g, " ")) + " ×" + t.count; }).join(" · ") + "</div>" : "") +
     '<div style="margin-top:8px"><b class="small">What to do:</b><ul style="margin:4px 0 0 18px">' + d.advice.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>";
@@ -382,11 +381,7 @@ VIEWS.insights = async function () {
     var d = await api("/api/insights/");
     var gaps = await api("/api/insights/insurance-gaps");
     var fac = await api("/api/insights/accident-factors");
-    var max = Math.max.apply(null, d.accident_hotspots.map(function (h) { return h.weight; }).concat([1]));
-    var bars = d.accident_hotspots.length ? d.accident_hotspots.map(function (h) {
-      return '<div style="margin-bottom:10px"><div class="small" style="display:flex;justify-content:space-between"><span>' + esc(h.location) + "</span><span class=\"muted\">" + h.accidents + " accidents</span></div>" +
-        '<div style="height:8px;background:var(--line)"><div style="height:8px;width:' + Math.round(h.weight / max * 100) + '%;background:var(--gold)"></div></div></div>';
-    }).join("") : '<div class="empty">No accidents recorded in the last year.</div>';
+    var bars = hbars(d.accident_hotspots.map(function (h) { return { name: h.location, weight: h.weight, accidents: h.accidents }; }), "weight", function (i) { return i.accidents + " accidents"; }, "", "No accidents recorded in the last year.");
     var pipe = Object.keys(d.expiry_pipeline).map(function (k) { var p = d.expiry_pipeline[k]; return [esc(k), p["30"], p["60"], p["90"]]; });
     $("#content").innerHTML =
       '<div class="card"><h3>Look up a vehicle or a driver</h3><div class="toolbar" style="margin-bottom:0"><input id="pp-q" placeholder="Plate (BAK 123) or licence no."><button class="btn gold" id="pp-go">Open passport</button></div>' + plateScanHtml() + '<div id="pp-out" style="margin-top:12px" class="small muted">Shows what is wrong, how risky it is, how often to inspect it, and what to do next.</div></div>' +
@@ -520,28 +515,85 @@ VIEWS.insights = async function () {
 
 /* ---------------- Analytics (BI): instrument cluster and where/when offences happen ---------------- */
 
-var ZONE_COLOUR = { green: "#3fbf8a", amber: "#FFC800", red: "#ff6b5b" };
+var ZONE_COLOUR = { green: "var(--ok)", amber: "var(--warn)", red: "var(--err)" };
+var ZONE_WORD = { green: "On target", amber: "Watch", red: "Critical" };
+var ZONE_GLYPH = { green: "●", amber: "▲", red: "■" };
 
-// A dial like a car's gauge: a 240 degree track with coloured zones, ticks, a needle and a digital readout.
+/* ---------------- Shared chart pieces: bars, columns, meter, tooltip ---------------- */
+
+// Horizontal ranked bars. The biggest is drawn in the accent, the rest in a quieter tint, so the eye lands on the top item.
+function hbars(items, valueKey, fmt, unit, empty) {
+  if (!items.length) return '<div class="empty">' + (empty || "Nothing recorded in this period.") + "</div>";
+  var max = Math.max.apply(null, items.map(function (i) { return i[valueKey]; }).concat([1]));
+  var lead = items.length < 2 || items[0][valueKey] > items[1][valueKey];  // accent only a clear leader, not a tie
+  return '<div class="hb">' + items.map(function (i, n) {
+    var v = i[valueKey], pct = Math.max(v > 0 ? 2 : 0, Math.round(v / max * 100)), shown = (fmt ? fmt(i) : v) + (unit || "");
+    return '<div class="hb-row' + (n === 0 && lead ? " top" : "") + '" tabindex="0" data-tip="' + esc(i.name + ": " + shown) + '">' +
+      '<div class="hb-head"><span class="hb-name">' + esc(i.name) + '</span><span class="hb-val">' + esc(String(shown)) + "</span></div>" +
+      '<div class="hb-track"><div class="hb-fill" style="--w:' + pct + '%"></div></div></div>';
+  }).join("") + "</div>";
+}
+
+// Vertical columns with a baseline; the busiest one is the accent.
+function vcols(items, valueKey) {
+  var max = Math.max.apply(null, items.map(function (i) { return i[valueKey]; }).concat([1]));
+  var best = items.reduce(function (m, i, n) { return i[valueKey] > items[m][valueKey] ? n : m; }, 0);
+  var ties = items.filter(function (i) { return i[valueKey] === items[best][valueKey]; }).length > 1;
+  if (ties) best = -1;
+  return '<div class="vc">' + items.map(function (i, n) {
+    var v = i[valueKey], h = Math.max(v > 0 ? 3 : 0, Math.round(v / max * 100));
+    return '<div class="vc-col' + (n === best && v > 0 ? " top" : "") + '" tabindex="0" data-tip="' + esc(i.name + ": " + v) + '">' +
+      '<span class="vc-v">' + v + '</span><div class="vc-bar" style="--h:' + h + '%"></div><span class="vc-n">' + esc(i.name) + "</span></div>";
+  }).join("") + "</div>";
+}
+
+// A thin meter against a limit, with the limit marked and the state written out (not colour alone).
+function meterHtml(value, limit, opts) {
+  opts = opts || {};
+  var pct = Math.min(100, Math.round(value / Math.max(1, limit) * 100)), lvl = pct >= 75 ? "red" : pct >= 40 ? "amber" : "green";
+  return '<div class="mt" data-tip="' + esc(value + " of " + limit + (opts.what ? " " + opts.what : "")) + '"><div class="mt-track"><div class="mt-fill ' + lvl + '" style="--w:' + pct + '%"></div>' +
+    '<span class="mt-mark" style="left:75%" title="75% of the limit"></span></div>' +
+    '<div class="mt-foot small"><span class="mt-state ' + lvl + '">' + ZONE_GLYPH[lvl] + " " + ZONE_WORD[lvl] + "</span><span class=\"muted\">" + value + " of " + limit + (opts.what ? " " + esc(opts.what) : "") + "</span></div></div>";
+}
+
+// One tooltip for every chart mark: hover, or keyboard focus.
+(function chartTips() {
+  var tip = null;
+  function show(el) {
+    if (!tip) { tip = document.createElement("div"); tip.className = "chart-tip"; tip.setAttribute("role", "tooltip"); document.body.appendChild(tip); }
+    tip.textContent = el.getAttribute("data-tip"); tip.style.display = "block";
+    var r = el.getBoundingClientRect(), w = tip.offsetWidth, x = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    tip.style.left = x + "px"; tip.style.top = Math.max(8, r.top - tip.offsetHeight - 8) + "px";
+  }
+  function hide() { if (tip) tip.style.display = "none"; }
+  document.addEventListener("mouseover", function (e) { var el = e.target.closest && e.target.closest("[data-tip]"); if (el) show(el); else hide(); });
+  document.addEventListener("focusin", function (e) { var el = e.target.closest && e.target.closest("[data-tip]"); if (el) show(el); });
+  document.addEventListener("focusout", hide);
+  window.addEventListener("scroll", hide, true);
+})();
+
+// A dial like a car's gauge: faint coloured zones, a bright arc that sweeps up to the value, a needle and a written state.
 function dialSvg(d) {
-  var cx = 100, cy = 100, r = 76;
+  var cx = 100, cy = 98, r = 74;
   function pt(t, rad) { var a = (150 + 240 * t) * Math.PI / 180; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)]; }
   function arc(t0, t1, rad) {
     var a = pt(t0, rad), b = pt(t1, rad);
     return "M" + a[0].toFixed(1) + " " + a[1].toFixed(1) + " A" + rad + " " + rad + " 0 " + ((t1 - t0) * 240 > 180 ? 1 : 0) + " 1 " + b[0].toFixed(1) + " " + b[1].toFixed(1);
   }
-  var out = '<svg viewBox="0 0 200 150" role="img" aria-label="' + esc(d.label + " " + d.value + d.unit) + '" style="width:100%;max-width:260px;display:block;margin:0 auto">';
-  out += '<path d="' + arc(0, 1, r) + '" fill="none" stroke="var(--line)" stroke-width="12" stroke-linecap="butt"/>';
-  d.zones.forEach(function (z) { out += '<path d="' + arc(z[0] / d.max, z[1] / d.max, r) + '" fill="none" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="12" opacity="0.85"/>'; });
+  var tv = Math.max(0, Math.min(1, d.value / d.max)), col = ZONE_COLOUR[d.zone];
+  var out = '<svg viewBox="0 0 200 152" role="img" aria-label="' + esc(d.label + ": " + d.value + d.unit + ", " + ZONE_WORD[d.zone]) + '" style="width:100%;max-width:250px;display:block;margin:0 auto">';
+  out += '<path d="' + arc(0, 1, r) + '" fill="none" stroke="var(--line)" stroke-width="11" stroke-linecap="round"/>';
+  d.zones.forEach(function (z) { out += '<path d="' + arc(z[0] / d.max, z[1] / d.max, r) + '" fill="none" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="11" opacity="0.28"/>'; });
+  if (tv > 0) out += '<path class="dial-arc" d="' + arc(0, tv, r) + '" pathLength="100" fill="none" stroke="' + col + '" stroke-width="11" stroke-linecap="round" style="--v:100"/>';
   for (var i = 0; i <= 10; i++) {
-    var t = i / 10, a = pt(t, r - 10), b = pt(t, r - (i % 5 === 0 ? 20 : 16));
-    out += '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" stroke="var(--ink-2)" stroke-width="' + (i % 5 === 0 ? 1.6 : 0.8) + '"/>';
+    var t = i / 10, p1 = pt(t, r - 12), p2 = pt(t, r - (i % 5 === 0 ? 20 : 16));
+    out += '<line x1="' + p1[0].toFixed(1) + '" y1="' + p1[1].toFixed(1) + '" x2="' + p2[0].toFixed(1) + '" y2="' + p2[1].toFixed(1) + '" stroke="var(--ink-3)" stroke-width="' + (i % 5 === 0 ? 1.4 : 0.7) + '"/>';
   }
-  [0, 0.5, 1].forEach(function (t) { var p = pt(t, r - 30); out += '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] + 3).toFixed(1) + '" fill="var(--ink-3)" font-size="8" text-anchor="middle">' + Math.round(t * d.max) + "</text>"; });
-  var tv = Math.max(0, Math.min(1, d.value / d.max)), n = pt(tv, r - 14);
-  out += '<line x1="' + cx + '" y1="' + cy + '" x2="' + n[0].toFixed(1) + '" y2="' + n[1].toFixed(1) + '" stroke="' + ZONE_COLOUR[d.zone] + '" stroke-width="3" stroke-linecap="round"/>';
-  out += '<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="var(--panel-2)" stroke="var(--ink-2)" stroke-width="1.5"/>';
-  out += '<text x="' + cx + '" y="' + (cy + 32) + '" fill="var(--ink)" font-size="22" font-weight="700" text-anchor="middle" style="font-variant-numeric:tabular-nums">' + esc(String(d.value)) + '<tspan font-size="9" fill="var(--ink-2)"> ' + esc(d.unit) + "</tspan></text>";
+  [0, 1].forEach(function (t) { var p = pt(t, r + 1); out += '<text x="' + (p[0] + (t ? 4 : -4)).toFixed(1) + '" y="' + (p[1] + 12).toFixed(1) + '" fill="var(--ink-3)" font-size="8.5" text-anchor="' + (t ? "start" : "end") + '">' + Math.round(t * d.max) + "</text>"; });
+  var n = pt(tv, r - 24);
+  out += '<line class="dial-needle" x1="' + cx + '" y1="' + cy + '" x2="' + n[0].toFixed(1) + '" y2="' + n[1].toFixed(1) + '" stroke="var(--ink)" stroke-width="2.2" stroke-linecap="round" style="transform-origin:' + cx + "px " + cy + 'px;--sweep:' + (-240 * tv).toFixed(0) + 'deg"/>';
+  out += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="var(--panel)" stroke="var(--ink)" stroke-width="2"/>';
+  out += '<text x="' + cx + '" y="' + (cy + 30) + '" fill="var(--ink)" font-size="24" font-weight="700" text-anchor="middle" style="font-variant-numeric:tabular-nums">' + esc(String(d.value)) + '<tspan font-size="10" fill="var(--ink-2)" dx="2">' + esc(d.unit) + "</tspan></text>";
   return out + "</svg>";
 }
 
@@ -555,14 +607,7 @@ function warningLight(l) {
     '<span class="wl-n">' + l.count + '</span><span class="wl-t">' + esc(l.label) + "</span></a>";
 }
 
-function barRows(items, valueKey, fmt, unit) {
-  var max = Math.max.apply(null, items.map(function (i) { return i[valueKey]; }).concat([1]));
-  if (!items.length) return '<div class="empty">No offences in this period.</div>';
-  return items.map(function (i) {
-    return '<div style="margin-bottom:9px"><div class="small" style="display:flex;justify-content:space-between;gap:10px"><span>' + esc(i.name) + '</span><span class="muted">' + (fmt ? fmt(i) : i[valueKey]) + (unit || "") + "</span></div>" +
-      '<div style="height:8px;background:var(--line)"><div style="height:8px;width:' + Math.round(i[valueKey] / max * 100) + '%;background:var(--gold)"></div></div></div>';
-  }).join("");
-}
+function barRows(items, valueKey, fmt, unit) { return hbars(items, valueKey, fmt, unit, "No offences in this period."); }
 
 VIEWS.bi = async function () {
   var days = 365;
@@ -577,10 +622,7 @@ VIEWS.bi = async function () {
           return '<td style="background:color-mix(in srgb, var(--gold) ' + Math.round(c / hmax * 70) + '%, transparent);font-weight:' + (c / hmax > 0.6 ? 700 : 400) + '">' + c + "</td>";
         }).join("") + "</tr>";
       }).join("") + "</tbody></table></div>";
-    var wmax = Math.max.apply(null, d.weekdays.map(function (w) { return w.count; }).concat([1]));
-    var week = '<div style="display:flex;gap:8px;align-items:flex-end;height:120px">' + d.weekdays.map(function (w) {
-      return '<div style="flex:1;text-align:center"><div class="small muted">' + w.count + '</div><div style="height:' + Math.max(4, Math.round(w.count / wmax * 90)) + 'px;background:var(--gold)"></div><div class="small">' + w.name + "</div></div>";
-    }).join("") + "</div>";
+    var week = vcols(d.weekdays, "count");
     var seasons = d.seasons.map(function (s) {
       var hot = s.name === d.busiest_season;
       return '<div class="kpi"' + (hot ? ' style="border-left-color:#ff6b5b"' : "") + '><div class="kpi-label">' + esc(s.name) + '</div><div class="kpi-value">' + s.per_month + '<span style="font-size:14px;font-weight:500"> a month</span></div><div class="kpi-sub">' + s.count + " offences over " + s.months + " month" + (s.months === 1 ? "" : "s") + " of data" + (hot ? " · busiest" : "") + "</div></div>";
@@ -589,13 +631,13 @@ VIEWS.bi = async function () {
       '<div class="toolbar"><label class="small muted">Period</label><select id="bi-days" style="width:auto;flex:0 0 auto"><option value="90">Last 90 days</option><option value="180">Last 6 months</option><option value="365">Last 12 months</option><option value="1825">Last 5 years</option></select>' +
       '<span class="small muted">' + d.offences + " offences analysed" + (d.capped ? " (capped)" : "") + "</span></div>" +
       '<div class="card"><h3>Instrument cluster</h3><div class="cluster">' + d.dials.map(function (g) {
-        return '<div class="dial">' + dialSvg(g) + '<div class="dial-l">' + esc(g.label) + '</div><div class="small muted">' + esc(g.note) + "</div></div>";
+        return '<div class="dial">' + dialSvg(g) + '<div class="dial-l">' + esc(g.label) + '</div><div class="dial-s ' + g.zone + '">' + ZONE_GLYPH[g.zone] + " " + ZONE_WORD[g.zone] + '</div><div class="small muted">' + esc(g.note) + "</div></div>";
       }).join("") + "</div>" +
       '<div class="lights">' + d.lights.map(warningLight).join("") + "</div></div>" +
       '<div class="grid cards" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">' + seasons + "</div>" +
       '<div class="row"><div class="card"><h3>Roads with the most offences</h3>' + barRows(d.roads, "count", function (i) { return i.count + " · " + money(i.value); }) + "</div>" +
       '<div class="card"><h3>Provinces</h3>' + barRows(d.regions, "count") + '<p class="small muted" style="margin:8px 0 0">Province comes from the GPS position, or the place name when there is none.</p></div></div>' +
-      '<div class="card"><h3>Road by season</h3>' + heat + '<p class="small muted" style="margin:8px 0 0">Seasons: rainy Nov to Apr, cold dry May to Aug, hot dry Sep to Oct. Darker means more offences. Compare seasons with the per-month figures above, because the data may not cover every month.</p></div>' +
+      '<div class="card"><h3>Road by season</h3>' + heat + '<div class="heat-key small muted"><span>fewer</span><i></i><span>more offences</span></div><p class="small muted" style="margin:8px 0 0">Seasons: rainy Nov to Apr, cold dry May to Aug, hot dry Sep to Oct. Darker means more offences. Compare seasons with the per-month figures above, because the data may not cover every month.</p></div>' +
       '<div class="row"><div class="card"><h3>Day of the week</h3>' + week + "</div>" +
       '<div class="card"><h3>Time of day</h3>' + barRows(d.day_parts, "count") + "</div>" +
       '<div class="card"><h3>Offence types</h3>' + barRows(d.types.map(function (t) { return { name: t.name.replace(/_/g, " "), count: t.count }; }), "count") + "</div></div>" +
