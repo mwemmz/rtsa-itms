@@ -19,6 +19,15 @@ from app.services import highway_code
 
 log = logging.getLogger("rtsa.assistant")
 
+# Last reason the AI provider gave no answer (never contains the key). Shown to admins in /status.
+last_error: str | None = None
+
+
+def _note_error(msg: str) -> None:
+    global last_error
+    last_error = msg[:400]
+    log.warning("assistant provider error: %s", msg)
+
 MAX_QUESTION = 500
 MAX_HISTORY_TURNS = 6
 TOP_K = 4
@@ -93,7 +102,7 @@ def _call_llm(question: str, rules: list[highway_code.Rule], history: list[dict]
         parts = res.json().get("content", [])
         return "".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
     except (httpx.HTTPError, ValueError) as exc:
-        log.warning("assistant provider error: %s", type(exc).__name__)
+        _note_error(f"Anthropic {type(exc).__name__} model={settings.ASSISTANT_MODEL}")
         raise AssistantError from exc
 
 
@@ -113,18 +122,16 @@ def _call_openai_compatible(user: str, history: list[dict]) -> str:
         text = (choice["message"].get("content") or "").strip()
         if not text:
             # Thinking models can spend the whole token budget reasoning and return no answer.
-            log.warning("assistant provider returned no text: model=%s finish_reason=%s",
-                        settings.LLM_MODEL, choice.get("finish_reason"))
+            _note_error(f"no text returned: model={settings.LLM_MODEL} finish_reason={choice.get('finish_reason')}")
         return text
     except httpx.HTTPStatusError as exc:
         # The provider's own error text (e.g. "model not found", "invalid API key") says what to fix.
         # It never contains the key, so it is safe to log; trimmed to keep the log line short.
-        log.warning("assistant provider error: HTTP %s from %s model=%s: %s",
-                    exc.response.status_code, settings.LLM_BASE_URL, settings.LLM_MODEL,
-                    exc.response.text[:300].replace("\n", " "))
+        _note_error(f"HTTP {exc.response.status_code} from {settings.LLM_BASE_URL} model={settings.LLM_MODEL}: "
+                    + exc.response.text[:300].replace("\n", " "))
         raise AssistantError from exc
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-        log.warning("assistant provider error: %s (%s) model=%s", type(exc).__name__, exc, settings.LLM_MODEL)
+        _note_error(f"{type(exc).__name__} ({exc}) model={settings.LLM_MODEL}")
         raise AssistantError from exc
 
 

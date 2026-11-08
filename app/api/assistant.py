@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.ratelimit import check_rate_limit, record_failure
 from app.core.security import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services import assistant, highway_code
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
@@ -25,8 +25,13 @@ class AskRequest(BaseModel):
 @router.get("/status")
 def status(current_user: User = Depends(get_current_user)):
     index = highway_code.load_index()
-    return {"enabled": settings.ASSISTANT_ENABLED, "loaded": index is not None,
-            "rules": index.n if index else 0, "ai": assistant.ai_enabled()}
+    out = {"enabled": settings.ASSISTANT_ENABLED, "loaded": index is not None,
+           "rules": index.n if index else 0, "ai": assistant.ai_enabled()}
+    if current_user.role == UserRole.ADMIN:
+        # Admin-only diagnostics: which model is configured and why the last AI call fell back.
+        out["model"] = settings.ASSISTANT_MODEL if settings.ANTHROPIC_API_KEY else settings.LLM_MODEL
+        out["last_error"] = assistant.last_error
+    return out
 
 
 @router.post("/ask")
