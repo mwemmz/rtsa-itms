@@ -138,7 +138,10 @@ def _call_openai_compatible(user: str, history: list[dict]) -> str:
         raise AssistantError from exc
 
 
-_CITE = re.compile(r"\[Rule\s+(\d+)\]", re.IGNORECASE)
+# Models are told to write [Rule N] but often write **Rule N** or plain Rule N instead. All of these
+# are normalised to [Rule N] so invented rule numbers are still removed. The unbracketed form needs a
+# capital R so ordinary prose ("as a rule, 2 cars...") is left alone.
+_CITE = re.compile(r"\*{0,2}(?:\[\s*[Rr]ule\s+(\d+)\s*\]|\bRule\s+(\d+)\b)\*{0,2}")
 
 
 def _verify_citations(answer: str, allowed: set[int]) -> tuple[str, set[int]]:
@@ -146,7 +149,7 @@ def _verify_citations(answer: str, allowed: set[int]) -> tuple[str, set[int]]:
     cited: set[int] = set()
 
     def keep(m: re.Match) -> str:
-        n = int(m.group(1))
+        n = int(m.group(1) or m.group(2))
         if n in allowed:
             cited.add(n)
             return f"[Rule {n}]"

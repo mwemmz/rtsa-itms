@@ -127,6 +127,15 @@ def test_ai_answer_keeps_real_citations_and_drops_invented_ones(code_file, monke
     assert 3 in seen["rules"]
 
 
+def test_bold_and_plain_citations_are_normalised_and_still_checked():
+    text, cited = assistant._verify_citations(
+        "No phone **Rule 4**. Belt: Rule 3. Fine set by **Rule 999**. As a rule, 2 hands [rule 5].", {3, 4, 5})
+    assert cited == {3, 4, 5}
+    assert "[Rule 4]" in text and "[Rule 3]" in text and "[Rule 5]" in text
+    assert "999" not in text and "**" not in text
+    assert "As a rule, 2 hands" in text  # ordinary prose is left alone
+
+
 def test_provider_failure_falls_back_to_rule_text(code_file, monkeypatch):
     monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "test-key")
 
