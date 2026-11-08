@@ -281,6 +281,27 @@ html[data-theme] .login-card input { background: var(--panel-2); }
 .sp-key b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .sp-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .ob-bar { display: flex; height: 100%; border-radius: 0 4px 4px 0; overflow: hidden; animation: grow .7s ease-out both; transform-origin: left; }
-.ob .hb-track { overflow: visible; background: color-mix(in srgb, var(--line) 45%, transparent); }
+.ob .hb-track { overflow: hidden; background: color-mix(in srgb, var(--line) 45%, transparent); }
 .ob-got { background: var(--gold); } .ob-owed { background: var(--err); opacity: .9; }
 .owed-t { color: var(--err); font-weight: 700; }
+
+/* ---- Dot-matrix chart style: gauges, bars, columns and meters are drawn in dots ---- */
+:root { --dot: 8px; }
+.led, .hb-val, .vc-v, .mc-v, .mc-y, .vc-n, .mc-n, .sp-seg, .mt-foot, .kpi-value { font-variant-numeric: tabular-nums; }
+.led { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace; letter-spacing: -0.02em; }
+.dot { opacity: 1; }
+.dot.on { animation: dotin .3s ease-out both; animation-delay: calc(var(--i) * 14ms); }
+@keyframes dotin { from { opacity: 0; transform: scale(.2); } to { opacity: 1; transform: scale(1); } }
+.dot.on { transform-box: fill-box; transform-origin: center; }
+:root { --dotmask: radial-gradient(circle at center, #000 0 2.7px, transparent 3.1px) 0 0 / var(--dot) var(--dot); }
+.hb-track, .mt-track { background: color-mix(in srgb, var(--line-strong) 55%, transparent); -webkit-mask: var(--dotmask); mask: var(--dotmask); height: 8px; border-radius: 0; opacity: 1; overflow: hidden; }
+.hb-fill, .ob-bar, .mt-fill { border-radius: 0; }
+.hb-row .hb-track { position: relative; }
+.hb-fill { background: color-mix(in srgb, var(--gold) 70%, var(--panel)); }
+.hb-row.top .hb-fill, .hb-row:hover .hb-fill { background: var(--gold); }
+.vc-bar, .mc-bar { -webkit-mask: var(--dotmask); mask: var(--dotmask); border-radius: 0; }
+.mc-col.part .mc-bar { border: 0; background: color-mix(in srgb, var(--gold) 45%, transparent); }
+.mc-plot { border-bottom: 0; }
+.sp { gap: 0; -webkit-mask: var(--dotmask); mask: var(--dotmask); height: 30px; border-radius: 0; }
+.sp-seg { color: transparent; font-size: 0; }
+.mt-mark { background: var(--ink); opacity: 1; width: 2px; z-index: 2; }

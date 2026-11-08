@@ -533,7 +533,7 @@ function monthColumns(byMonth) {
       '<div class="mc-bar" style="--h:' + Math.max(v > 0 ? 2 : 0, v / top * 100).toFixed(1) + '"></div><span class="mc-n">' + mm + (mm === "Jan" || n === 0 ? "<small>" + k.slice(2, 4) + "</small>" : "") + "</span></div>";
   }).join("");
   return '<div class="mc"><div class="mc-y"><span>' + shortMoney(top) + "</span><span>" + shortMoney(top / 2) + "</span><span>0</span></div><div class=\"mc-plot\">" + cols + "</div></div>" +
-    '<div class="small muted" style="margin-top:6px">ZMW paid each month. The lighter outlined column is a month still in progress.</div>';
+    '<div class="small muted" style="margin-top:6px">ZMW paid each month. The dimmer column is a month still in progress.</div>';
 }
 
 // One whole split into a few parts: a segmented bar with the amounts in its legend.
@@ -634,28 +634,23 @@ function meterHtml(value, limit, opts) {
   window.addEventListener("scroll", hide, true);
 })();
 
-// A dial like a car's gauge: faint coloured zones, a bright arc that sweeps up to the value, a needle and a written state.
+// A gauge drawn as a ring of dots: the lit dots climb to the value, the dim ones are what is left. State is written out too.
 function dialSvg(d) {
-  var cx = 100, cy = 98, r = 74;
-  function pt(t, rad) { var a = (150 + 240 * t) * Math.PI / 180; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)]; }
-  function arc(t0, t1, rad) {
-    var a = pt(t0, rad), b = pt(t1, rad);
-    return "M" + a[0].toFixed(1) + " " + a[1].toFixed(1) + " A" + rad + " " + rad + " 0 " + ((t1 - t0) * 240 > 180 ? 1 : 0) + " 1 " + b[0].toFixed(1) + " " + b[1].toFixed(1);
+  var N = 54, cx = 100, cy = 92, r = 70, start = 135, span = 270;
+  var tv = Math.max(0, Math.min(1, d.value / d.max)), lit = Math.round(tv * N), col = ZONE_COLOUR[d.zone];
+  var out = '<svg viewBox="0 0 200 172" role="img" aria-label="' + esc(d.label + ": " + d.value + d.unit + ", " + ZONE_WORD[d.zone]) + '" style="width:100%;max-width:240px;display:block;margin:0 auto">';
+  for (var i = 0; i < N; i++) {
+    var a = (start + span * i / (N - 1)) * Math.PI / 180, x = cx + r * Math.cos(a), y = cy + r * Math.sin(a), on = i < lit;
+    out += '<circle class="dot' + (on ? " on" : "") + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (on ? 2.9 : 2.1) + '" style="--i:' + i + '"' + (on ? ' fill="' + col + '"' : ' fill="var(--line-strong)"') + "/>";
   }
-  var tv = Math.max(0, Math.min(1, d.value / d.max)), col = ZONE_COLOUR[d.zone];
-  var out = '<svg viewBox="0 0 200 152" role="img" aria-label="' + esc(d.label + ": " + d.value + d.unit + ", " + ZONE_WORD[d.zone]) + '" style="width:100%;max-width:250px;display:block;margin:0 auto">';
-  out += '<path d="' + arc(0, 1, r) + '" fill="none" stroke="var(--line)" stroke-width="11" stroke-linecap="round"/>';
-  d.zones.forEach(function (z) { out += '<path d="' + arc(z[0] / d.max, z[1] / d.max, r) + '" fill="none" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="11" opacity="0.28"/>'; });
-  if (tv > 0) out += '<path class="dial-arc" d="' + arc(0, tv, r) + '" pathLength="100" fill="none" stroke="' + col + '" stroke-width="11" stroke-linecap="round" style="--v:100"/>';
-  for (var i = 0; i <= 10; i++) {
-    var t = i / 10, p1 = pt(t, r - 12), p2 = pt(t, r - (i % 5 === 0 ? 20 : 16));
-    out += '<line x1="' + p1[0].toFixed(1) + '" y1="' + p1[1].toFixed(1) + '" x2="' + p2[0].toFixed(1) + '" y2="' + p2[1].toFixed(1) + '" stroke="var(--ink-3)" stroke-width="' + (i % 5 === 0 ? 1.4 : 0.7) + '"/>';
-  }
-  [0, 1].forEach(function (t) { var p = pt(t, r + 1); out += '<text x="' + (p[0] + (t ? 4 : -4)).toFixed(1) + '" y="' + (p[1] + 12).toFixed(1) + '" fill="var(--ink-3)" font-size="8.5" text-anchor="' + (t ? "start" : "end") + '">' + Math.round(t * d.max) + "</text>"; });
-  var n = pt(tv, r - 24);
-  out += '<line class="dial-needle" x1="' + cx + '" y1="' + cy + '" x2="' + n[0].toFixed(1) + '" y2="' + n[1].toFixed(1) + '" stroke="var(--ink)" stroke-width="2.2" stroke-linecap="round" style="transform-origin:' + cx + "px " + cy + 'px;--sweep:' + (-240 * tv).toFixed(0) + 'deg"/>';
-  out += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="var(--panel)" stroke="var(--ink)" stroke-width="2"/>';
-  out += '<text x="' + cx + '" y="' + (cy + 30) + '" fill="var(--ink)" font-size="24" font-weight="700" text-anchor="middle" style="font-variant-numeric:tabular-nums">' + esc(String(d.value)) + '<tspan font-size="10" fill="var(--ink-2)" dx="2">' + esc(d.unit) + "</tspan></text>";
+  d.zones.forEach(function (z) {  // a small tick on the ring where each zone starts, so the thresholds are visible
+    if (z[0] <= 0) return;
+    var a = (start + span * (z[0] / d.max)) * Math.PI / 180, p1 = [cx + (r + 8) * Math.cos(a), cy + (r + 8) * Math.sin(a)], p2 = [cx + (r + 13) * Math.cos(a), cy + (r + 13) * Math.sin(a)];
+    out += '<line x1="' + p1[0].toFixed(1) + '" y1="' + p1[1].toFixed(1) + '" x2="' + p2[0].toFixed(1) + '" y2="' + p2[1].toFixed(1) + '" stroke="' + ZONE_COLOUR[z[2]] + '" stroke-width="1.6" opacity=".8"/>';
+  });
+  out += '<text x="' + cx + '" y="' + (cy + 4) + '" fill="var(--ink)" font-size="30" font-weight="700" text-anchor="middle" class="led">' + esc(String(d.value)) + "</text>";
+  out += '<text x="' + cx + '" y="' + (cy + 22) + '" fill="var(--ink-2)" font-size="10" text-anchor="middle" class="led">' + esc(d.unit) + "</text>";
+  [0, 1].forEach(function (t) { var a = (start + span * t) * Math.PI / 180; out += '<text x="' + (cx + (r - 2) * Math.cos(a) + (t ? 6 : -6)).toFixed(1) + '" y="' + (cy + (r + 14) * Math.sin(a)).toFixed(1) + '" fill="var(--ink-3)" font-size="8.5" text-anchor="' + (t ? "start" : "end") + '" class="led">' + Math.round(t * d.max) + "</text>"; });
   return out + "</svg>";
 }
 
