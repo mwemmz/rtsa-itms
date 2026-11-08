@@ -107,7 +107,8 @@
     }
     var list = Object.keys(all).map(function (k) { return { plate: k, confidence: all[k] }; })
       .sort(function (a, b) { return b.confidence - a.confidence; });
-    return { candidates: list, preview: preview };
+    var good = list.filter(function (c) { return c.confidence >= 25; });  // drop junk guesses when a real reading exists
+    return { candidates: good.length ? good : list.slice(0, 2), preview: preview };
   }
 
   window.PlateScan = { scan: scan, shape: shape, candidates: candidates };

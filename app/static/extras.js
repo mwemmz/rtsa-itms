@@ -338,21 +338,37 @@ function plateScanHtml() {
   var cam = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
   return '<div class="scan-box" data-scan="' + id + '"><label class="btn ghost scan-btn" for="' + id + '-file">' + cam + ' Scan plate with camera</label>' +
     '<input id="' + id + '-file" type="file" accept="image/*" capture="environment" style="display:none">' +
-    '<div class="small muted scan-status" hidden></div><div class="scan-out"></div></div>';
+    '<div class="small muted scan-status" hidden></div><div class="scan-out"></div><div class="scan-info"></div></div>';
 }
 
 function wirePlateScan(root, onPick) {
   var box = root.querySelector(".scan-box"); if (!box) return;
-  var input = box.querySelector("input[type=file]"), status = box.querySelector(".scan-status"), out = box.querySelector(".scan-out");
+  var input = box.querySelector("input[type=file]"), status = box.querySelector(".scan-status"), out = box.querySelector(".scan-out"), info = box.querySelector(".scan-info");
+  async function lookup(plate, conf) {
+    info.innerHTML = '<div class="small muted">Looking up ' + esc(plate) + "…</div>";
+    try {
+      var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(plate));
+      var html;
+      try { html = passportHtml(await api("/api/insights/vehicle/" + v.id)); }
+      catch (e2) { html = '<b class="mono">' + esc(v.registration_number || plate) + "</b> · " + esc((v.make || "") + " " + (v.model || "") + " " + (v.year || "")) + '<div class="small muted">Owner: ' + esc(v.owner_name || "-") + "</div>"; }
+      info.innerHTML = '<div class="scan-found">' + html + "</div>";
+      onPick(plate, conf);
+      info.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) {
+      info.innerHTML = '<div class="scan-found"><b class="mono">' + esc(plate) + '</b><div class="small" style="color:var(--err)">Not found in the register. Check the letters, or pick another reading above.</div></div>';
+      onPick(plate, conf);
+    }
+  }
   input.addEventListener("change", async function () {
     var file = input.files && input.files[0]; if (!file) return;
-    out.innerHTML = ""; status.hidden = false; status.textContent = "Loading the scanner…";
+    out.innerHTML = ""; info.innerHTML = ""; status.hidden = false; status.textContent = "Loading the scanner…";
     try {
       var res = await PlateScan.scan(file, function (s, pr) { status.textContent = "Reading the plate: " + s + (pr ? " " + Math.round(pr * 100) + "%" : ""); });
       status.textContent = res.candidates.length ? "Is this the plate? Check the letters against the real plate, then pick it." : "Could not read a plate. Retake it closer and straight-on, or type it in.";
       out.innerHTML = '<div class="scan-result"><img alt="Photo you took" src="' + res.preview + '">' + '<div class="scan-chips">' +
         res.candidates.slice(0, 4).map(function (c) { return '<button type="button" class="btn gold sm scan-pick" data-p="' + esc(c.plate) + '" data-c="' + c.confidence + '">' + esc(c.plate) + ' <span class="small">(' + c.confidence + '%)</span></button>'; }).join("") + "</div></div>";
-      $$(".scan-pick", out).forEach(function (b) { b.addEventListener("click", function () { onPick(b.dataset.p, Number(b.dataset.c)); status.textContent = "Using " + b.dataset.p + ". Edit it if the letters are wrong."; }); });
+      $$(".scan-pick", out).forEach(function (b) { b.addEventListener("click", function () { status.textContent = "Showing " + b.dataset.p + ". Pick another reading if the letters are wrong."; lookup(b.dataset.p, Number(b.dataset.c)); }); });
+      if (res.candidates.length) { status.textContent = "Showing the best reading. Pick another below if the letters are wrong."; lookup(res.candidates[0].plate, res.candidates[0].confidence); }
     } catch (e) { status.textContent = "Scanner problem: " + e.message; }
     input.value = "";
   });
@@ -396,7 +412,7 @@ VIEWS.insights = async function () {
           (fac.crashed_vehicles ? tbl(["Factor", "Crashed", "Whole fleet", "Lift"], fac.factors.map(function (f) { return [esc(f.factor), f.crashed_pct + "%", f.fleet_pct + "%", "<b>" + (f.lift == null ? "-" : f.lift + "×") + "</b>"]; })) : '<div class="empty">No crashes with vehicles recorded yet.</div>') +
           '<p class="small muted" style="margin:8px 0 0">' + esc(fac.reading) + "</p></div>" +
       "</div>";
-    wirePlateScan($("#content"), function (plate) { $("#pp-q").value = plate; $("#pp-go").click(); });
+    wirePlateScan($("#content"), function (plate) { $("#pp-q").value = plate; });
     $("#pp-go").addEventListener("click", async function () {
       var q = $("#pp-q").value.trim(), out = $("#pp-out");
       if (!q) return;

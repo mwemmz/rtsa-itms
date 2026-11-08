@@ -206,6 +206,7 @@ html[data-theme] .login-card input { background: var(--panel-2); }
 /* plate scanner */
 .scan-box { margin: 10px 0 0; }
 .scan-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; font-size: 1rem; cursor: pointer; box-sizing: border-box; }
+.scan-found { margin-top: 12px; padding: 12px; border: 1px solid var(--gold); background: rgba(255,200,0,.06); }
 .scan-status { margin-top: 10px; }
 .scan-result { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; padding: 12px; border: 1px solid var(--line); }
 .scan-result img { width: 100%; max-height: 160px; object-fit: contain; background: #000; border: 1px solid var(--line); }
