@@ -436,8 +436,37 @@ VIEWS.insights = async function () {
       done();
     });
   }
+  // A screen with several forms shows one at a time: pick the action from a list.
+  var picked = {};
+  function cardTitle(k) { var h = k.querySelector("h3,h4"); return h ? h.textContent.trim() : ""; }
+  function pickForms() {
+    var c = $("#content"); if (!c) return;
+    var cards = $$("#content .card").filter(function (k) {
+      return k.querySelector("form") && cardTitle(k) && !k.parentElement.closest(".card") && !k.closest(".modal");
+    });
+    var old = c.querySelector(".form-picker");
+    var sig = cards.map(cardTitle).join("|");
+    if (cards.length < 2) { if (old) old.remove(); $$("#content .pk-hide").forEach(function (k) { k.classList.remove("pk-hide"); }); return; }
+    if (old && old.dataset.sig === sig) return;
+    if (old) old.remove();
+    var key = location.hash, titles = cards.map(cardTitle);
+    var sel = titles.indexOf(picked[key]) >= 0 ? picked[key] : titles[0];
+    var box = document.createElement("div");
+    box.className = "form-picker"; box.dataset.sig = sig;
+    box.innerHTML = '<label for="form-pick">What do you want to do?</label><select id="form-pick">' +
+      titles.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + "</option>"; }).join("") + "</select>";
+    var anchor = cards[0].closest(".row") || cards[0];
+    anchor.parentNode.insertBefore(box, anchor);
+    function show(t) {
+      picked[key] = t;
+      cards.forEach(function (k) { k.classList.toggle("pk-hide", cardTitle(k) !== t); });
+      later();
+    }
+    var s = box.querySelector("select"); s.value = sel; s.addEventListener("change", function () { show(s.value); });
+    show(sel);
+  }
   var timer = null;
-  function later() { clearTimeout(timer); timer = setTimeout(settle, 120); }
+  function later() { clearTimeout(timer); timer = setTimeout(function () { pickForms(); settle(); }, 120); }
   var content = $("#content");
   if (content && window.MutationObserver) new MutationObserver(later).observe(content, { childList: true, subtree: true });
   window.addEventListener("resize", later);
