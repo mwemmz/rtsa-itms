@@ -109,9 +109,22 @@ def _call_openai_compatible(user: str, history: list[dict]) -> str:
             timeout=settings.ASSISTANT_TIMEOUT,
         )
         res.raise_for_status()
-        return (res.json()["choices"][0]["message"]["content"] or "").strip()
+        choice = res.json()["choices"][0]
+        text = (choice["message"].get("content") or "").strip()
+        if not text:
+            # Thinking models can spend the whole token budget reasoning and return no answer.
+            log.warning("assistant provider returned no text: model=%s finish_reason=%s",
+                        settings.LLM_MODEL, choice.get("finish_reason"))
+        return text
+    except httpx.HTTPStatusError as exc:
+        # The provider's own error text (e.g. "model not found", "invalid API key") says what to fix.
+        # It never contains the key, so it is safe to log; trimmed to keep the log line short.
+        log.warning("assistant provider error: HTTP %s from %s model=%s: %s",
+                    exc.response.status_code, settings.LLM_BASE_URL, settings.LLM_MODEL,
+                    exc.response.text[:300].replace("\n", " "))
+        raise AssistantError from exc
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-        log.warning("assistant provider error: %s", type(exc).__name__)
+        log.warning("assistant provider error: %s (%s) model=%s", type(exc).__name__, exc, settings.LLM_MODEL)
         raise AssistantError from exc
 
 
