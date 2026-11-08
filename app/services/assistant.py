@@ -108,7 +108,7 @@ def _verify_citations(answer: str, allowed: set[int]) -> tuple[str, set[int]]:
 
 
 def answer_question(question: str, history: list[dict] | None = None) -> dict:
-    return _with_fault_note(question, _answer(question, history))
+    return _with_speed_note(question, _with_fault_note(question, _answer(question, history)))
 
 
 def _answer(question: str, history: list[dict] | None = None) -> dict:
@@ -163,6 +163,19 @@ def _with_fault_note(question: str, answer: dict) -> dict:
     if answer.get("sources") and _FAULT.search(question):
         answer["answer"] = FAULT_NOTE + "\n" + answer["answer"]
         answer["note"] = "fault"
+    return answer
+
+
+_SPEED_LIMIT = re.compile(r"\bspeed limits?\b|\bhow fast\b|\bmaximum speed\b", re.IGNORECASE)
+SPEED_NOTE = ("The Highway Code extract loaded here gives only a few figures: 60 km/h on gravel roads outside residential areas and "
+              "40 km/h in residential areas. It does not list a general limit for towns or highways, so obey the posted signs.")
+
+
+def _with_speed_note(question: str, answer: dict) -> dict:
+    """Do not let a keyword match pass for an official limit the Code extract does not contain."""
+    if answer.get("sources") and _SPEED_LIMIT.search(question) and not re.search(r"gravel|residential", question, re.IGNORECASE):
+        answer["answer"] = SPEED_NOTE + "\n" + answer["answer"]
+        answer["note"] = "speed"
     return answer
 
 

@@ -302,3 +302,19 @@ def test_fault_questions_say_the_code_does_not_decide_fault(code_file, monkeypat
     assert out["answer"].startswith(assistant.FAULT_NOTE) and out["note"] == "fault"
     plain = assistant.answer_question("Do I need a seat belt?")
     assert "note" not in plain and not plain["answer"].startswith(assistant.FAULT_NOTE)
+
+
+def test_everyday_wordings_map_to_the_codes_words():
+    t = lambda q: highway_code.tokenize(q, query=True)
+    assert {"crash", "assistance", "police"} <= set(t("what should I do if I have an accident"))
+    assert {"yellow", "kerb", "park"} <= set(t("can I park on a double yellow line"))
+    assert {"emergency", "brake", "skid"} <= set(t("what do I do if my brakes fail"))
+
+
+def test_general_speed_limit_questions_say_the_extract_has_no_general_limit(code_file, monkeypatch):
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(assistant, "_answer", lambda q, h=None: {"mode": "extract", "answer": "x", "sources": [{"rule": 1}]})
+    out = assistant.answer_question("What is the speed limit in town?")
+    assert out["answer"].startswith(assistant.SPEED_NOTE) and out["note"] == "speed"
+    gravel = assistant.answer_question("What is the speed limit on gravel roads?")
+    assert "note" not in gravel

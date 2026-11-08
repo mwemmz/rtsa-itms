@@ -62,6 +62,13 @@ _QUERY_ONLY += (
     (re.compile(r"\b(?:hit|hits|hitting|crash(?:ed|es)? into|ran into|run into|bump(?:ed)? into|slam(?:med)? into)\b[^.?!]{0,40}?\b(?:from )?(?:behind|the back|the rear|rear)\b|\brear-?end\w*|\bhit (?:the )?back of\b"),
      "gap two second distance"),
 )
+# More everyday wordings that the Code expresses differently.
+_QUERY_ONLY += (
+    (re.compile(r"\b(?:have|had|having|was in|been in|involved in|cause[ds]?|caused) (?:an?|the) (?:accident|crash|collision)\b|\bafter (?:an?|the) (?:accident|crash|collision)\b|\b(?:accident|crash|collision) happen\w*"),
+     "crash stop assistance casualties injured police report"),
+    (re.compile(r"\b(?:double |single )?yellow lines?\b"), "yellow lines kerb park stand"),
+    (re.compile(r"\bbrakes? (?:fail\w*|not working|stopped working|gone|give out)\b|\bno brakes\b"), "emergency brake immediately skid lock wheels"),
+)
 _SYNONYMS = {
     "highway": "road", "motorway": "road", "expressway": "road",
     "drunk": "alcohol", "drink": "alcohol", "drinking": "alcohol", "intoxicated": "alcohol", "beer": "alcohol", "liquor": "alcohol",
