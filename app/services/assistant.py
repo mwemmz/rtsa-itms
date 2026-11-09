@@ -15,7 +15,7 @@ import re
 import httpx
 
 from app.core.config import settings
-from app.services import highway_code
+from app.services import guide, highway_code
 
 log = logging.getLogger("rtsa.assistant")
 
@@ -159,6 +159,9 @@ def _verify_citations(answer: str, allowed: set[int]) -> tuple[str, set[int]]:
 
 
 def answer_question(question: str, history: list[dict] | None = None) -> dict:
+    reviewed = guide.lookup(_clean(question)[:MAX_QUESTION])
+    if reviewed:
+        return reviewed
     return _with_speed_note(question, _with_fault_note(question, _answer(question, history)))
 
 
