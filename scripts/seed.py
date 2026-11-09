@@ -577,6 +577,62 @@ def seed_demo_portal() -> None:
         db.close()
 
 
+def seed_psv_baseline() -> None:
+    """Make PSV & routes show something on a fresh database: 3 operators, 3 minibuses with permits,
+    two with a geo-fence route, and one sample route alert. Skipped if any PSV operator exists."""
+    import json
+    from datetime import timedelta
+
+    from app.models.psv import (PSVCorridor, PSVOperator, PSVOperatorStatus, PSVPermit, PSVPermitStatus,
+                                PSVRouteAlert)
+    from app.models.user import User
+    from app.models.vehicle import Vehicle
+
+    db = SessionLocal()
+    try:
+        if db.query(PSVOperator).first():
+            print("PSV data already present")
+            return
+        now = datetime.now(timezone.utc)
+        admin = db.query(User).filter(User.email == "admin@rtsa.gov.zm").first()
+        specs = [
+            ("Mazhandu Family Bus Services", "RTSA-PSV-001", "Lusaka - Kitwe", "ABC 101 Z", "Hiace"),
+            ("Shalom Coaches", "RTSA-PSV-002", "Lusaka - Chipata", "ABC 102 Z", "Coaster Bus"),
+            ("Kamwala Minibus Association", "RTSA-PSV-003", "Kamwala - City Market", "ABC 103 Z", "Hiace"),
+        ]
+        route = [[-15.4167, 28.2833], [-15.3945, 28.3350], [-15.3300, 28.6800]]
+        first_permit = first_vehicle = None
+        for i, (name, lic, rt, plate, model) in enumerate(specs):
+            op = PSVOperator(name=name, licence_number=lic, contact_person="Operations Desk",
+                             phone=f"+26097100000{i}", email=f"ops{i + 1}@psv-demo.example.zm",
+                             address="Lusaka", status=PSVOperatorStatus.ACTIVE, registered_date=now - timedelta(days=400))
+            db.add(op)
+            v = db.query(Vehicle).filter(Vehicle.registration_number == plate).first()
+            if not v:
+                v = Vehicle(registration_number=plate, owner_name=name, owner_id_number=lic, make="Toyota",
+                            model=model, year=2019, color="White")
+                db.add(v)
+            db.flush()
+            status = PSVPermitStatus.SUSPENDED if i == 2 else PSVPermitStatus.ACTIVE
+            p = PSVPermit(operator_id=op.id, vehicle_id=v.id, permit_number=f"PSV-2026-{9001 + i}", route=rt,
+                          issued_date=now - timedelta(days=60 + i * 40), expiry_date=now + timedelta(days=300 - i * 120),
+                          status=status)
+            db.add(p)
+            db.flush()
+            if i < 2:
+                db.add(PSVCorridor(permit_id=p.id, waypoints=json.dumps(route), buffer_m=500,
+                                   updated_by=admin.id if admin else None))
+            if i == 0:
+                first_permit, first_vehicle = p, v
+        if first_permit:
+            db.add(PSVRouteAlert(permit_id=first_permit.id, vehicle_id=first_vehicle.id, latitude=-15.2500,
+                                 longitude=28.5200, distance_m=7800, buffer_m=500, occurred_at=now - timedelta(hours=3)))
+        db.commit()
+        print("PSV baseline created: 3 operators, 3 permits, 2 routes, 1 route alert")
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     seed_notification_rules()
     seed_demo_users()
@@ -584,4 +640,5 @@ if __name__ == "__main__":
     seed_demo_vehicles()
     seed_road_network()
     seed_demo_portal()
+    seed_psv_baseline()
     print("Seed complete.")
