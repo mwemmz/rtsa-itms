@@ -271,6 +271,10 @@ class ViolationPhoto(Base):
     report_id: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("driver_reports.id"), nullable=True, index=True
     )
+    # A citizen's photo backing up an appeal against a fine.
+    appeal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("appeals.id"), nullable=True, index=True
+    )
     content_type: Mapped[str] = mapped_column(String(30), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)

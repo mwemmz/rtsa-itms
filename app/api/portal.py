@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Body, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.services.auth import authenticate
 from app.models.driver import Driver, DriverStatus
-from app.models.enforcement import Appeal, Challan, ChallanStatus, Violation
+from app.models.enforcement import Appeal, Challan, ChallanStatus, Violation, ViolationPhoto
 from app.models.notification import Notification, NotificationChannel
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.road_network import Road, RoadIncident
@@ -438,6 +438,53 @@ def appeal_fine(
 def my_appeals(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     rows = db.query(Appeal).filter(Appeal.appellant_id == current_user.id).order_by(Appeal.created_at.desc()).all()
     return [AppealOut.model_validate(a) for a in rows]
+
+
+MAX_APPEAL_PHOTOS = 5
+
+
+@router.post("/appeals/{appeal_id}/photos", status_code=201)
+def add_appeal_photo(
+    appeal_id: str, file: UploadFile = File(...),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Attach a photo to your own pending appeal (a receipt, the scene, a screenshot). Added, never replaced."""
+    from sqlalchemy import func
+
+    from app.services.evidence import new_photo, read_photo
+
+    a = db.get(Appeal, appeal_id)
+    if a is None or a.appellant_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Appeal not found")
+    if a.status != "pending":
+        raise HTTPException(status_code=409, detail="This appeal has already been decided")
+    held = db.query(func.count(ViolationPhoto.id)).filter(ViolationPhoto.appeal_id == a.id).scalar()
+    if held >= MAX_APPEAL_PHOTOS:
+        raise HTTPException(status_code=409, detail=f"An appeal can have up to {MAX_APPEAL_PHOTOS} photos")
+    data, content_type = read_photo(file)
+    photo = new_photo(data, content_type, current_user.id, appeal_id=a.id)
+    db.add(photo)
+    db.flush()
+    log_action(db, "appeal_photo", "appeal", str(a.id), f"Photo {photo.sha256[:16]} ({len(data)} bytes)", current_user.id)
+    db.commit()
+    return {"id": str(photo.id), "size_bytes": photo.size_bytes}
+
+
+@router.get("/appeals/{appeal_id}/photos/{photo_id}")
+def appeal_photo(
+    appeal_id: str, photo_id: str,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """An appeal's photo, for the citizen who filed it or an officer."""
+    from app.services.evidence import photo_response
+
+    a = db.get(Appeal, appeal_id)
+    if a is None or (a.appellant_id != current_user.id and current_user.role.value not in ("officer", "admin")):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    photo = db.query(ViolationPhoto).filter(ViolationPhoto.id == photo_id, ViolationPhoto.appeal_id == a.id).first()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return photo_response(photo)
 
 
 @router.post("/vehicles/{vehicle_id}/report-stolen", response_model=dict)

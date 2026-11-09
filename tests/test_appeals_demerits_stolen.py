@@ -232,3 +232,23 @@ def test_theft_reference_is_issued_by_the_system():
     _, owner, vid, _, _ = _world()
     r = client.post(f"/api/portal/vehicles/{vid}/report-stolen", headers=owner, json={})
     assert r.status_code == 200 and r.json()["police_report_number"].startswith("THEFT-")
+
+
+def test_appeal_can_carry_photos_the_officer_can_see():
+    officer, owner, vid, plate, driver_id = _world()
+    _fine(officer, vid, driver_id, "using_phone")
+    f = _fines(owner)[0]
+    a = client.post(f"/api/portal/fines/{f['id']}/appeal", headers=owner, json={"reason": "not_me", "details": LONG}).json()
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 40
+    ok = client.post(f"/api/portal/appeals/{a['id']}/photos", headers=owner, files={"file": ("p.png", png, "image/png")})
+    assert ok.status_code == 201, ok.text
+    bad = client.post(f"/api/portal/appeals/{a['id']}/photos", headers=owner, files={"file": ("p.txt", b"hello", "text/plain")})
+    assert bad.status_code == 415
+    stranger, _, _ = _login("citizen")
+    assert client.post(f"/api/portal/appeals/{a['id']}/photos", headers=stranger, files={"file": ("p.png", png, "image/png")}).status_code == 404
+    listed = [x for x in client.get("/api/enforcement/appeals", headers=officer).json() if x["id"] == a["id"]][0]
+    assert listed["photos"] == [ok.json()["id"]]
+    pid = ok.json()["id"]
+    assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=officer).status_code == 200
+    assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=owner).status_code == 200
+    assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=stranger).status_code == 404

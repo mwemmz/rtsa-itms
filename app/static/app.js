@@ -1763,10 +1763,16 @@ async function loadAppeals() {
       rows.map(function (r) {
         return "<tr><td data-label='Fine'><span class='mono'>" + esc(r.reference) + "</span><div class='small muted'>" + esc(offenceTypeLabel(r.violation_type || "")) + " · " + money(r.amount || 0) + "</div></td>" +
           "<td data-label='Vehicle' class='mono'>" + esc(r.registration_number || "") + "</td><td data-label='Appellant'>" + esc(r.appellant || "") + "</td>" +
-          "<td data-label='Their case' class='small'><b>" + esc(String(r.reason || "").replace(/_/g, " ")) + "</b><br>" + esc(r.details || "") + "</td>" +
+          "<td data-label='Their case' class='small'><b>" + esc(String(r.reason || "").replace(/_/g, " ")) + "</b><br>" + esc(r.details || "") +
+          (r.photos && r.photos.length ? "<div style='display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;'>" + r.photos.map(function (pid) { return "<img class='appic' data-a='" + esc(r.id) + "' data-p='" + esc(pid) + "' alt='Evidence' style='width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:zoom-in;background:#1b2b44;'>"; }).join("") + "</div>" : "") + "</td>" +
           "<td><button class='btn gold sm apdec' data-id='" + esc(r.id) + "' data-d='upheld'>Uphold, cancel fine</button> <button class='btn sm apdec' data-id='" + esc(r.id) + "' data-d='dismissed'>Dismiss</button></td></tr>";
       }).join("") + "</table></div>";
     $("#content").appendChild(card);
+    $$(".appic").forEach(function (img) {
+      evidencePhoto("/api/portal/appeals/" + img.dataset.a + "/photos/" + img.dataset.p, img.dataset.p)
+        .then(function (u) { img.src = u; img.addEventListener("click", function () { var w = window.open(); if (w) w.document.write("<img src='" + u + "' style='max-width:100%'>"); }); })
+        .catch(function () { img.alt = "Photo unavailable"; });
+    });
     $$(".apdec").forEach(function (b) {
       b.addEventListener("click", function () {
         var note = prompt("Note for the citizen (optional):", "") || "";
@@ -2958,14 +2964,31 @@ function openAppealModal(id, ref) {
     '<label class="small" style="display:block;margin-bottom:4px;">Reason</label><select id="ap-reason" style="width:100%;">' +
     APPEAL_REASONS.map(function (r) { return '<option value="' + r[0] + '">' + esc(r[1]) + "</option>"; }).join("") + "</select>" +
     '<label class="small" style="display:block;margin:10px 0 4px;">What happened (at least 15 characters)</label><textarea id="ap-details" style="width:100%;" rows="4" maxlength="1000"></textarea>' +
+    '<label class="small" style="display:block;margin:10px 0 4px;">Evidence photos (optional, up to 5: a receipt, the scene, a screenshot)</label>' +
+    '<input type="file" id="ap-photos" accept="image/*" multiple style="width:100%;">' +
     '<div id="ap-error" class="error-box hidden" style="margin-top:8px;"></div>' +
     '<div style="display:flex;gap:8px;margin-top:14px;"><button class="btn gold" id="ap-send">Send appeal</button><button class="btn" id="ap-cancel">Cancel</button></div></div>';
   document.body.appendChild(box);
   $("#ap-cancel").addEventListener("click", function () { box.remove(); });
   $("#ap-send").addEventListener("click", function () {
+    var files = Array.prototype.slice.call($("#ap-photos").files || [], 0, 5);
+    var btn = $("#ap-send");
+    btn.disabled = true;
     api("/api/portal/fines/" + id + "/appeal", { method: "POST", body: JSON.stringify({ reason: $("#ap-reason").value, details: $("#ap-details").value.trim() }) })
-      .then(function () { box.remove(); toast("Appeal sent. You will be told the outcome.", "ok"); go("fines"); })
-      .catch(function (e) { $("#ap-error").textContent = e.message; $("#ap-error").classList.remove("hidden"); });
+      .then(async function (appeal) {
+        var failed = 0;
+        for (var i = 0; i < files.length; i++) {
+          try {
+            var body = new FormData();
+            body.append("file", await shrinkPhoto(files[i]), files[i].name || "photo.jpg");
+            await api("/api/portal/appeals/" + appeal.id + "/photos", { method: "POST", body: body });
+          } catch (e) { failed++; }
+        }
+        box.remove();
+        toast("Appeal sent" + (files.length ? " with " + (files.length - failed) + " photo(s)" : "") + ". You will be told the outcome." + (failed ? " " + failed + " photo(s) could not be attached." : ""), failed ? "err" : "ok");
+        go("fines");
+      })
+      .catch(function (e) { btn.disabled = false; $("#ap-error").textContent = e.message; $("#ap-error").classList.remove("hidden"); });
   });
 }
 

@@ -722,6 +722,7 @@ def list_appeals(
             "registration_number": veh.registration_number if veh else None,
             "appellant": who.full_name if who else None, "reason": a.reason, "details": a.details,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "photos": [str(pid) for (pid,) in db.query(ViolationPhoto.id).filter(ViolationPhoto.appeal_id == a.id).order_by(ViolationPhoto.created_at)],
         })
     return out
 
