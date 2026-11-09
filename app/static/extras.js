@@ -969,3 +969,28 @@ function openPayModal(id, ref, amount) {
     });
   };
 })();
+
+// ---- Form hardening: sensible limits and keyboards on every form field, so mistakes are caught before they reach the server ----
+(function () {
+  function harden(root) {
+    (root.querySelectorAll ? root.querySelectorAll("input, textarea") : []).forEach(function (el) {
+      if (el.dataset.hardened) return; el.dataset.hardened = "1";
+      var n = (el.name || el.id || "").toLowerCase(), t = (el.type || "").toLowerCase();
+      if (t === "password" || t === "checkbox" || t === "radio" || t === "hidden" || t === "file" || t === "submit" || t === "button") return;
+      if (/email/.test(n) && t !== "email") el.type = "email";
+      if (/email/.test(n)) { if (!el.maxLength || el.maxLength < 0) el.maxLength = 254; el.autocapitalize = "none"; }
+      if (/phone/.test(n)) { el.type = "tel"; el.inputMode = "tel"; if (!el.pattern) { el.pattern = "(\\+?260|0)[\\d\\s\\-]{9,12}"; el.title = "A Zambian number like 0971234567 or +260971234567"; } if (!el.maxLength || el.maxLength < 0) el.maxLength = 16; }
+      if (/(plate|registration)/.test(n)) { el.autocapitalize = "characters"; if (!el.maxLength || el.maxLength < 0) el.maxLength = 20; }
+      if (/(nrc|id_number)/.test(n) && (!el.maxLength || el.maxLength < 0)) el.maxLength = 50;
+      if (t === "number" && /(amount|speed|premium|toll|buffer|points|year)/.test(n) && el.min === "") el.min = "0";
+      if (el.tagName === "TEXTAREA" && (!el.maxLength || el.maxLength < 0)) el.maxLength = 1000;
+      else if ((t === "text" || t === "") && el.tagName === "INPUT" && (!el.maxLength || el.maxLength < 0)) el.maxLength = 300;
+      if (t === "text" || t === "email" || t === "tel" || t === "") el.addEventListener("blur", function () { var v = el.value.replace(/\s+/g, " ").trim(); if (v !== el.value) el.value = v; });
+    });
+  }
+  function start() {
+    harden(document);
+    new MutationObserver(function (list) { list.forEach(function (m) { m.addedNodes.forEach(function (n) { if (n.nodeType === 1) harden(n); }); }); }).observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();

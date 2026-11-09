@@ -1,18 +1,42 @@
 import uuid
 from datetime import datetime
 
-from pydantic import model_validator, BaseModel, Field
+from pydantic import field_validator, model_validator, BaseModel, Field
 
+from app.schemas import validators as V
 from app.models.psv import PSVOperatorStatus, PSVPermitStatus
 
 
 class PSVOperatorCreate(BaseModel):
-    name: str
-    licence_number: str
-    contact_person: str
+    name: str = Field(min_length=1, max_length=150)
+    licence_number: str = Field(min_length=2, max_length=50)
+    contact_person: str = Field(min_length=1, max_length=120)
     phone: str
     email: str | None = None
-    address: str | None = None
+    address: str | None = Field(default=None, max_length=300)
+
+    @field_validator("name", "licence_number", "address")
+    @classmethod
+    def _txt(cls, v):
+        return V.clean(v, "This field", required=False) if v is not None else v
+
+    @field_validator("contact_person")
+    @classmethod
+    def _contact(cls, v: str) -> str:
+        return V.person_name(v, "Contact person")
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v: str) -> str:
+        out = V.phone(v)
+        if not out:
+            raise ValueError("Phone number is required")
+        return out
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        return V.email(v, required=False)
 
 
 class PSVOperatorResponse(BaseModel):
@@ -29,6 +53,15 @@ class PSVOperatorResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _naive_utc(v):
+    """A timestamp sent with a timezone (Z or +02:00) becomes naive UTC, like the rest of the database."""
+    if getattr(v, "tzinfo", None) is not None:
+        from datetime import timezone
+
+        return v.astimezone(timezone.utc).replace(tzinfo=None)
+    return v
+
+
 class PSVPermitCreate(BaseModel):
     operator_id: uuid.UUID
     vehicle_id: uuid.UUID
@@ -36,6 +69,11 @@ class PSVPermitCreate(BaseModel):
     route: str
     issued_date: datetime
     expiry_date: datetime
+
+    @field_validator("issued_date", "expiry_date")
+    @classmethod
+    def _utc(cls, v):
+        return _naive_utc(v)
 
     @model_validator(mode="after")
     def _expiry_after_issue(self):

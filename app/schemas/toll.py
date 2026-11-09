@@ -2,7 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas import validators as V
 
 from app.models.toll import TollComplianceResult
 
@@ -12,12 +14,22 @@ class TollEventCreate(BaseModel):
 
     plate_number: str | None = Field(default=None, min_length=1, max_length=20)
     tag_id: str | None = Field(default=None, min_length=4, max_length=64)
-    gate_id: str
+    gate_id: str = Field(min_length=1, max_length=100)
     timestamp: datetime | None = None
-    toll_amount: int | None = None
+    toll_amount: int | None = Field(default=None, ge=0, le=10**9)
     # barrier: the vehicle stops and the gate opens or holds it.
     # mlff: multi-lane free flow, the vehicle never stops; the toll is billed to the owner.
     lane_mode: Literal["barrier", "mlff"] = "barrier"
+
+    @field_validator("gate_id")
+    @classmethod
+    def _gate(cls, v: str) -> str:
+        return V.clean(v, "Gate")
+
+    @field_validator("timestamp")
+    @classmethod
+    def _ts(cls, v):
+        return V.not_far_future(v, "The passage time")
 
     @model_validator(mode="after")
     def _needs_an_identifier(self):

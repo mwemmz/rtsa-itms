@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.schemas import validators as V
 
 from app.models.user import UserRole
 
@@ -32,10 +34,36 @@ class AdminUserCreate(BaseModel):
     nrc_number: str | None = None
     role: UserRole = UserRole.CITIZEN
 
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        return V.email(v)
+
+    @field_validator("full_name")
+    @classmethod
+    def _full_name(cls, v: str) -> str:
+        return V.person_name(v, "Full name")
+
+    @field_validator("phone_number")
+    @classmethod
+    def _phone(cls, v):
+        return V.phone(v)
+
 
 class AdminUserUpdate(BaseModel):
     full_name: str | None = None
     phone_number: str | None = None
+
+    @field_validator("full_name")
+    @classmethod
+    def _fn(cls, v):
+        return V.person_name(v, "Full name") if v is not None else v
+
+    @field_validator("phone_number")
+    @classmethod
+    def _ph(cls, v):
+        return V.phone(v)
+
     # Only an administrator can correct an NRC once it is on an account.
     nrc_number: str | None = None
     is_active: bool | None = None

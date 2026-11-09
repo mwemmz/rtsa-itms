@@ -3,6 +3,7 @@ from datetime import datetime
 
 import re
 from pydantic import BaseModel, Field, field_validator
+from app.schemas import validators as V
 
 from app.models.vehicle import VehicleStatus
 
@@ -21,6 +22,29 @@ class VehicleCreate(BaseModel):
     engine_number: str | None = None
     chassis_number: str | None = None
     fastag_id: str | None = Field(default=None, min_length=4, max_length=64)
+
+    @field_validator("make", "model")
+    @classmethod
+    def _text(cls, v: str) -> str:
+        return V.clean(v)
+
+    @field_validator("owner_name")
+    @classmethod
+    def _owner(cls, v: str) -> str:
+        v = V.clean(v, "Owner name")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Owner name must contain letters")
+        return v
+
+    @field_validator("owner_id_number")
+    @classmethod
+    def _owner_id(cls, v: str) -> str:
+        return V.id_number(v, "Owner ID number")
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str | None) -> str | None:
+        return V.clean(v, "Colour", required=False)[:40] or None
 
     @field_validator("registration_number")
     @classmethod

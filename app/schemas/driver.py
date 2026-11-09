@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
+from app.schemas import validators as V
 
 from app.models.driver import DriverStatus, LicenceClass
 
@@ -18,6 +19,26 @@ class DriverCreate(BaseModel):
     licence_class: LicenceClass
     licence_issue_date: datetime
     licence_expiry_date: datetime
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return V.person_name(v)
+
+    @field_validator("phone_number")
+    @classmethod
+    def _phone(cls, v):
+        return V.phone(v)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        return V.email(v, required=False)
+
+    @field_validator("id_number")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        return V.id_number(v)
 
     @model_validator(mode="after")
     def _dates_make_sense(self):
