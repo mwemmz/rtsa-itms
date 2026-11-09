@@ -134,6 +134,7 @@ VIEWS.psv = async function () {
   }
 
   async function loadAlerts() {
+    window.__psvLoadAlerts = loadAlerts;
     var box = $("#psv-alerts");
     try {
       var items = await api("/api/psv/alerts");
@@ -887,7 +888,10 @@ function openPayModal(id, ref, amount) {
       '<div class="toolbar"><select id="gf-permit" style="flex:1 1 220px"></select>' +
       '<label class="small muted" for="gf-buffer">Allowed distance (m)</label><input id="gf-buffer" type="number" value="500" min="50" max="20000" style="width:100px"' + (isStaff ? "" : " disabled") + ">" +
       (isStaff ? '<button class="btn sm" id="gf-draw" type="button">Draw route</button><button class="btn sm" id="gf-undo" type="button">Undo point</button><button class="btn gold sm" id="gf-save" type="button">Save route</button>' : "") +
-      '<button class="btn sm" id="gf-test" type="button">Test a position</button></div>' +
+      '<button class="btn sm" id="gf-test" type="button">Test a position</button>' +
+      '<button class="btn gold sm" id="gf-sim" type="button">&#9654; Simulate trip</button>' +
+      '<label class="small muted" for="gf-detour">Strays</label><select id="gf-detour" style="width:auto;flex:0 0 auto"><option value="1">yes, mid-trip</option><option value="0">no, stays on route</option></select></div>' +
+      '<div id="gf-simbox" class="small" style="display:none;margin:8px 0;padding:10px 12px;border:1px dashed var(--gold);border-radius:10px"></div>' +
       '<div id="gf-hint" class="small" style="margin:8px 0;min-height:20px"></div><div id="gf-map" style="height:380px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>' +
       '<div class="small muted" style="margin-top:8px"><span style="color:var(--gold)">&#9632;</span> licensed route &nbsp; <span style="color:var(--gold);opacity:.5">&#9632;</span> allowed corridor &nbsp; <span style="color:var(--ok)">&#9679;</span> inside &nbsp; <span style="color:var(--err)">&#9679;</span> outside (alert)</div>';
     host.insertBefore(card, host.firstChild);
@@ -957,6 +961,60 @@ function openPayModal(id, ref, amount) {
       });
     }
     $("#gf-test").addEventListener("click", function () { if (current) setMode(mode === "test" ? "" : "test"); });
+    // ---- simulated trip: a bus drives its licensed route and (optionally) strays, reporting a position every second ----
+    var sim = null, simLayer = L.layerGroup().addTo(map), simBtn = $("#gf-sim"), simBox = $("#gf-simbox");
+    function simPath(points, stray, buffer) {
+      var out = [], k = 111320 * Math.cos(points[0][0] * Math.PI / 180);
+      for (var i = 0; i < points.length - 1; i++) {
+        var a = points[i], b = points[i + 1], dx = (b[1] - a[1]) * k, dy = (b[0] - a[0]) * 111320, len = Math.hypot(dx, dy) || 1, n = Math.max(2, Math.round(len / 700));
+        for (var j = 0; j < n; j++) out.push({ p: [a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n], nx: -dy / len, ny: dx / len });
+      }
+      var l = points[points.length - 1]; out.push({ p: l, nx: 0, ny: 0 });
+      if (stray && out.length > 10) {
+        var s0 = Math.floor(out.length * 0.5), w = Math.max(5, Math.floor(out.length * 0.2)), max = Math.max(buffer * 4, 2500);
+        for (var q = 0; q < w && s0 + q < out.length; q++) {
+          var f = Math.sin(Math.PI * (q + 1) / (w + 1)), o = out[s0 + q];
+          o.p = [o.p[0] + (o.ny * max * f) / 111320, o.p[1] + (o.nx * max * f) / k];
+        }
+      }
+      return out;
+    }
+    function stopSim(msg) {
+      if (sim) { clearInterval(sim.timer); sim = null; }
+      simBtn.innerHTML = "&#9654; Simulate trip"; simBtn.classList.add("gold");
+      if (msg) simBox.innerHTML = msg;
+    }
+    simBtn.addEventListener("click", async function () {
+      if (sim) return stopSim("Trip stopped.");
+      if (!current) return;
+      var plate = plates[current.vehicle_id];
+      if (!plate) return say("Plate not available for this permit.", "muted");
+      if (pts.length < 2) return say("This permit has no saved route yet. Draw one and save it first.", "muted");
+      var buffer = parseInt($("#gf-buffer").value, 10) || 500, path = simPath(pts, $("#gf-detour").value === "1", buffer);
+      setMode(""); simLayer.clearLayers(); simBox.style.display = ""; simBtn.innerHTML = "&#9632; Stop trip"; simBtn.classList.remove("gold");
+      var trail = L.polyline([], { color: "#fff", weight: 3, dashArray: "2 6" }).addTo(simLayer);
+      var bus = L.circleMarker(path[0].p, { radius: 11, color: "#fff", weight: 3, fillColor: "#2fbf71", fillOpacity: 1 }).addTo(simLayer);
+      sim = { i: 0, off: 0, alerts: 0, busy: false };
+      map.fitBounds(L.latLngBounds(path.map(function (x) { return x.p; })).pad(0.15));
+      sim.timer = setInterval(async function () {
+        if (!sim || sim.busy) return;
+        if (sim.i >= path.length) return stopSim("<b>Trip finished.</b> " + sim.off + " of " + path.length + " position reports were off route" + (sim.alerts ? "; a route alert was raised and is listed under Route alerts." : "."));
+        sim.busy = true;
+        var pt = path[sim.i], prev = sim.i ? path[sim.i - 1].p : pt.p, i = sim.i; sim.i++;
+        var kmh = 55 + Math.round(15 * Math.sin(i / 3) + Math.random() * 6);
+        bus.setLatLng(pt.p); trail.addLatLng(pt.p); if (!map.getBounds().contains(pt.p)) map.panTo(pt.p);
+        try {
+          var r = await api("/api/psv/positions", { method: "POST", body: JSON.stringify({ plate_number: plate, latitude: pt.p[0], longitude: pt.p[1] }) });
+          bus.setStyle({ fillColor: r.inside ? "#2fbf71" : "#ff5a5f" });
+          if (!r.inside) { sim.off++; if (!r.alert_deduplicated) { sim.alerts++; L.circleMarker(pt.p, { radius: 7, color: "#fff", weight: 2, fillColor: "#ff5a5f", fillOpacity: 1 }).bindTooltip("Alert: " + r.distance_m + " m off route").addTo(simLayer); } if (window.__psvLoadAlerts) window.__psvLoadAlerts(); }
+          simBox.innerHTML = '<span class="pill ' + (r.inside ? "green" : "red") + '" style="margin-right:8px">' + (r.inside ? "ON ROUTE" : "OFF ROUTE") + "</span><b class=\"mono\">" + esc(plate) + "</b> &middot; " + kmh + " km/h &middot; " +
+            r.distance_m + " m from route (allowed " + r.buffer_m + " m) &middot; report " + (i + 1) + " of " + path.length + ' &middot; <span class="muted">SIMULATION: positions are generated here, not from a real GPS unit</span>';
+        } catch (err) { stopSim("<span class=\"err\">" + esc(err.message) + "</span> (the permit must be active and have a saved route)"); return; }
+        if (sim) sim.busy = false;
+      }, 900);
+    });
+    $("#gf-permit").addEventListener("change", function () { stopSim(""); simLayer.clearLayers(); simBox.style.display = "none"; });
+
     map.on("click", async function (e) {
       if (mode === "draw") { pts.push([e.latlng.lat, e.latlng.lng]); redraw(false); return; }
       if (mode !== "test" || !current) return;
