@@ -873,3 +873,99 @@ function openPayModal(id, ref, amount) {
   }
   document.body.appendChild(box); render();
 }
+
+// ---- PSV geo-fence map: see the licensed route and its allowed corridor, draw it by clicking, and test a position ----
+(function () {
+  var original = VIEWS.psv;
+  VIEWS.psv = async function () {
+    await original();
+    var host = $("#content"); if (!host || typeof L === "undefined") return;
+    var isStaff = USER.role === "officer" || USER.role === "admin";
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = '<h3>Geo-fence map</h3><p class="small muted" style="margin:0 0 10px">A geo-fence is a virtual boundary on the map. Each PSV permit has a licensed route and an allowed distance either side of it (the shaded corridor). When a bus position falls outside the corridor, the system raises a route alert for officers.</p>' +
+      '<div class="toolbar"><select id="gf-permit" style="flex:1 1 220px"></select>' +
+      '<label class="small muted" for="gf-buffer">Allowed distance (m)</label><input id="gf-buffer" type="number" value="500" min="50" max="20000" style="width:100px"' + (isStaff ? "" : " disabled") + ">" +
+      (isStaff ? '<button class="btn sm" id="gf-draw" type="button">Draw route</button><button class="btn sm" id="gf-undo" type="button">Undo point</button><button class="btn gold sm" id="gf-save" type="button">Save route</button>' : "") +
+      '<button class="btn sm" id="gf-test" type="button">Test a position</button></div>' +
+      '<div id="gf-hint" class="small" style="margin:8px 0;min-height:20px"></div><div id="gf-map" style="height:380px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>' +
+      '<div class="small muted" style="margin-top:8px"><span style="color:var(--gold)">&#9632;</span> licensed route &nbsp; <span style="color:var(--gold);opacity:.5">&#9632;</span> allowed corridor &nbsp; <span style="color:var(--ok)">&#9679;</span> inside &nbsp; <span style="color:var(--err)">&#9679;</span> outside (alert)</div>';
+    host.insertBefore(card, host.firstChild);
+
+    var map = L.map("gf-map").setView([-15.42, 28.28], 11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    var fence = L.layerGroup().addTo(map), marks = L.layerGroup().addTo(map);
+    var permits = [], plates = {}, current = null, pts = [], mode = "", hint = $("#gf-hint");
+    function say(t, cls) { hint.innerHTML = t ? '<span class="' + (cls || "") + '">' + t + "</span>" : ""; }
+    function setMode(m) {
+      mode = m;
+      var b1 = $("#gf-draw"), b2 = $("#gf-test");
+      if (b1) b1.classList.toggle("gold", m === "draw"); b2.classList.toggle("gold", m === "test");
+      map.getContainer().style.cursor = m ? "crosshair" : "";
+      say(m === "draw" ? "Click the map to add route points in order, then press Save route." : m === "test" ? "Click the map where the bus is. The system checks it against the corridor." : "");
+    }
+    function corridorLayers(points, buffer) {
+      var g = [], lat0 = points[0][0], k = 111320 * Math.cos(lat0 * Math.PI / 180);
+      points.forEach(function (p) { g.push(L.circle(p, { radius: buffer, stroke: false, fillColor: "#ffc800", fillOpacity: 0.2 })); });
+      for (var i = 0; i < points.length - 1; i++) {
+        var a = points[i], b = points[i + 1], dx = (b[1] - a[1]) * k, dy = (b[0] - a[0]) * 111320, len = Math.hypot(dx, dy) || 1;
+        var nx = -dy / len * buffer, ny = dx / len * buffer, off = function (p, sx) { return [p[0] + (ny * sx) / 111320, p[1] + (nx * sx) / k]; };
+        g.push(L.polygon([off(a, 1), off(b, 1), off(b, -1), off(a, -1)], { stroke: false, fillColor: "#ffc800", fillOpacity: 0.2 }));
+      }
+      g.push(L.polyline(points, { color: "#ffc800", weight: 4 }));
+      return g;
+    }
+    function redraw(fit) {
+      fence.clearLayers();
+      if (pts.length) {
+        corridorLayers(pts, parseInt($("#gf-buffer").value, 10) || 500).forEach(function (l) { l.addTo(fence); });
+        pts.forEach(function (p, i) { L.circleMarker(p, { radius: i === 0 || i === pts.length - 1 ? 7 : 4, color: "#0f2238", weight: 2, fillColor: "#ffc800", fillOpacity: 1 }).addTo(fence); });
+        if (fit && pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.25));
+      }
+    }
+    async function pick(id) {
+      current = permits.filter(function (p) { return p.id === id; })[0]; pts = []; marks.clearLayers(); setMode("");
+      if (!current) return redraw();
+      try {
+        var c = await api("/api/psv/permits/" + id + "/corridor");
+        pts = c.waypoints.map(function (w) { return [w.lat, w.lon]; }); $("#gf-buffer").value = c.buffer_m;
+        say("");
+      } catch (e) { say(isStaff ? "No route set for this permit yet. Press Draw route and click the map." : "No route has been set for this permit yet.", "muted"); }
+      redraw(true);
+      try {
+        (await api("/api/psv/alerts")).filter(function (a) { return a.permit_id === id; }).forEach(function (a) {
+          L.circleMarker([a.latitude, a.longitude], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff5a5f", fillOpacity: 1 }).bindTooltip("Alert: " + a.distance_m + " m off route").addTo(marks);
+        });
+      } catch (e) { /* alerts are optional here */ }
+    }
+    try {
+      permits = await api("/api/psv/permits");
+      try { (await api("/api/vehicles?limit=200")).forEach(function (v) { plates[v.id] = v.registration_number; }); } catch (e) { /* plates optional */ }
+      $("#gf-permit").innerHTML = permits.length ? permits.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.permit_number + " · " + (plates[p.vehicle_id] || "") + " · " + p.route) + "</option>"; }).join("") : '<option value="">No permits yet</option>';
+      if (permits.length) pick(permits[0].id);
+    } catch (e) { say(esc(e.message), "muted"); }
+    setTimeout(function () { map.invalidateSize(); }, 150);
+
+    $("#gf-permit").addEventListener("change", function (e) { pick(e.target.value); });
+    $("#gf-buffer").addEventListener("input", function () { redraw(false); });
+    var draw = $("#gf-draw"); if (draw) {
+      draw.addEventListener("click", function () { if (!current) return; if (mode !== "draw") { pts = []; redraw(false); } setMode(mode === "draw" ? "" : "draw"); });
+      $("#gf-undo").addEventListener("click", function () { pts.pop(); redraw(false); });
+      $("#gf-save").addEventListener("click", function () {
+        if (!current || pts.length < 2) return toast("Add at least two points on the map first", "err");
+        mutate("/api/psv/permits/" + current.id + "/corridor", "PUT", { waypoints: pts.map(function (p) { return { lat: p[0], lon: p[1] }; }), buffer_m: parseInt($("#gf-buffer").value, 10) || 500 }, "Route saved", function () { setMode(""); });
+      });
+    }
+    $("#gf-test").addEventListener("click", function () { if (current) setMode(mode === "test" ? "" : "test"); });
+    map.on("click", async function (e) {
+      if (mode === "draw") { pts.push([e.latlng.lat, e.latlng.lng]); redraw(false); return; }
+      if (mode !== "test" || !current) return;
+      var plate = plates[current.vehicle_id]; if (!plate) return say("Plate not available for this permit.", "muted");
+      try {
+        var r = await api("/api/psv/positions", { method: "POST", body: JSON.stringify({ plate_number: plate, latitude: e.latlng.lat, longitude: e.latlng.lng }) });
+        L.circleMarker(e.latlng, { radius: 9, color: "#fff", weight: 2, fillColor: r.inside ? "#2fbf71" : "#ff5a5f", fillOpacity: 1 }).bindTooltip(r.inside ? "Inside" : "Outside").addTo(marks);
+        say(r.inside ? "<b>Inside the fence.</b> " + esc(plate) + " is " + r.distance_m + " m from the route (allowed " + r.buffer_m + " m). No alert." : "<b>Outside the fence.</b> " + esc(plate) + " is " + r.distance_m + " m from the route (allowed " + r.buffer_m + " m). " + (r.alert_deduplicated ? "An alert was already raised recently." : "Alert raised for officers."), r.inside ? "ok" : "err");
+      } catch (err) { say(esc(err.message), "err"); }
+    });
+  };
+})();

@@ -528,7 +528,7 @@ def make_psv(db, vehicles, officers):
         if i % 2 == 0:
             import json
             db.add(PSVCorridor(permit_id=p.id, waypoints=json.dumps([
-                {"lat": -15.4167, "lon": 28.2833}, {"lat": -15.3945, "lon": 28.3350}, {"lat": -15.3300, "lon": 28.6800}]),
+                [-15.4167, 28.2833], [-15.3945, 28.3350], [-15.3300, 28.6800]]),
                 buffer_m=500, updated_by=officers[0].id))
         n += 1
     return n

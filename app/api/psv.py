@@ -142,10 +142,15 @@ def get_active_permit_for_vehicle(
 ALERT_DEDUPE_MINUTES = 10
 
 
+def _pairs(raw: str) -> list[list[float]]:
+    """Stored waypoints as [lat, lon] pairs. Older seeded rows hold {"lat", "lon"} objects, so accept both."""
+    return [[w["lat"], w["lon"]] if isinstance(w, dict) else [w[0], w[1]] for w in json.loads(raw)]
+
+
 def _corridor_response(corridor: PSVCorridor) -> PSVCorridorResponse:
     return PSVCorridorResponse(
         permit_id=corridor.permit_id,
-        waypoints=[{"lat": w[0], "lon": w[1]} for w in json.loads(corridor.waypoints)],
+        waypoints=[{"lat": w[0], "lon": w[1]} for w in _pairs(corridor.waypoints)],
         buffer_m=corridor.buffer_m,
     )
 
@@ -216,7 +221,7 @@ def report_position(
     if not corridor:
         raise HTTPException(status_code=409, detail="This permit has no route corridor set yet")
 
-    distance = round(distance_to_corridor_m(payload.latitude, payload.longitude, json.loads(corridor.waypoints)))
+    distance = round(distance_to_corridor_m(payload.latitude, payload.longitude, _pairs(corridor.waypoints)))
     inside = distance <= corridor.buffer_m
     result = PSVPositionResult(
         plate_number=plate, permit_number=permit.permit_number, inside=inside,
