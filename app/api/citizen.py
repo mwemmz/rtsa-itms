@@ -25,6 +25,7 @@ from app.schemas.payment import PaymentResponse
 from app.schemas.vehicle import VehicleResponse
 from app.services.audit import log_action
 from app.services.compliance import check_vehicle_compliance
+from app.services import fines as fines_service
 from app.services.ownership import owed_challans_query, owned_vehicles_query
 
 router = APIRouter(prefix="/api/citizen", tags=["Citizen Portal"])
@@ -66,10 +67,11 @@ def citizen_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    fines_service.ensure_current(db)
     vehicles = my_vehicles_query(db, current_user).all()
     licences = my_drivers(db, current_user)
     challans = _fines_query(db, current_user).order_by(Challan.created_at.desc()).all()
-    unpaid = [c for c in challans if c.status in (ChallanStatus.UNPAID, ChallanStatus.OVERDUE)]
+    unpaid = [c for c in challans if c.status in fines_service.OWED]
     return CitizenDashboard(
         vehicles=[VehicleResponse.model_validate(v).model_dump(mode="json") for v in vehicles],
         licences=[DriverResponse.model_validate(d).model_dump(mode="json") for d in licences],
@@ -107,14 +109,15 @@ def citizen_summary(
             upcoming.append({"type": "fitness", "ref": veh.registration_number,
                              "expires": cert.expiry_date.isoformat(),
                              "days_left": (cert.expiry_date.date() - now.date()).days})
-    unpaid = _fines_query(db, current_user).filter(
-        Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE])).all()
+    fines_service.ensure_current(db)
+    t = fines_service.totals(_fines_query(db, current_user).filter(Challan.status.in_(fines_service.LISTED)).all())
     return {
         "vehicles": len(vehicles),
         "licences": len(my_drivers(db, current_user)),
-        "unpaid_fines": len(unpaid),
-        "amount_due": sum(c.penalty_amount for c in unpaid),
-        "overdue_fines": sum(1 for c in unpaid if c.due_date < now),
+        "unpaid_fines": t["owed"],
+        "amount_due": t["amount_due"],
+        "overdue_fines": t["overdue"],
+        "fines_under_appeal": t["under_appeal"],
         "expiring_soon": sorted(upcoming, key=lambda x: x["days_left"]),
         "open_applications": db.query(LicenceApplication).filter(
             LicenceApplication.applicant_id == current_user.id,
@@ -198,7 +201,7 @@ def fine_detail(
             "type": violation.violation_type.value, "category": violation.violation_type.category,
             "location": violation.location,
             "time": violation.timestamp.isoformat(), "description": violation.description},
-        "overdue": challan.status not in (ChallanStatus.PAID, ChallanStatus.CANCELLED) and challan.due_date < datetime.utcnow(),
+        "overdue": challan.status == ChallanStatus.OVERDUE,
         "payments": [PaymentResponse.model_validate(p).model_dump(mode="json") for p in payments],
     }
 

@@ -32,6 +32,7 @@ from app.services.appeals import CAN_APPEAL, REASONS, appeal_window_open, file_a
 from app.services.demerits import active_points
 from app.services.nomination import nominate, respond
 from app.services.stolen import report_stolen
+from app.services import fines as fines_service
 from app.services.ownership import _linked_drivers, owed_challans_query, owes_challan, owned_vehicles_query
 from app.services.payments import create_payment
 from app.services.routing import describe_place
@@ -121,8 +122,9 @@ def dashboard(
         licence = _licence_out(driver, db)
 
     vehicles = _get_my_vehicles(db, current_user)
+    fines_service.ensure_current(db)
     fines = owed_challans_query(db, current_user).all()
-    unpaid = [c for c in fines if c.status not in (ChallanStatus.PAID, ChallanStatus.CANCELLED)]
+    unpaid = [c for c in fines if c.status in fines_service.OWED]   # same rule as every other screen (appeals are not owed)
 
     alert_incidents = (
         db.query(RoadIncident)
@@ -255,6 +257,7 @@ def my_fines(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    fines_service.ensure_current(db)
     query = owed_challans_query(db, current_user)
     if not include_paid:
         query = query.filter(Challan.status.notin_([ChallanStatus.PAID, ChallanStatus.CANCELLED]))
@@ -445,4 +448,4 @@ def report_vehicle_stolen(
     """The owner reports a theft. Fines for offences after it are waived; sightings go to officers."""
     v = report_stolen(db, current_user, vehicle_id, payload.police_report_number, payload.stolen_at)
     db.commit()
-    return {"registration_number": v.registration_number, "status": "stolen", "fines_waived": getattr(v, "_waived", 0)}
+    return {"registration_number": v.registration_number, "status": "stolen", "police_report_number": v.police_report_number, "fines_waived": getattr(v, "_waived", 0)}

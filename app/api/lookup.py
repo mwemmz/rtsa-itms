@@ -22,6 +22,7 @@ from app.services.plates import UNREGISTERED_REASON, find_vehicle_by_plate, norm
 
 router = APIRouter(prefix="/api/toll", tags=["Toll"])
 
+from app.services import fines as fines_service
 OPEN_STATUSES = (ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED)
 
 
@@ -43,6 +44,7 @@ def lookup_plate(
         return {"found": False, "plate": key, "decision": "stop",
                 "reasons": [UNREGISTERED_REASON], "offences": [], "total_owed": 0}
 
+    fines_service.ensure_current(db)
     now = datetime.utcnow()
     compliance = check_vehicle_compliance(db, vehicle)
 
@@ -62,7 +64,7 @@ def lookup_plate(
             "committed_at": v.timestamp.isoformat() if v and v.timestamp else None,
             "amount": c.penalty_amount,
             "due_date": c.due_date.isoformat(),
-            "overdue": c.due_date < now,
+            "overdue": c.status == ChallanStatus.OVERDUE,
             "status": c.status.value,
         }
         for c, v in rows

@@ -604,11 +604,11 @@ VIEWS.vehicles = async function () {
     }).join("");
     $$("#cv-list .cvstolen").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var no = prompt("Police report number for the theft of " + btn.dataset.plate + ":", "");
-        if (!no || no.trim().length < 3) return;
-        api("/api/portal/vehicles/" + btn.dataset.id + "/report-stolen", { method: "POST", body: JSON.stringify({ police_report_number: no.trim() }) })
-          .then(function (r) { toast("Reported. " + (r.fines_waived ? r.fines_waived + " fine(s) waived." : "Officers have been alerted."), "ok"); go("vehicles"); })
-          .catch(function (e) { toast(e.message, "err"); });
+        if (!confirm("Report " + btn.dataset.plate + " as stolen? Officers will be alerted and a police reference is issued automatically.")) return;
+        btn.disabled = true;
+        api("/api/portal/vehicles/" + btn.dataset.id + "/report-stolen", { method: "POST", body: JSON.stringify({}) })
+          .then(function (r) { toast("Reported stolen. Reference " + r.police_report_number + "." + (r.fines_waived ? " " + r.fines_waived + " fine(s) waived." : ""), "ok"); go("vehicles"); })
+          .catch(function (e) { btn.disabled = false; toast(e.message, "err"); });
       });
     });
   } catch (e) { fail("#cv-list", e); }

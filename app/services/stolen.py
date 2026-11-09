@@ -47,7 +47,13 @@ def sighting_alert(db: Session, vehicle: Vehicle, place: str) -> None:
               roles=["officer", "admin"])
 
 
-def report_stolen(db: Session, user: User, vehicle_id, police_report_number: str, when: datetime | None) -> Vehicle:
+def _new_reference(now: datetime) -> str:
+    """System-issued theft reference, e.g. THEFT-20261109-A1B2C3. The owner never has to invent one."""
+    import secrets
+    return f"THEFT-{now:%Y%m%d}-{secrets.token_hex(3).upper()}"
+
+
+def report_stolen(db: Session, user: User, vehicle_id, police_report_number: str | None, when: datetime | None) -> Vehicle:
     vehicle = owned_vehicles_query(db, user).filter(Vehicle.id == vehicle_id).first()
     if vehicle is None:
         raise HTTPException(status_code=404, detail="Vehicle not found")
@@ -59,7 +65,7 @@ def report_stolen(db: Session, user: User, vehicle_id, police_report_number: str
         raise HTTPException(status_code=422, detail="The theft cannot be in the future")
     vehicle.status = VehicleStatus.STOLEN
     vehicle.stolen_reported_at = when or now
-    vehicle.police_report_number = police_report_number.strip()
+    vehicle.police_report_number = (police_report_number or "").strip() or _new_reference(now)
     vehicle.recovered_at = None
     log_action(db, "report_stolen", "vehicle", str(vehicle.id),
                f"{vehicle.registration_number} reported stolen, police report {vehicle.police_report_number}", user.id)

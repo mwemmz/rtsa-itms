@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.permissions import require_permission
 from app.core.security import hash_password, require_role, validate_password_strength
 from app.core.timeutil import utcnow
+from app.services import fines as fines_service
 from app.models.audit_log import AuditLog
 from app.models.driver import Driver
 from app.models.enforcement import Challan, ChallanStatus
@@ -424,6 +425,7 @@ def report_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
+    fines_service.ensure_current(db)
     return {
         "vehicles": db.query(Vehicle).count(),
         "drivers": db.query(Driver).count(),
@@ -449,6 +451,7 @@ def fines_report(
     from app.models.payment import PaymentStatus, PaymentType
     from app.services.reports import month_bucket
 
+    fines_service.ensure_current(db)
     open_states = [ChallanStatus.UNPAID, ChallanStatus.OVERDUE, ChallanStatus.DISPUTED]
     paid_q = db.query(Payment).filter(Payment.payment_type == PaymentType.FINE,
                                       Payment.status == PaymentStatus.COMPLETED)

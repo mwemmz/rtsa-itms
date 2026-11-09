@@ -226,3 +226,9 @@ def test_recovered_vehicle_is_fined_normally_again():
     assert client.post(f"/api/enforcement/vehicles/{vid}/recovered", headers=officer).json()["status"] == "active"
     _fine(officer, vid, None, "expired_fitness")
     assert [f["status"] for f in _fines(owner)] == ["unpaid"]
+
+
+def test_theft_reference_is_issued_by_the_system():
+    _, owner, vid, _, _ = _world()
+    r = client.post(f"/api/portal/vehicles/{vid}/report-stolen", headers=owner, json={})
+    assert r.status_code == 200 and r.json()["police_report_number"].startswith("THEFT-")

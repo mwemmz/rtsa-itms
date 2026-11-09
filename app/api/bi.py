@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.permissions import require_permission
 from app.core.security import OFFICERS, require_role
+from app.services import fines as fines_service
 from app.models.anpr import ANPREvent
 from app.models.driver_report import DriverReport
 from app.models.enforcement import Appeal, Challan, ChallanStatus, Violation
@@ -81,6 +82,7 @@ def bi(days: int = Query(365, ge=30, le=1825), db: Session = Depends(get_db),
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     bands = [("Night 00-05", range(0, 6)), ("Morning 06-11", range(6, 12)), ("Afternoon 12-17", range(12, 18)), ("Evening 18-23", range(18, 24))]
 
+    fines_service.ensure_current(db)
     # --- dials ---
     issued = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status != ChallanStatus.CANCELLED, Challan.created_at >= since).scalar() or 0
     paid = db.query(func.coalesce(func.sum(Challan.penalty_amount), 0)).filter(Challan.status == ChallanStatus.PAID, Challan.created_at >= since).scalar() or 0

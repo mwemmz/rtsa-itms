@@ -65,7 +65,7 @@ class AppealDecisionIn(BaseModel):
 
 
 class StolenReportIn(BaseModel):
-    police_report_number: str = Field(min_length=3, max_length=60)
+    police_report_number: str | None = Field(default=None, max_length=60)  # optional: the system issues the reference
     stolen_at: datetime | None = None
 
 

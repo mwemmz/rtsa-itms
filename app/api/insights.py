@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.security import OFFICERS, require_role
 from fastapi import HTTPException
 
+from app.services import fines as fines_service
 from app.models.accident import Accident, AccidentSeverity, AccidentVehicle
 from app.models.inspection import Inspection, InspectionResult
 from app.models.driver import Driver, DriverStatus
@@ -43,6 +44,7 @@ def _bands(db: Session, column, extra=(), days=(30, 60, 90)):
 
 @router.get("/")
 def insights(db: Session = Depends(get_db), current_user: User = Depends(require_role(*OFFICERS))):
+    fines_service.ensure_current(db)
     now = datetime.utcnow()
     since = now - timedelta(days=180)
 
@@ -117,6 +119,7 @@ INTERVAL_DAYS = {"low": 365, "medium": 180, "high": 90}
 
 
 def vehicle_passport(db: Session, v: Vehicle) -> dict:
+    fines_service.ensure_current(db)
     now = datetime.utcnow()
     cert = (db.query(FitnessCertificate).filter(FitnessCertificate.vehicle_id == v.id)
             .order_by(FitnessCertificate.expiry_date.desc()).first())
