@@ -604,6 +604,49 @@ def _psv_documents(db) -> None:
     db.commit()
 
 
+def seed_demo_owner_bal9999() -> None:
+    """A citizen account for the owner of BAL 9999 (the blacklisted demo vehicle), so the owner can
+    sign in to see the blacklist, the unpaid fine and the vehicle's documents. Safe to run repeatedly."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.security import hash_password
+    from app.models.driver import Driver, LicenceClass
+    from app.models.enforcement import Challan, ChallanStatus, Violation, ViolationType
+    from app.models.user import User, UserRole
+    from app.models.vehicle import Vehicle
+
+    db = SessionLocal()
+    try:
+        veh = db.query(Vehicle).filter(Vehicle.registration_number == "BAL 9999").first()
+        if not veh:
+            return
+        user = db.query(User).filter(User.email == "jane.banda@example.com").first()
+        if not user:
+            user = User(email="jane.banda@example.com", hashed_password=hash_password("jane123"), full_name="Jane Banda",
+                        phone_number="+260971000009", nrc_number="654321/10/1", role=UserRole.CITIZEN,
+                        email_verified_at=datetime.now(timezone.utc))
+            db.add(user)
+            db.flush()
+        veh.user_id = user.id
+        if not db.query(Driver).filter(Driver.user_id == user.id).first():
+            db.add(Driver(user_id=user.id, licence_number="ZM-BANDA-2022", first_name="Jane", last_name="Banda", id_number="654321",
+                          date_of_birth=datetime(1988, 9, 3), phone_number="+260971000009", email="jane.banda@example.com",
+                          licence_class=LicenceClass.B, licence_issue_date=datetime.utcnow() - timedelta(days=500),
+                          licence_expiry_date=datetime.utcnow() + timedelta(days=700)))
+        if not db.query(Challan).filter(Challan.vehicle_id == veh.id).first():
+            v = Violation(vehicle_id=veh.id, violation_type=ViolationType.SPEEDING, location="Great North Road - Kabwe Checkpoint",
+                          timestamp=datetime.utcnow() - timedelta(days=9), speed_kmh=91, speed_limit_kmh=80, speed_device="RADAR-KBW-02",
+                          description="Travelling at 91 km/h in an 80 km/h zone.")
+            db.add(v)
+            db.flush()
+            db.add(Challan(reference="CH-2024-0010", violation_id=v.id, vehicle_id=veh.id, penalty_amount=45000,
+                           due_date=datetime.utcnow() + timedelta(days=10), status=ChallanStatus.UNPAID))
+        db.commit()
+        print("Owner account ready: jane.banda@example.com / jane123 (owner of BAL 9999)")
+    finally:
+        db.close()
+
+
 def seed_psv_baseline() -> None:
     """Make PSV & routes show something on a fresh database: 3 operators, 3 minibuses with permits,
     two with a geo-fence route, and one sample route alert. Skipped if any PSV operator exists."""
@@ -670,4 +713,5 @@ if __name__ == "__main__":
     seed_road_network()
     seed_demo_portal()
     seed_psv_baseline()
+    seed_demo_owner_bal9999()
     print("Seed complete.")
