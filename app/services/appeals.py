@@ -2,6 +2,10 @@
 
 While an appeal is pending the fine is DISPUTED: it stops accruing the late surcharge and does not
 flag the vehicle at toll gates. Dismissed, it goes back to how it was, with a week to pay.
+
+An unpaid or overdue fine can be appealed at any time: people often only notice an old fine when
+they come to renew or pay something else, and refusing them the appeal button just pushed them to
+the counter.
 """
 
 from datetime import datetime, timedelta
@@ -11,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.models.enforcement import Appeal, Challan, ChallanStatus
 from app.models.user import User
-from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.demerits import void_points
 from app.services.notifications import broadcast, notify
@@ -25,12 +28,6 @@ def latest_appeal(db: Session, challan_id) -> Appeal | None:
     return db.query(Appeal).filter(Appeal.challan_id == challan_id).order_by(Appeal.created_at.desc()).first()
 
 
-def appeal_window_open(db: Session, challan: Challan, now: datetime | None = None) -> bool:
-    created = challan.created_at.replace(tzinfo=None) if challan.created_at and challan.created_at.tzinfo else challan.created_at
-    days = runtime_settings.get(db, "enforcement.appeal_days")
-    return created is None or (now or datetime.utcnow()) <= created + timedelta(days=days)
-
-
 def file_appeal(db: Session, user: User, challan_id, reason: str, details: str) -> Appeal:
     challan = db.get(Challan, challan_id)
     if challan is None or not owes_challan(db, user, challan):
@@ -40,8 +37,6 @@ def file_appeal(db: Session, user: User, challan_id, reason: str, details: str) 
     existing = latest_appeal(db, challan.id)
     if existing is not None and existing.status in ("pending", "dismissed"):
         raise HTTPException(status_code=409, detail="This fine has already been appealed")
-    if not appeal_window_open(db, challan):
-        raise HTTPException(status_code=409, detail="The time to appeal this fine has passed")
     appeal = Appeal(challan_id=challan.id, appellant_id=user.id, reason=reason, details=details.strip(),
                     prior_status=challan.status.value.upper())
     challan.status = ChallanStatus.DISPUTED

@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.permissions import require_permission, user_has_permission
 from app.core.security import get_current_user
 from app.models.payment import Payment, PaymentStatus, PaymentType
+from app.models.enforcement import Challan, Violation
 from app.models.platform import PaymentEvent, ReconciliationRun
 from app.models.user import User
 from app.schemas.payment import (
@@ -139,7 +140,7 @@ def _receipt(db: Session, payment: Payment) -> dict:
     if payment.status not in (PaymentStatus.COMPLETED,) or not payment.receipt_number:
         raise HTTPException(status_code=409, detail="No receipt: payment is not completed")
     payer = db.get(User, payment.paid_by) if payment.paid_by else None
-    return {
+    receipt = {
         "receipt_number": payment.receipt_number,
         "reference": payment.reference,
         "payment_type": payment.payment_type.value,
@@ -152,6 +153,19 @@ def _receipt(db: Session, payment: Payment) -> dict:
         "paid_by_name": payer.full_name if payer else None,
         "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
     }
+    # A fine receipt also names the ticket it settles: which officer issued it, where and when.
+    if payment.payment_type == PaymentType.FINE and payment.related_entity_id:
+        challan = db.get(Challan, payment.related_entity_id)
+        violation = db.get(Violation, challan.violation_id) if challan else None
+        if violation is not None:
+            officer = db.get(User, violation.recorded_by) if violation.recorded_by else None
+            receipt.update({
+                "fine_reference": challan.reference,
+                "issued_by": officer.full_name if officer else "RTSA",
+                "issued_where": violation.location,
+                "issued_when": violation.timestamp.isoformat(),
+            })
+    return receipt
 
 
 @router.get("/{payment_id}/receipt")

@@ -56,8 +56,6 @@ DEFINITIONS: list[SettingDef] = [
                "Default number of days before an e-Challan becomes overdue", 1, 365),
     SettingDef("enforcement.nomination_days", "14", "int", "enforcement",
                "Days an owner has to name the driver before they stay liable for the fine", 1, 90),
-    SettingDef("enforcement.appeal_days", "14", "int", "enforcement",
-               "Days after a fine is issued during which it can be appealed", 1, 90),
     SettingDef("enforcement.demerit_limit", "12", "int", "enforcement",
                "Demerit points within the window that suspend a licence", 3, 50),
     SettingDef("enforcement.demerit_window_months", "24", "int", "enforcement",

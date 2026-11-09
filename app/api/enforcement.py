@@ -30,7 +30,7 @@ from app.schemas.enforcement import (
     ViolationPhotoResponse,
     ViolationResponse,
 )
-from app.models.payment import PaymentType
+from app.models.payment import Payment, PaymentType
 from app.services import exporters
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
@@ -102,6 +102,12 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
         else {}
     )
     accounts = _account_names(db, [v.user_id for v in violations])
+    recorder_ids = list({v.recorded_by for v in violations if v.recorded_by})
+    officers = (
+        {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(recorder_ids))}
+        if recorder_ids
+        else {}
+    )
     photo_counts = (
         {
             str(vid): n
@@ -151,6 +157,7 @@ def _enrich_violations(db: Session, violations: list[Violation]) -> list[dict]:
                 "owner_id_number": veh.owner_id_number if veh else None,
                 "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
                 "account_name": accounts.get(str(v.user_id)) if v.user_id else None,
+                "officer_name": officers.get(str(v.recorded_by)) if v.recorded_by else None,
                 "challan": challans.get(str(v.id)),
                 "photo_count": photo_counts.get(str(v.id), 0),
             }
@@ -190,6 +197,12 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
         if violation_ids
         else {}
     )
+    recorder_ids = list({x.recorded_by for x in violations.values() if x.recorded_by})
+    officers = (
+        {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(recorder_ids))}
+        if recorder_ids
+        else {}
+    )
 
     out = []
     for c in challans:
@@ -216,6 +229,9 @@ def _enrich_challans(db: Session, challans: list[Challan]) -> list[dict]:
                 "owner_name": veh.owner_name if veh else None,
                 "driver_name": f"{drv.first_name} {drv.last_name}".strip() if drv else None,
                 "account_name": accounts.get(str(c.user_id)) if c.user_id else None,
+                "location": vio.location if vio else None,
+                "recorded_at": vio.timestamp if vio else None,
+                "officer_name": officers.get(str(vio.recorded_by)) if vio and vio.recorded_by else None,
             }
         )
     return out
@@ -508,7 +524,19 @@ def list_challans(
         query = query.filter(Challan.vehicle_id == vehicle_id)
     if status_filter:
         query = query.filter(Challan.status == status_filter)
-    challans = query.order_by(Challan.created_at.desc()).offset(skip).limit(limit).all()
+    # A fine that was just paid belongs at the top of the list: order by the latest
+    # thing that happened to it, which is the payment when there is one.
+    latest_payment = (
+        db.query(Payment.related_entity_id.label("challan_id"), func.max(Payment.created_at).label("paid_at"))
+        .filter(Payment.payment_type == PaymentType.FINE, Payment.related_entity_id.isnot(None))
+        .group_by(Payment.related_entity_id)
+        .subquery()
+    )
+    challans = (
+        query.outerjoin(latest_payment, latest_payment.c.challan_id == Challan.id)
+        .order_by(func.coalesce(latest_payment.c.paid_at, Challan.created_at).desc())
+        .offset(skip).limit(limit).all()
+    )
     return _enrich_challans(db, challans)
 
 

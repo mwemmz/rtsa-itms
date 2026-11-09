@@ -147,6 +147,11 @@ def receipt_pdf(receipt: dict) -> bytes:
         ["Paid at", str(receipt.get("paid_at") or "-")],
         ["Status", receipt["status"]],
     ]
+    # Fine receipts carry the ticket details, so the payer can see who issued it and where.
+    for key, label in (("fine_reference", "Fine reference"), ("issued_by", "Issued by"),
+                       ("issued_where", "Where"), ("issued_when", "When")):
+        if receipt.get(key):
+            rows.append([label, receipt[key]])
     table = Table([[Paragraph(f"<b>{_esc(a)}</b>", styles["BodyText"]), Paragraph(_esc(b), styles["BodyText"])]
                    for a, b in rows], colWidths=[50 * mm, 110 * mm])
     table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),

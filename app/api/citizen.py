@@ -13,7 +13,7 @@ from app.models.enforcement import Challan, ChallanStatus, Violation
 from app.models.inspection import FitnessCertificate
 from app.models.insurance import Insurance
 from app.models.licence import LicenceApplication, LicenceApplicationStatus
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentType
 from app.models.psv import PSVPermit
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -60,6 +60,44 @@ def my_vehicles_query(db: Session, user: User):
 def _fines_query(db: Session, user: User):
     """Fines on the user's vehicles, charged to their account (false road reports), or owed as the driver."""
     return owed_challans_query(db, user)
+
+
+def _fine_payment_details(db: Session, payments: list[Payment]) -> dict[str, dict]:
+    """Who issued each fine payment's ticket, where and when, keyed by payment id.
+
+    The payment ledger only stores the challan id, so the ticket has to be resolved
+    back through the challan and its violation. Non-fine payments have no ticket.
+    """
+    fine_ids = [p.related_entity_id for p in payments
+                if p.payment_type == PaymentType.FINE and p.related_entity_id]
+    if not fine_ids:
+        return {}
+    challans = {str(c.id): c for c in db.query(Challan).filter(Challan.id.in_(fine_ids)).all()}
+    violation_ids = [c.violation_id for c in challans.values()]
+    violations = (
+        {str(v.id): v for v in db.query(Violation).filter(Violation.id.in_(violation_ids)).all()}
+        if violation_ids
+        else {}
+    )
+    officer_ids = {v.recorded_by for v in violations.values() if v.recorded_by}
+    officers = (
+        {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(officer_ids)).all()}
+        if officer_ids
+        else {}
+    )
+    out = {}
+    for p in payments:
+        if p.payment_type != PaymentType.FINE or not p.related_entity_id:
+            continue
+        c = challans.get(str(p.related_entity_id))
+        v = violations.get(str(c.violation_id)) if c else None
+        out[str(p.id)] = {
+            "fine_reference": c.reference if c else None,
+            "issued_by": officers.get(str(v.recorded_by)) if v and v.recorded_by else None,
+            "issued_where": v.location if v else None,
+            "issued_when": v.timestamp if v else None,
+        }
+    return out
 
 
 @router.get("/dashboard", response_model=CitizenDashboard)
@@ -194,13 +232,15 @@ def fine_detail(
     if challan is None:
         raise HTTPException(status_code=404, detail="Fine not found")
     violation = db.get(Violation, challan.violation_id)
+    officer = db.get(User, violation.recorded_by) if violation is not None and violation.recorded_by else None
     payments = db.query(Payment).filter(Payment.related_entity_id == challan.id).order_by(Payment.created_at).all()
     return {
         "challan": ChallanResponse.model_validate(_enrich_challans(db, [challan])[0]).model_dump(mode="json"),
         "violation": None if violation is None else {
             "type": violation.violation_type.value, "category": violation.violation_type.category,
             "location": violation.location,
-            "time": violation.timestamp.isoformat(), "description": violation.description},
+            "time": violation.timestamp.isoformat(), "description": violation.description,
+            "officer_name": officer.full_name if officer else None},
         "overdue": challan.status == ChallanStatus.OVERDUE,
         "payments": [PaymentResponse.model_validate(p).model_dump(mode="json") for p in payments],
     }
@@ -294,8 +334,10 @@ def my_payments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return (db.query(Payment).filter(Payment.paid_by == current_user.id)
-            .order_by(Payment.created_at.desc()).offset(skip).limit(limit).all())
+    payments = (db.query(Payment).filter(Payment.paid_by == current_user.id)
+                .order_by(Payment.created_at.desc()).offset(skip).limit(limit).all())
+    details = _fine_payment_details(db, payments)
+    return [PaymentResponse.model_validate(p).model_copy(update=details.get(str(p.id), {})) for p in payments]
 
 
 @router.get("/profile")

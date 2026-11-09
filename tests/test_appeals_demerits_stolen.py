@@ -141,7 +141,7 @@ def test_only_the_person_who_owes_the_fine_can_appeal_and_paying_ends_the_appeal
     assert client.get("/api/enforcement/appeals?status=withdrawn", headers=officer).json()
 
 
-def test_appeal_window_closes():
+def test_an_old_fine_can_still_be_appealed():
     officer, owner, vid, _, _ = _world()
     _fine(officer, vid)
     f = _fines(owner)[0]
@@ -152,8 +152,8 @@ def test_appeal_window_closes():
         db.commit()
     finally:
         db.close()
-    assert _fines(owner)[0]["can_appeal"] is False
-    assert client.post(f"/api/portal/fines/{f['id']}/appeal", headers=owner, json={"reason": "other", "details": LONG}).status_code == 409
+    assert _fines(owner)[0]["can_appeal"] is True
+    assert client.post(f"/api/portal/fines/{f['id']}/appeal", headers=owner, json={"reason": "other", "details": LONG}).status_code == 201
 
 
 # ---------------------------------------------------------------- demerit points
@@ -224,6 +224,19 @@ def test_recovered_vehicle_is_fined_normally_again():
     client.post(f"/api/portal/vehicles/{vid}/report-stolen", headers=owner, json={"police_report_number": "CR-3/26"})
     assert client.post(f"/api/enforcement/vehicles/{vid}/recovered", headers=owner).status_code == 403
     assert client.post(f"/api/enforcement/vehicles/{vid}/recovered", headers=officer).json()["status"] == "active"
+    _fine(officer, vid, None, "expired_fitness")
+    assert [f["status"] for f in _fines(owner)] == ["unpaid"]
+
+
+def test_owner_can_undo_a_stolen_report_from_their_vehicles_page():
+    officer, owner, vid, _, _ = _world()
+    stranger, _, _ = _login("citizen")
+    client.post(f"/api/portal/vehicles/{vid}/report-stolen", headers=owner, json={"police_report_number": "CR-4/26"})
+    assert client.post(f"/api/portal/vehicles/{vid}/recovered", headers=stranger).status_code == 404
+    r = client.post(f"/api/portal/vehicles/{vid}/recovered", headers=owner)
+    assert r.status_code == 200 and r.json()["status"] == "active"
+    # It is no longer marked stolen, so it cannot be "recovered" again.
+    assert client.post(f"/api/portal/vehicles/{vid}/recovered", headers=owner).status_code == 404
     _fine(officer, vid, None, "expired_fitness")
     assert [f["status"] for f in _fines(owner)] == ["unpaid"]
 

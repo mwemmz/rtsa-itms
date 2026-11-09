@@ -112,6 +112,12 @@ VIEWS.reports = async function () {
       ? '<button class="btn sm" data-fmt="csv">CSV</button><button class="btn sm" data-fmt="xlsx">Excel</button><button class="btn sm" data-fmt="pdf">PDF</button>'
       : '<span class="small muted">Exports need the reports:export permission</span>') +
     '</div><div id="rp-out"></div></div>';
+  // A report covers what has already happened: the pickers stop at today.
+  var now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  var today = now.toISOString().slice(0, 10);
+  $("#rp-from").max = today;
+  $("#rp-to").max = today;
   try {
     var cat = await api("/api/reports/");
     $("#rp-key").innerHTML = cat.map(function (r) { return '<option value="' + esc(r.key) + '">' + esc(r.title) + "</option>"; }).join("");
@@ -124,8 +130,21 @@ VIEWS.reports = async function () {
     if ($("#rp-to").value) q.push("date_to=" + $("#rp-to").value);
     return q;
   }
+  function validRange() {
+    var from = $("#rp-from").value, to = $("#rp-to").value;
+    if ((from && from > today) || (to && to > today)) {
+      toast("A report can't include a future date", "err");
+      return false;
+    }
+    if (from && to && from > to) {
+      toast("The From date must be on or before the To date", "err");
+      return false;
+    }
+    return true;
+  }
   async function run() {
     var out = $("#rp-out");
+    if (!validRange()) return;
     out.innerHTML = '<div class="empty">Running…</div>';
     try {
       var r = await api("/api/reports/" + $("#rp-key").value + "?limit=200" + (params().length ? "&" + params().join("&") : ""));
@@ -140,6 +159,7 @@ VIEWS.reports = async function () {
   $("#rp-run").addEventListener("click", run);
   $$("[data-fmt]").forEach(function (b) {
     b.addEventListener("click", function () {
+      if (!validRange()) return;
       var q = params().concat(["format=" + b.dataset.fmt]);
       download("/api/reports/" + $("#rp-key").value + "?" + q.join("&"), "report." + b.dataset.fmt)
         .catch(function (e) { toast(e.message, "err"); });
@@ -594,7 +614,8 @@ VIEWS.vehicles = async function () {
       var v = d.vehicle;
       var stolen = v.status === "stolen";
       return '<div class="card"><h3><span class="mono">' + esc(v.registration_number) + "</span> " + (stolen ? pill("Reported stolen", "red") : pill(d.compliant ? "All in order" : "Needs attention", d.compliant ? "green" : "amber")) + "</h3>" +
-        (stolen ? '<p class="small muted">Reported stolen, police report ' + esc(v.police_report_number || "on file") + ". Fines for offences after the theft are waived, and sightings are sent to officers.</p>"
+        (stolen ? '<p class="small muted">Reported stolen, police report ' + esc(v.police_report_number || "on file") + ". Fines for offences after the theft are waived, and sightings are sent to officers.</p>" +
+          '<p><button class="btn sm cvfound" data-id="' + esc(v.id) + '" data-plate="' + esc(v.registration_number) + '">Mark recovered</button></p>'
           : '<p><button class="btn sm cvstolen" data-id="' + esc(v.id) + '" data-plate="' + esc(v.registration_number) + '">Report stolen</button></p>') +
         '<p class="muted">' + esc(v.year + " " + v.make + " " + v.model) + "</p>" +
         tbl(["Check", "Result", "Detail"], d.checks.map(function (c) {
@@ -608,6 +629,15 @@ VIEWS.vehicles = async function () {
         btn.disabled = true;
         api("/api/portal/vehicles/" + btn.dataset.id + "/report-stolen", { method: "POST", body: JSON.stringify({}) })
           .then(function (r) { toast("Reported stolen. Reference " + r.police_report_number + "." + (r.fines_waived ? " " + r.fines_waived + " fine(s) waived." : ""), "ok"); go("vehicles"); })
+          .catch(function (e) { btn.disabled = false; toast(e.message, "err"); });
+      });
+    });
+    $$("#cv-list .cvfound").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (!confirm("Mark " + btn.dataset.plate + " as recovered? It goes back to normal, and new offences count again.")) return;
+        btn.disabled = true;
+        api("/api/portal/vehicles/" + btn.dataset.id + "/recovered", { method: "POST" })
+          .then(function () { toast(btn.dataset.plate + " is back on the road", "ok"); go("vehicles"); })
           .catch(function (e) { btn.disabled = false; toast(e.message, "err"); });
       });
     });
@@ -675,7 +705,16 @@ VIEWS.receipts = async function () {
     $("#rc-list").innerHTML = tbl(["Date", "Description", "Amount", "Status", "Receipt", ""], items.map(function (p) {
       var cls = p.status === "completed" ? "green" : p.status === "failed" ? "red" : "gray";
       // The payment reference is what the receipt notification quotes.
-      return [dt(p.paid_at || p.created_at), esc(p.description || p.payment_type) + '<div class="small muted mono">' + esc(p.reference) + "</div>",
+      var desc = esc(p.description || p.payment_type) +
+        (p.fine_reference ? '<div class="small muted mono">' + esc(p.fine_reference) + "</div>" : "") +
+        '<div class="small muted mono">' + esc(p.reference) + "</div>";
+      // For fines, say which officer issued the ticket, where and when.
+      if (p.issued_by || p.issued_where || p.issued_when) {
+        desc += '<div class="small muted">Issued by ' + (p.issued_by ? "<b>" + esc(p.issued_by) + "</b>" : "RTSA") +
+          (p.issued_when ? " on " + dt(p.issued_when) : "") +
+          (p.issued_where ? " at " + esc(p.issued_where) : "") + "</div>";
+      }
+      return [dt(p.paid_at || p.created_at), desc,
         money(p.amount), pill(p.status, cls), esc(p.receipt_number || "—"),
         p.receipt_number ? '<button class="btn ghost sm rc" data-id="' + esc(p.id) + '">Download PDF</button>' : ""];
     }));

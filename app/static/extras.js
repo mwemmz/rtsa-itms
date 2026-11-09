@@ -409,10 +409,15 @@ VIEWS.insights = async function () {
           '<p class="small muted" style="margin:8px 0 0">' + esc(fac.reading) + "</p></div>" +
       "</div>";
     wirePlateScan($("#content"), function (plate) { $("#pp-q").value = plate; });
-    $("#pp-go").addEventListener("click", async function () {
+    async function runLookup() {
       var q = $("#pp-q").value.trim(), out = $("#pp-out");
-      if (!q) return;
+      if (!q) {
+        out.innerHTML = '<span style="color:var(--err)">Type a number plate (for example BAK 123) or a licence number first.</span>';
+        $("#pp-q").focus();
+        return;
+      }
       out.innerHTML = "Looking…";
+      out.scrollIntoView({ behavior: "smooth", block: "nearest" });
       try {
         try {
           var v = await api("/api/vehicles/by-registration/" + encodeURIComponent(q));
@@ -422,6 +427,11 @@ VIEWS.insights = async function () {
           out.innerHTML = driverHtml(await api("/api/insights/driver/" + dr.id));
         }
       } catch (e) { out.innerHTML = '<span style="color:var(--err)">No vehicle or driver found for "' + esc(q) + '".</span>'; }
+      out.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    $("#pp-go").addEventListener("click", runLookup);
+    $("#pp-q").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); runLookup(); }
     });
   } catch (e) { fail("#content", e); }
 };
@@ -802,14 +812,22 @@ function dialTile(g) {
 })();
 
 // ---- Simulated payment: mobile money (MTN, Airtel, Zamtel) and card. No real money moves. ----
-function openPayModal(id, ref, amount) {
+function openPayModal(id, ref, amount, fine) {
+  fine = fine || {};
   var old = document.getElementById("pay-modal"); if (old) old.remove();
   var box = document.createElement("div"); box.id = "pay-modal"; box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
   box.style.cssText = "position:fixed;inset:0;background:rgba(10,20,35,.75);z-index:1100;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px;";
   var method = "mobile_money", phase = "form", otpNeeded = "", msg = "", keep = {};
   function networkOf(p) { p = (p || "").replace(/\D/g, ""); if (p.indexOf("260") === 0) p = "0" + p.slice(3); var x = p.slice(0, 3); return x === "096" || x === "076" ? "MTN" : x === "097" || x === "077" ? "Airtel" : x === "095" || x === "075" ? "Zamtel" : ""; }
+  function issuerLine() {
+    if (!fine.officer) return "";
+    var when = fine.when && typeof dt === "function" ? dt(fine.when) : "";
+    return '<div class="small muted" style="margin-top:4px;">Issued by <b>' + esc(fine.officer) + "</b>" +
+      (when ? " on " + esc(when) : "") + (fine.location ? " at " + esc(fine.location) : "") + "</div>";
+  }
   function render() {
     var h = '<div class="card" style="max-width:480px;width:100%;margin:auto;"><h3>Pay ' + esc(money(amount)) + '</h3><div class="small muted">e-Challan ' + esc(ref) + '</div>' +
+      issuerLine() +
       '<div class="pay-sim">SIMULATION · no real money moves and nothing you type is stored</div>';
     if (phase === "done") {
       h += '<div class="pay-result ok"><div class="pay-tick">✓</div><b>Payment received</b><div class="small">' + esc(msg) + '</div></div><div style="margin-top:14px"><button class="btn gold" id="pm-close">Done</button></div></div>';

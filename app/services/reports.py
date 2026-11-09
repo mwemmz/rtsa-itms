@@ -237,10 +237,27 @@ REPORTS: dict[str, Report] = {r.key: r for r in [
 
 
 def resolve_range(date_from: datetime | None, date_to: datetime | None, default_days: int) -> tuple[datetime, datetime]:
-    end = date_to or datetime.utcnow()
-    start = date_from or (end - timedelta(days=default_days))
+    """The window a report covers, never reaching into the future.
+
+    The app is UTC but the browser sends a plain date (or a local datetime), so
+    normalise first, then clamp the end to now and make sure the window is not
+    inverted. A future end date would only ever return empty months.
+    """
+    now = datetime.utcnow()
+    if date_from is not None and date_from.tzinfo is not None:
+        date_from = date_from.replace(tzinfo=None)
+    if date_to is not None and date_to.tzinfo is not None:
+        date_to = date_to.replace(tzinfo=None)
+    end = date_to or now
     if date_to is not None and date_to.hour == 0 and date_to.minute == 0 and date_to.second == 0:
         end = date_to + timedelta(days=1) - timedelta(seconds=1)  # inclusive of the end date
+    if end > now:
+        end = now
+    start = date_from or (end - timedelta(days=default_days))
+    if start > now:
+        start = now
+    if start > end:
+        start = end
     return start.replace(tzinfo=None), end.replace(tzinfo=None)
 
 

@@ -479,10 +479,48 @@ def fines_report(
                 paid_q.with_entities(month, func.sum(Payment.amount)).group_by(month).order_by(month)}
     by_gateway = {g or "unknown": {"count": n, "total": int(t or 0)} for g, n, t in
                   paid_q.with_entities(Payment.gateway, func.count(), func.sum(Payment.amount)).group_by(Payment.gateway)}
+
+    # Fines grouped by the officer who issued them, so the dashboard also shows
+    # who is fining whom. System/toll fines have no recorded_by.
+    by_officer: dict[str, dict] = {}
+    issued_rows = (
+        db.query(Violation.recorded_by, func.count(Challan.id), func.sum(Challan.penalty_amount))
+        .join(Challan, Challan.violation_id == Violation.id)
+        .filter(Challan.status != ChallanStatus.CANCELLED)
+        .group_by(Violation.recorded_by)
+        .all()
+    )
+    officer_ids = {recorded_by for recorded_by, _, _ in issued_rows if recorded_by}
+    officer_names = (
+        {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(officer_ids)).all()}
+        if officer_ids else {}
+    )
+    for recorded_by, count, billed in issued_rows:
+        key = str(recorded_by) if recorded_by else "system"
+        by_officer[key] = {
+            "name": officer_names.get(key, "Unknown officer") if recorded_by else "System / RTSA",
+            "count": int(count or 0), "issued": int(billed or 0),
+            "collected": 0, "outstanding": 0,
+        }
+    for recorded_by, st, total in (
+        db.query(Violation.recorded_by, Challan.status, func.sum(Challan.penalty_amount))
+        .join(Challan, Challan.violation_id == Violation.id)
+        .group_by(Violation.recorded_by, Challan.status)
+        .all()
+    ):
+        row = by_officer.get(str(recorded_by) if recorded_by else "system")
+        if row is None:
+            continue
+        if st == ChallanStatus.PAID:
+            row["collected"] += int(total or 0)
+        elif st in open_states:
+            row["outstanding"] += int(total or 0)
+
     return {
         "issued": int(issued), "waived": int(waived), "collected": int(collected), "outstanding": int(owed), "overdue": int(overdue),
         "collection_rate": round(collected / issued * 100, 1) if issued else None,
         "by_offence": dict(sorted(by_offence.items(), key=lambda kv: -kv[1]["issued"])),
+        "by_officer": dict(sorted(by_officer.items(), key=lambda kv: -kv[1]["issued"])),
         "by_month": by_month, "by_gateway": by_gateway,
     }
 

@@ -30,6 +30,8 @@ class FineOut(BaseModel):
     liable_party: str = "both"
     location: str
     recorded_at: datetime
+    # The officer who issued the fine. Null for system/toll-issued fines.
+    officer_name: str | None = None
     # Which of the citizen's vehicles it was, when it was a vehicle.
     registration_number: str | None = None
     penalty_amount: int

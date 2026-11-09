@@ -285,6 +285,9 @@ async function go(id) {
   setTitle(t || "Dashboard");
   var fn = VIEWS[id];
   if (!fn) { $("#content").innerHTML = '<div class="empty">Unknown view</div>'; return; }
+  // Show something the moment the menu item is tapped; the screen fills its own
+  // content when its data arrives, so the title and the body never disagree.
+  $("#content").innerHTML = '<div class="empty">Loading…</div>';
   await fn();
 }
 
@@ -1000,6 +1003,12 @@ function finesPanel(f) {
     return "<tr><td>" + esc(k.replace(/_/g, " ")) + '</td><td>' + o.count + '</td><td>' + money(o.issued) + "</td><td>" + money(o.collected) +
       "</td><td>" + (o.outstanding ? '<b>' + money(o.outstanding) + "</b>" : "—") + "</td></tr>";
   }).join("");
+  // Who issued the fines, so the dashboard shows each officer's ticket book, not just totals.
+  var officerRows = Object.keys(f.by_officer || {}).map(function (k) {
+    var o = f.by_officer[k];
+    return "<tr><td>" + esc(o.name) + '</td><td>' + o.count + '</td><td>' + money(o.issued) + "</td><td>" + money(o.collected) +
+      "</td><td>" + (o.outstanding ? '<b>' + money(o.outstanding) + "</b>" : "—") + "</td></tr>";
+  }).join("");
   return '<div class="grid cards">' +
       kpi("Fines issued", money(f.issued)) +
       kpi("Fines collected", money(f.collected), f.collection_rate == null ? "" : f.collection_rate + "% of issued") +
@@ -1009,16 +1018,20 @@ function finesPanel(f) {
     '<div class="row">' +
       cars("Fines paid by month", bars) +
       cars("Fines by offence", '<table><thead><tr><th>Offence</th><th>Fines</th><th>Issued</th><th>Collected</th><th>Owed</th></tr></thead><tbody>' + rows + "</tbody></table>") +
-    "</div>";
+    "</div>" +
+    (officerRows ? cars("Fines by issuing officer",
+      '<table><thead><tr><th>Officer</th><th>Fines</th><th>Issued</th><th>Collected</th><th>Owed</th></tr></thead><tbody>' + officerRows + "</tbody></table>") : "");
 }
 
 async function adminDashboard() {
-  var s = await api("/api/admin/reports/summary");
-  var vehicles = await api("/api/vehicles?limit=6");
-  var challans = await api("/api/enforcement/challans?limit=6");
-  var violations = await api("/api/enforcement/violations?limit=6");
-  var f = null;
-  try { f = await api("/api/admin/reports/fines"); } catch (e) { /* the fines panel just stays out */ }
+  var data = await Promise.all([
+    api("/api/admin/reports/summary"),
+    api("/api/vehicles?limit=6"),
+    api("/api/enforcement/challans?limit=6"),
+    api("/api/enforcement/violations?limit=6"),
+    api("/api/admin/reports/fines").catch(function () { return null; })  // the fines panel just stays out
+  ]);
+  var s = data[0], vehicles = data[1], challans = data[2], violations = data[3], f = data[4];
   return (
     '<div class="grid cards">' +
       kpi("Registered vehicles", s.vehicles) +
@@ -1042,14 +1055,16 @@ async function adminDashboard() {
 // their own recent work, and one tap to every tool. The full violation and
 // challan lists are a tap away on their own screens, so they aren't repeated here.
 async function officerDashboard() {
-  var driverReports = null;
-  try { driverReports = (await api("/api/driver-reports/?status=pending&limit=200")).length; } catch (e) { /* tile shows a dash */ }
-  var recent = null;
-  try { recent = await api("/api/enforcement/violations/summary"); } catch (e) { /* tile shows a dash */ }
-  var incidents = [];
-  try { incidents = await api("/api/incidents/alerts"); } catch (e) { /* board still renders */ }
-  var mine = null;
-  try { mine = await api("/api/enforcement/violations?mine=true&limit=10"); } catch (e) { /* card shows the error */ }
+  var data = await Promise.all([
+    api("/api/driver-reports/?status=pending&limit=200").catch(function () { return null; }),
+    api("/api/enforcement/violations/summary").catch(function () { return null; }),
+    api("/api/incidents/alerts").catch(function () { return []; }),
+    api("/api/enforcement/violations?mine=true&limit=10").catch(function () { return null; })
+  ]);
+  var driverReports = data[0] ? data[0].length : null;
+  var recent = data[1];
+  var incidents = data[2] || [];
+  var mine = data[3];
   var blocking = incidents.filter(function (a) { return a.blocking; }).length;
   var toReview = incidents.filter(function (a) { return a.verification === "unverified"; }).length;
   return (
@@ -1111,8 +1126,8 @@ function wireMyRecent() {
 }
 
 async function citizenDashboard() {
-  var d = await api("/api/portal/dashboard");
-  var s = await api("/api/citizen/summary");
+  var first = await Promise.all([api("/api/portal/dashboard"), api("/api/citizen/summary")]);
+  var d = first[0], s = first[1];
   var licence = d.licence;
   var vehicles = d.vehicles || [];
   var alerts = d.active_alerts || [];
@@ -1209,11 +1224,11 @@ function vehicleRows(vs) {
 
 function violationRows(vs) {
   return vs.length
-    ? '<div class="table-wrap"><table class="stack"><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th></tr>' + vs.map(function (v) {
+    ? '<div class="table-wrap"><table class="stack"><tr><th>Type</th><th>Category</th><th>Liable</th><th>Speed</th><th>Consequence</th><th>Offender</th><th>Location</th><th>When</th><th>Recorded by</th></tr>' + vs.map(function (v) {
         var offender = v.driver_name || v.owner_name || v.account_name || "Unknown offender";
         var vehicle = v.registration_number ? "<div class='small muted'>" + esc(v.registration_number) + "</div>" : "";
         if (driverMissing(v)) vehicle += "<div class='small' style='color:var(--warn);'>Driver not named yet</div>";
-        return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(v.violation_type)) + "</b>" + evidenceTag(v) + photoLink(v) + '</td><td data-label="Category">' + categoryPill(v.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + '</td><td data-label="Speed">' + speedCell(v) + '</td><td data-label="Consequence">' + (consequenceTags(v) || '<span class="small muted">—</span>') + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Location">' + esc(v.location) + gpsLink(v) + '</td><td data-label="When" class="small">' + dt(v.timestamp) + "</td></tr>";
+        return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(v.violation_type)) + "</b>" + evidenceTag(v) + photoLink(v) + '</td><td data-label="Category">' + categoryPill(v.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[v.liable_party] || v.liable_party) + '</td><td data-label="Speed">' + speedCell(v) + '</td><td data-label="Consequence">' + (consequenceTags(v) || '<span class="small muted">—</span>') + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Location">' + esc(v.location) + gpsLink(v) + '</td><td data-label="When" class="small">' + dt(v.timestamp) + '</td><td data-label="Recorded by" class="small">' + (v.officer_name ? esc(v.officer_name) : '<span class="muted">RTSA / system</span>') + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No violations recorded.</div>';
 }
@@ -1468,10 +1483,13 @@ document.addEventListener("click", function (e) {
 
 function challanRows(cs) {
   return cs.length
-    ? '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
+    ? '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Category</th><th>Liable</th><th>Offender</th><th>Issued by</th><th>Amount</th><th>Due</th><th>Status</th></tr>' + cs.map(function (c) {
         var offender = c.driver_name || c.owner_name || c.account_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted'>" + esc(c.registration_number) + "</div>" : "";
-        return '<tr><td data-label="Ref" class="mono">' + esc(c.reference) + '</td><td data-label="Category">' + categoryPill(c.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Amount">' + money(c.penalty_amount) + '</td><td data-label="Due" class="small">' + dueCell(c) + '</td><td data-label="Status">' + statusPill(c.status) + "</td></tr>";
+        var issued = (c.officer_name ? esc(c.officer_name) : '<span class="muted">RTSA</span>') +
+          (c.location ? "<div class='small muted'>" + esc(c.location) + "</div>" : "") +
+          (c.recorded_at ? "<div class='small muted'>" + dt(c.recorded_at) + "</div>" : "");
+        return '<tr><td data-label="Ref" class="mono">' + esc(c.reference) + '</td><td data-label="Category">' + categoryPill(c.category) + '</td><td data-label="Liable">' + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + '</td><td data-label="Offender">' + esc(offender) + vehicle + '</td><td data-label="Issued by" class="small">' + issued + '</td><td data-label="Amount">' + money(c.penalty_amount) + '</td><td data-label="Due" class="small">' + dueCell(c) + '</td><td data-label="Status">' + statusPill(c.status) + "</td></tr>";
       }).join("") + "</table></div>"
     : '<div class="empty">No challans found.</div>';
 }
@@ -1818,7 +1836,7 @@ async function loadChallans() {
   try {
     var items = await api("/api/enforcement/challans?limit=100" + (status ? "&status=" + status : ""));
     if (!items.length) { table.innerHTML = '<div class="empty">No challans found.</div>'; return; }
-    table.innerHTML = '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Offender</th><th>Category</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+    table.innerHTML = '<div class="table-wrap"><table class="stack"><tr><th>Ref</th><th>Offender</th><th>Category</th><th>Issued by</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (c) {
         // Same wording as the plate check: staff record a payment they received.
         var pay = c.status !== "paid"
@@ -1826,8 +1844,12 @@ async function loadChallans() {
           : "";
         var offender = c.driver_name || c.owner_name || c.account_name || "Unknown offender";
         var vehicle = c.registration_number ? "<div class='small muted mono'>" + esc(c.registration_number) + "</div>" : "";
+        var issued = (c.officer_name ? esc(c.officer_name) : '<span class="muted">RTSA</span>') +
+          (c.location ? "<div class='small muted'>" + esc(c.location) + "</div>" : "") +
+          (c.recorded_at ? "<div class='small muted'>" + dt(c.recorded_at) + "</div>" : "");
         return '<tr><td data-label="Ref" class="mono">' + esc(c.reference) + '</td><td data-label="Offender">' + esc(offender) + vehicle +
           '</td><td data-label="Category">' + categoryPill(c.category) + " <span class='small muted'>" + esc(LIABLE_LABELS[c.liable_party] || c.liable_party) + "</span>" +
+          '</td><td data-label="Issued by" class="small">' + issued +
           '</td><td data-label="Amount">' + money(c.penalty_amount) + '</td><td data-label="Due" class="small">' + dueCell(c) +
           '</td><td data-label="Status">' + statusPill(c.status) + "</td><td>" + pay + "</td></tr>";
       }).join("") + "</table></div>";
@@ -3093,7 +3115,7 @@ VIEWS.fines = async function () {
     list.innerHTML = (open.length
         ? '<p style="margin:0 0 12px;">' + open.length + " to pay, <b>" + money(total) + "</b> in total. Paid fines stay below as a record; receipts are in <a href=\"#/receipts\">Payment history</a>.</p>"
         : '<p class="muted" style="margin:0 0 12px;">All paid. Receipts are in <a href="#/receipts">Payment history</a>.</p>') +
-      '<div class="table-wrap"><table class="stack"><tr><th>Offence</th><th>When &amp; where</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
+      '<div class="table-wrap"><table class="stack"><tr><th>Offence</th><th>Issued by · when &amp; where</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>' +
       items.map(function (f) {
         var nom = "";
         if (f.nomination_status === "requested") nom = '<button class="btn sm finnominate">Name the driver</button> ';
@@ -3104,12 +3126,16 @@ VIEWS.fines = async function () {
         else if (f.appeal_status === "pending") appeal = '<span class="small muted">Appeal under review</span> ';
         else if (f.appeal_status === "dismissed") appeal = '<span class="small muted">Appeal dismissed</span> ';
         var pay = f.status === "cancelled" ? '<span class="small muted">Cancelled, nothing to pay</span>' : f.status !== "paid"
-          ? appeal + nom + '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '" data-amount="' + f.penalty_amount + '">Pay now</button>'
+          ? appeal + nom + '<button class="btn gold sm finpay" data-id="' + esc(f.id) + '" data-ref="' + esc(f.reference) + '" data-amount="' + f.penalty_amount +
+            '" data-officer="' + esc(f.officer_name || "") + '" data-location="' + esc(f.location || "") + '" data-when="' + esc(f.recorded_at || "") + '">Pay now</button>'
           : "";
         return '<tr><td data-label="Offence"><b>' + esc(offenceTypeLabel(f.violation_type)) + "</b>" +
             (f.registration_number ? " <span class='mono small'>" + esc(f.registration_number) + "</span>" : "") +
             "<div class='small muted mono'>" + esc(f.reference) + "</div></td>" +
-          '<td data-label="When &amp; where" class="small">' + dt(f.recorded_at) + (f.location ? "<div class='muted'>" + esc(f.location) + "</div>" : "") + "</td>" +
+          '<td data-label="Issued by · when &amp; where" class="small">' +
+            '<div>' + (f.officer_name ? "Issued by <b>" + esc(f.officer_name) + "</b>" : '<span class="muted">Issued by RTSA</span>') + "</div>" +
+            "<div>" + dt(f.recorded_at) + "</div>" +
+            (f.location ? "<div class='muted'>" + esc(f.location) + "</div>" : "") + "</td>" +
           '<td data-label="Amount">' + money(f.penalty_amount) + "</td>" +
           '<td data-label="Due" class="small">' + dueCell(f) + "</td>" +
           '<td data-label="Status">' + statusPill(f.status) + "</td><td>" + pay + "</td></tr>";
@@ -3120,7 +3146,9 @@ VIEWS.fines = async function () {
     $$("#fine-list .finnominate").forEach(function (btn) { btn.addEventListener("click", promptNominations); });
     $$("#fine-list .finpay").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        openPayModal(btn.dataset.id, btn.dataset.ref, Number(btn.dataset.amount));
+        openPayModal(btn.dataset.id, btn.dataset.ref, Number(btn.dataset.amount), {
+          officer: btn.dataset.officer, location: btn.dataset.location, when: btn.dataset.when
+        });
       });
     });
   } catch (e) {

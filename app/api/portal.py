@@ -12,7 +12,7 @@ from app.models.notification import Notification, NotificationChannel
 from app.models.payment import Payment, PaymentStatus, PaymentType
 from app.models.road_network import Road, RoadIncident
 from app.models.user import User
-from app.models.vehicle import Vehicle
+from app.models.vehicle import Vehicle, VehicleStatus
 from app.schemas.portal import (
     FineOut,
     AppealIn,
@@ -28,10 +28,10 @@ from app.schemas.portal import (
 from app.services import settings as runtime_settings
 from app.services.audit import log_action
 from app.services.notifications import notify
-from app.services.appeals import CAN_APPEAL, REASONS, appeal_window_open, file_appeal
+from app.services.appeals import CAN_APPEAL, REASONS, file_appeal
 from app.services.demerits import active_points
 from app.services.nomination import nominate, respond
-from app.services.stolen import report_stolen
+from app.services.stolen import mark_recovered, report_stolen
 from app.services import fines as fines_service
 from app.services.ownership import _linked_drivers, owed_challans_query, owes_challan, owned_vehicles_query
 from app.services.payments import create_payment
@@ -101,6 +101,22 @@ def _get_my_vehicles(db: Session, user: User) -> list[Vehicle]:
     return owned_vehicles_query(db, user).order_by(Vehicle.registration_date.desc()).all()
 
 
+def _violations_for(db: Session, challans: list[Challan]) -> dict[str, Violation]:
+    """The violation behind each challan, keyed by string id."""
+    ids = [c.violation_id for c in challans if c.violation_id]
+    if not ids:
+        return {}
+    return {str(v.id): v for v in db.query(Violation).filter(Violation.id.in_(ids)).all()}
+
+
+def _officer_names(db: Session, violations) -> dict[str, str]:
+    """Display names of the officers who recorded these violations, keyed by user id."""
+    ids = {v.recorded_by for v in violations if v and v.recorded_by}
+    if not ids:
+        return {}
+    return {str(u.id): u.full_name for u in db.query(User).filter(User.id.in_(ids)).all()}
+
+
 def _ensure_driver_registered(db: Session, user: User) -> Driver:
     driver = _get_my_licence(db, user)
     if not driver:
@@ -125,6 +141,22 @@ def dashboard(
     fines_service.ensure_current(db)
     fines = owed_challans_query(db, current_user).all()
     unpaid = [c for c in fines if c.status in fines_service.OWED]   # same rule as every other screen (appeals are not owed)
+    unpaid_violations = _violations_for(db, unpaid)
+    unpaid_officers = _officer_names(db, unpaid_violations.values())
+
+    def _dashboard_fine(c: Challan) -> FineOut:
+        v = unpaid_violations.get(str(c.violation_id))
+        return FineOut(
+            id=c.id,
+            reference=c.reference,
+            violation_type=v.violation_type.value if v else "fine",
+            location=v.location if v else "",
+            recorded_at=v.timestamp if v else c.created_at,
+            officer_name=(unpaid_officers.get(str(v.recorded_by)) if v and v.recorded_by else None),
+            penalty_amount=c.penalty_amount,
+            due_date=c.due_date,
+            status=c.status,
+        )
 
     alert_incidents = (
         db.query(RoadIncident)
@@ -161,34 +193,7 @@ def dashboard(
             }
             for v in vehicles
         ],
-        outstanding_fines=[
-            FineOut(
-                id=c.id,
-                reference=c.reference,
-                violation_type=(
-                    db.query(Violation.violation_type)
-                    .filter(Violation.id == c.violation_id)
-                    .scalar()
-                    or "fine"
-                ),
-                location=(
-                    db.query(Violation.location)
-                    .filter(Violation.id == c.violation_id)
-                    .scalar()
-                    or ""
-                ),
-                recorded_at=(
-                    db.query(Violation.timestamp)
-                    .filter(Violation.id == c.violation_id)
-                    .scalar()
-                    or c.created_at
-                ),
-                penalty_amount=c.penalty_amount,
-                due_date=c.due_date,
-                status=c.status,
-            )
-            for c in unpaid
-        ],
+        outstanding_fines=[_dashboard_fine(c) for c in unpaid],
         total_outstanding=sum(c.penalty_amount for c in unpaid),
         active_alerts=alerts,
         unread_notifications=unread,
@@ -263,11 +268,8 @@ def my_fines(
         query = query.filter(Challan.status.notin_([ChallanStatus.PAID, ChallanStatus.CANCELLED]))
     challans = query.order_by(Challan.created_at.desc()).all()
 
-    violations = (
-        {str(v.id): v for v in db.query(Violation).filter(Violation.id.in_([c.violation_id for c in challans])).all()}
-        if challans
-        else {}
-    )
+    violations = _violations_for(db, challans)
+    officers = _officer_names(db, violations.values())
     vehicle_ids = {c.vehicle_id for c in challans if c.vehicle_id}
     plates = (
         {str(v.id): v.registration_number for v in db.query(Vehicle).filter(Vehicle.id.in_(vehicle_ids))}
@@ -290,6 +292,7 @@ def my_fines(
             liable_party=v.liable_party if v else "both",
             location=v.location if v else "",
             recorded_at=v.timestamp if v else c.created_at,
+            officer_name=(officers.get(str(v.recorded_by)) if v and v.recorded_by else None),
             registration_number=plates.get(str(c.vehicle_id)) if c.vehicle_id else None,
             penalty_amount=c.penalty_amount,
             due_date=c.due_date,
@@ -297,7 +300,7 @@ def my_fines(
             nomination_status=c.nomination_status,
             nomination_deadline=c.nomination_deadline,
             appeal_status=appeals.get(str(c.id)),
-            can_appeal=c.status in CAN_APPEAL and appeals.get(str(c.id)) in (None, "upheld", "withdrawn") and appeal_window_open(db, c),
+            can_appeal=c.status in CAN_APPEAL and appeals.get(str(c.id)) in (None, "upheld", "withdrawn"),
         )
 
     return [_fine(c) for c in challans]
@@ -496,3 +499,21 @@ def report_vehicle_stolen(
     v = report_stolen(db, current_user, vehicle_id, payload.police_report_number, payload.stolen_at)
     db.commit()
     return {"registration_number": v.registration_number, "status": "stolen", "police_report_number": v.police_report_number, "fines_waived": getattr(v, "_waived", 0)}
+
+
+@router.post("/vehicles/{vehicle_id}/recovered", response_model=dict)
+def mark_vehicle_recovered(
+    vehicle_id: str,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """The owner has their vehicle back, or reported it stolen by mistake: undo it.
+
+    Fines are left alone. Only offences recorded after the theft had been waived, and those stay
+    cancelled: a wrong theft report is corrected by an officer, not by inventing charges.
+    """
+    vehicle = owned_vehicles_query(db, current_user).filter(Vehicle.id == vehicle_id).first()
+    if vehicle is None or vehicle.status != VehicleStatus.STOLEN:
+        raise HTTPException(status_code=404, detail="No stolen vehicle with that id")
+    v = mark_recovered(db, current_user, vehicle_id)
+    db.commit()
+    return {"registration_number": v.registration_number, "status": v.status.value}

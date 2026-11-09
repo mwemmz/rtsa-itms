@@ -135,6 +135,8 @@ class ViolationResponse(BaseModel):
     evidence_url: str | None = None
     timestamp: datetime
     description: str | None
+    # The officer who recorded it. Null for system/toll-issued violations.
+    officer_name: str | None = None
     registration_number: str | None = None
     owner_name: str | None = None
     owner_id_number: str | None = None
@@ -195,6 +197,10 @@ class ChallanResponse(BaseModel):
     owner_name: str | None = None
     driver_name: str | None = None
     account_name: str | None = None
+    # Where and when the offence was recorded, and by which officer.
+    location: str | None = None
+    recorded_at: datetime | None = None
+    officer_name: str | None = None
 
     model_config = {"from_attributes": True}
 

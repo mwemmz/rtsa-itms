@@ -35,6 +35,11 @@ class PaymentResponse(BaseModel):
     description: str | None = None
     failure_reason: str | None = None
     reconciled_at: datetime | None = None
+    # For fine payments: the ticket's details, so the payer can see who issued it, where and when.
+    fine_reference: str | None = None
+    issued_by: str | None = None
+    issued_where: str | None = None
+    issued_when: datetime | None = None
 
     model_config = {"from_attributes": True}
 

@@ -153,3 +153,47 @@ def test_an_owner_linked_by_email_can_pay_what_they_are_shown():
 
     assert fine["reference"] in _portal_refs(citizen)
     assert client.post(f"/api/portal/fines/{fine['id']}/pay", headers=citizen).status_code == 200
+
+
+def test_a_fine_shows_who_issued_it_where_and_when():
+    officer_name = f"Officer Issuer {uuid4().hex[:6]}"
+    officer, _, _ = _login("officer", full_name=officer_name)
+    citizen, user_id, _ = _login("citizen")
+    driver_id, _ = _driver(user_id=user_id)
+    created = _record(officer, driver_id=driver_id, violation_type="using_phone")
+    ref = created["challan"]["reference"]
+
+    # The citizen's list names the issuing officer, the place and the time.
+    fine = next(f for f in client.get("/api/portal/fines", headers=citizen).json() if f["reference"] == ref)
+    assert fine["officer_name"] == officer_name
+    assert fine["location"] == "Cairo Road"
+    assert fine["recorded_at"]
+
+    # The detail endpoint agrees.
+    detail = client.get(f"/api/citizen/fines/{fine['id']}", headers=citizen).json()
+    assert detail["violation"]["officer_name"] == officer_name
+
+    # The officer/admin challan feed (what the admin dashboard shows) carries it too.
+    listed = next(c for c in client.get("/api/enforcement/challans?limit=200", headers=officer).json()
+                  if c["reference"] == ref)
+    assert listed["officer_name"] == officer_name
+    assert listed["location"] == "Cairo Road"
+
+    # Once paid, the payment history and the receipt keep the same details.
+    assert client.post(f"/api/portal/fines/{fine['id']}/pay", headers=citizen).status_code == 200
+    paid = next(p for p in client.get("/api/citizen/payments?limit=100", headers=citizen).json()
+                if p["fine_reference"] == ref)
+    assert paid["issued_by"] == officer_name
+    assert paid["issued_where"] == "Cairo Road"
+    assert paid["issued_when"]
+    receipt = client.get(f"/api/payments/{paid['id']}/receipt", headers=citizen)
+    assert receipt.status_code == 200, receipt.text
+    assert receipt.json()["issued_by"] == officer_name
+
+    # The admin dashboard's fines report groups by the officer who issued them.
+    admin, _, _ = _login("admin")
+    report = client.get("/api/admin/reports/fines", headers=admin).json()
+    row = next(o for o in report["by_officer"].values() if o["name"] == officer_name)
+    assert row["count"] >= 1
+    assert row["issued"] >= 200000 and row["collected"] >= 200000
+    assert sum(o["issued"] for o in report["by_officer"].values()) == report["issued"]
