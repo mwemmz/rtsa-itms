@@ -897,7 +897,7 @@ function openPayModal(id, ref, amount) {
     host.insertBefore(card, host.firstChild);
 
     var map = L.map("gf-map").setView([-15.42, 28.28], 11);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    tilesWithFallback(map);
     var fence = L.layerGroup().addTo(map), marks = L.layerGroup().addTo(map);
     var permits = [], plates = {}, current = null, pts = [], mode = "", hint = $("#gf-hint");
     function say(t, cls) { hint.innerHTML = t ? '<span class="' + (cls || "") + '">' + t + "</span>" : ""; }
@@ -1053,6 +1053,21 @@ function openPayModal(id, ref, amount) {
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 })();
 
+
+// Street map tiles with a backup provider: if OpenStreetMap tiles keep failing (blocked or slow network), switch to CARTO.
+function tilesWithFallback(map) {
+  var osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "&copy; OpenStreetMap contributors" }).addTo(map), errs = 0, loaded = 0, swapped = false;
+  osm.on("tileload", function () { loaded++; });
+  osm.on("tileerror", function () {
+    errs++;
+    if (!swapped && errs >= 3 && loaded === 0) {
+      swapped = true; map.removeLayer(osm);
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abcd", attribution: "&copy; OpenStreetMap contributors &copy; CARTO" }).addTo(map);
+    }
+  });
+  return osm;
+}
+
 // ---- Live monitoring: vehicles moving on a map right now; tap one to see who and what it is ----
 (function () {
   [["admin"], ["officer"]].forEach(function (r) {
@@ -1090,11 +1105,12 @@ function openPayModal(id, ref, amount) {
       '<div class="lv-pills" id="lv-sum"></div>' +
       '<div class="toolbar"><label class="small"><input type="checkbox" id="lv-only" style="width:auto;display:inline-block;vertical-align:middle"> Show only vehicles needing attention</label></div>' +
       '<div class="lv-wrap"><div id="lv-map"></div><div id="lv-panel" style="display:none"></div></div>' +
-      '<div class="small muted" style="margin-top:8px"><span style="color:#2fbf71">&#9650;</span> compliant &nbsp; <span style="color:#ff9f43">&#9650;</span> has issues &nbsp; <span style="color:#ff5a5f">&#9650;</span> off its licensed route &nbsp; faded = stopped. The arrow points the way the vehicle is heading.</div></div>' +
+      '<div class="small muted" style="margin-top:8px"><span style="color:#2fbf71">&#9650;</span> compliant &nbsp; <span style="color:#ff9f43">&#9650;</span> has issues &nbsp; <span style="color:#ff5a5f">&#9650;</span> off its licensed route &nbsp; <span style="color:#ffc800">&#9473;</span> route (solid = licensed PSV route with allowed corridor, dashed = usual road) &nbsp; faded = stopped. The arrow points the way the vehicle is heading.</div></div>' +
       '<div class="card"><h3>Vehicles</h3><div id="lv-list"><div class="empty">Loading…</div></div></div>';
     var map = L.map("lv-map").setView([-15.40, 28.35], 10);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    tilesWithFallback(map);
     setTimeout(function () { map.invalidateSize(); }, 200);
+    var routeLayer = L.layerGroup().addTo(map), drawn = {};
     var data = {}, order = [], marks = {}, selected = null, follow = false, fitted = false, summary = null, only = false;
 
     function visible(v) { return !only || v.state !== "ok"; }
@@ -1155,6 +1171,12 @@ function openPayModal(id, ref, amount) {
       var now = performance.now(), seen = {};
       list.forEach(function (v) {
         seen[v.id] = 1; data[v.id] = v; if (order.indexOf(v.id) < 0) order.push(v.id);
+        if (!drawn[v.route] && v.route_points && v.route_points.length > 1) {   // each distinct route is drawn once, with its allowed corridor
+          drawn[v.route] = 1;
+          if (v.buffer_m) L.polyline(v.route_points, { color: "#ffc800", weight: Math.max(6, v.buffer_m / 40), opacity: 0.18, lineCap: "round" }).addTo(routeLayer);
+          L.polyline(v.route_points, { color: "#ffc800", weight: 4, opacity: 0.85, dashArray: v.buffer_m ? null : "8 8" }).bindTooltip(v.route).addTo(routeLayer);
+          v.route_points.forEach(function (p, i) { if (i === 0 || i === v.route_points.length - 1) L.circleMarker(p, { radius: 5, color: "#0f2238", weight: 2, fillColor: "#ffc800", fillOpacity: 1 }).addTo(routeLayer); });
+        }
         var mk = marks[v.id];
         if (!mk) {
           var m = L.marker([v.lat, v.lon], { icon: iconFor(v), keyboard: false, zIndexOffset: v.state === "offroute" ? 500 : 0 }).addTo(map);

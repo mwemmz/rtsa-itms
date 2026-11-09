@@ -155,7 +155,7 @@ def snapshot(db: Session, now: float | None = None) -> list[dict]:
         state = "offroute" if off_route else ("flagged" if problems else "ok")
         out.append({
             "id": f["id"], "plate": f["plate"], "make": f["make"], "model": f["model"], "year": f["year"], "colour": f["colour"],
-            "owner": f["owner"], "route": f["route"], "psv": f["psv"], "state": state, "problems": problems,
+            "owner": f["owner"], "route": f["route"], "route_points": f["pts"], "buffer_m": f["buffer_m"], "psv": f["psv"], "state": state, "problems": problems,
             "checks": f["checks"], "blacklisted": f["blacklisted"], "distance_from_route_m": distance, "allowed_m": f["buffer_m"],
             "updated_at": t, **p,
         })
