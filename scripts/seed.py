@@ -577,6 +577,33 @@ def seed_demo_portal() -> None:
         db.close()
 
 
+def _psv_documents(db) -> None:
+    """Valid insurance and fitness for the first two baseline buses (the third stays non-compliant on purpose),
+    so the live map shows a mix of compliant and flagged vehicles. Safe to run repeatedly."""
+    from datetime import timedelta
+
+    from app.models.inspection import FitnessCertificate, Inspection, InspectionResult
+    from app.models.insurance import Insurance
+    from app.models.vehicle import Vehicle
+
+    now = datetime.utcnow()
+    for plate in ("ABC 101 Z", "ABC 102 Z"):
+        v = db.query(Vehicle).filter(Vehicle.registration_number == plate).first()
+        if not v:
+            continue
+        if not db.query(Insurance).filter(Insurance.vehicle_id == v.id).first():
+            db.add(Insurance(vehicle_id=v.id, provider="Madison General", policy_number=f"POL-{plate.replace(' ', '')}",
+                             start_date=now - timedelta(days=60), end_date=now + timedelta(days=300)))
+        if not db.query(FitnessCertificate).filter(FitnessCertificate.vehicle_id == v.id).first():
+            insp = Inspection(vehicle_id=v.id, inspection_centre="Lusaka Road Test Centre",
+                              scheduled_date=now - timedelta(days=30), result=InspectionResult.PASSED)
+            db.add(insp)
+            db.flush()
+            db.add(FitnessCertificate(inspection_id=insp.id, vehicle_id=v.id, certificate_number=f"FIT-{plate.replace(' ', '')}",
+                                      issued_date=now - timedelta(days=30), expiry_date=now + timedelta(days=335)))
+    db.commit()
+
+
 def seed_psv_baseline() -> None:
     """Make PSV & routes show something on a fresh database: 3 operators, 3 minibuses with permits,
     two with a geo-fence route, and one sample route alert. Skipped if any PSV operator exists."""
@@ -592,6 +619,7 @@ def seed_psv_baseline() -> None:
     try:
         if db.query(PSVOperator).first():
             print("PSV data already present")
+            _psv_documents(db)
             return
         now = datetime.now(timezone.utc)
         admin = db.query(User).filter(User.email == "admin@rtsa.gov.zm").first()
@@ -628,6 +656,7 @@ def seed_psv_baseline() -> None:
             db.add(PSVRouteAlert(permit_id=first_permit.id, vehicle_id=first_vehicle.id, latitude=-15.2500,
                                  longitude=28.5200, distance_m=7800, buffer_m=500, occurred_at=now - timedelta(hours=3)))
         db.commit()
+        _psv_documents(db)
         print("PSV baseline created: 3 operators, 3 permits, 2 routes, 1 route alert")
     finally:
         db.close()

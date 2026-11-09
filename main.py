@@ -33,7 +33,7 @@ from app.api import (
     toll,
     vehicles,
 )
-from app.api import integration, lookup, reports, system
+from app.api import integration, live, lookup, reports, system
 from app.api.health import router as health_router
 from app.api import assistant, driver_reports, incidents, portal, road_network, routing
 from app.core.bootstrap import run_startup_tasks
@@ -98,6 +98,7 @@ app.include_router(enforcement.router)
 app.include_router(anpr.router)
 app.include_router(toll.router)
 app.include_router(psv.router)
+app.include_router(live.router)
 app.include_router(accidents.router)
 app.include_router(payments.router)
 app.include_router(citizen.router)

@@ -19,7 +19,7 @@
   NAV.citizen.push({ id: "services", label: "Pay for services" });
 
   var GROUPS = [
-    ["Overview", ["dashboard", "bi", "insights", "reports"]],
+    ["Overview", ["dashboard", "live", "bi", "insights", "reports"]],
     ["Vehicles and drivers", ["vehicles", "drivers", "licensing", "inspections", "insurance", "psv"]],
     ["Enforcement", ["violations", "challans", "driver_reports", "anpr", "toll", "accidents"]],
     ["Roads", ["alerts", "planner"]],
@@ -1051,4 +1051,142 @@ function openPayModal(id, ref, amount) {
     new MutationObserver(function (list) { list.forEach(function (m) { m.addedNodes.forEach(function (n) { if (n.nodeType === 1) harden(n); }); }); }).observe(document.body, { childList: true, subtree: true });
   }
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
+
+// ---- Live monitoring: vehicles moving on a map right now; tap one to see who and what it is ----
+(function () {
+  [["admin"], ["officer"]].forEach(function (r) {
+    if (!NAV[r[0]].some(function (x) { return x.id === "live"; })) NAV[r[0]].splice(1, 0, { id: "live", label: "Live monitoring" });
+  });
+  var st = document.createElement("style");
+  st.textContent =
+    ".lv-wrap{position:relative}#lv-map{height:min(72vh,600px);min-height:420px;border-radius:12px;overflow:hidden;border:1px solid var(--line)}" +
+    ".lv-icon{background:none;border:0}.lv-car{width:34px;height:34px;margin:5px;transition:opacity .3s}.lv-car svg{width:34px;height:34px;filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}" +
+    ".lv-plate{position:absolute;left:50%;top:40px;transform:translateX(-50%);font:700 10px/1 ui-monospace,monospace;background:#0f2238;color:#fff;border:1px solid #ffc800;border-radius:4px;padding:2px 4px;white-space:nowrap}" +
+    ".lv-sel .lv-car{outline:3px solid #fff;border-radius:50%;background:rgba(255,200,0,.35)}.lv-stopped .lv-car{opacity:.65}" +
+    "#lv-panel{position:absolute;left:10px;right:10px;bottom:10px;z-index:1000;max-height:48%;overflow:auto;background:var(--card,#16304d);border:1px solid var(--gold,#ffc800);border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(0,0,0,.5)}" +
+    "#lv-panel .lv-x{position:absolute;right:8px;top:8px}#lv-panel ul{list-style:none;margin:8px 0 0;padding:0}#lv-panel li{padding:3px 0;font-size:13px}" +
+    ".lv-pills{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}.lv-pills .pill{font-size:13px;padding:6px 10px}" +
+    "@media(min-width:900px){#lv-panel{left:auto;width:360px;top:10px;bottom:10px;max-height:none}}";
+  document.head.appendChild(st);
+
+  var LABEL = { registration_status: "Registration", blacklist: "Blacklist", insurance: "Insurance", fitness: "Fitness certificate", outstanding_fines: "Fines", toll_dues: "Toll dues", psv_permit: "PSV permit" };
+  var COLOUR = { ok: "#2fbf71", flagged: "#ff9f43", offroute: "#ff5a5f" };
+  var WORD = { ok: "Compliant", flagged: "Has issues", offroute: "OFF ROUTE" };
+  function compass(d) { return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(d / 45) % 8]; }
+  function iconFor(v) {
+    var c = COLOUR[v.state] || "#999";
+    return L.divIcon({ className: "lv-icon " + (v.moving ? "" : "lv-stopped"), iconSize: [44, 44], iconAnchor: [22, 22],
+      html: '<div class="lv-car" style="transform:rotate(' + v.heading + 'deg)"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="15" fill="#0f2238" stroke="' + c + '" stroke-width="3"/><path d="M17 6 L25 25 L17 20 L9 25 Z" fill="' + c + '"/></svg></div><span class="lv-plate">' + esc(v.plate) + "</span>" });
+  }
+
+  VIEWS.live = async function () {
+    var host = $("#content");
+    if (typeof L === "undefined") { host.innerHTML = '<div class="card"><div class="empty">The map library could not load. Check your connection and reload.</div></div>'; return; }
+    host.innerHTML =
+      '<div class="card"><h3>Live monitoring</h3>' +
+      '<p class="small muted" style="margin:0 0 10px">Vehicles on the road right now. Tap a vehicle to see who it belongs to, how fast it is going and whether its documents are in order. ' +
+      '<b>Simulated feed:</b> there are no GPS units in this demo, so movement is generated; the vehicles and their documents are real records.</p>' +
+      '<div class="lv-pills" id="lv-sum"></div>' +
+      '<div class="toolbar"><label class="small"><input type="checkbox" id="lv-only" style="width:auto;display:inline-block;vertical-align:middle"> Show only vehicles needing attention</label></div>' +
+      '<div class="lv-wrap"><div id="lv-map"></div><div id="lv-panel" style="display:none"></div></div>' +
+      '<div class="small muted" style="margin-top:8px"><span style="color:#2fbf71">&#9650;</span> compliant &nbsp; <span style="color:#ff9f43">&#9650;</span> has issues &nbsp; <span style="color:#ff5a5f">&#9650;</span> off its licensed route &nbsp; faded = stopped. The arrow points the way the vehicle is heading.</div></div>' +
+      '<div class="card"><h3>Vehicles</h3><div id="lv-list"><div class="empty">Loading…</div></div></div>';
+    var map = L.map("lv-map").setView([-15.40, 28.35], 10);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, subdomains: "abc", attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+    setTimeout(function () { map.invalidateSize(); }, 200);
+    var data = {}, order = [], marks = {}, selected = null, follow = false, fitted = false, summary = null, only = false;
+
+    function visible(v) { return !only || v.state !== "ok"; }
+    function summaryHtml() {
+      if (!summary) return "";
+      return pill(summary.moving + " moving", "green") + pill(summary.stopped + " stopped", "gray") + pill(summary.flagged + " need attention", summary.flagged ? "amber" : "gray") +
+        pill(summary.off_route + " off route", summary.off_route ? "red" : "gray") + pill(summary.total + " tracked", "gray");
+    }
+    function panelHtml(v) {
+      var checks = (v.checks || []).map(function (c) {
+        var ok = c.status === "pass";
+        return "<li>" + (ok ? '<span style="color:#2fbf71">&#10003;</span>' : '<span style="color:#ff5a5f">&#10007;</span>') + " <b>" + esc(LABEL[c.check] || c.check) + "</b>" + (c.detail ? ' <span class="muted">' + esc(c.detail) + "</span>" : "") + "</li>";
+      }).join("");
+      return '<button class="btn ghost sm lv-x" id="lv-close" type="button">Close</button>' +
+        '<div style="font:700 20px ui-monospace,monospace">' + esc(v.plate) + "</div>" +
+        '<div class="small muted">' + esc([v.year, v.make, v.model, v.colour].filter(Boolean).join(" ")) + "</div>" +
+        '<div style="margin:8px 0">' + pill(WORD[v.state] || v.state, v.state === "ok" ? "green" : v.state === "offroute" ? "red" : "amber") + " " + (v.moving ? pill("moving", "green") : pill("stopped", "gray")) + (v.blacklisted ? " " + pill("blacklisted", "red") : "") + "</div>" +
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px">' +
+        "<span class=muted>Speed</span><b>" + v.speed_kmh + " km/h</b>" +
+        "<span class=muted>Heading</span><b>" + compass(v.heading) + " (" + v.heading + "&deg;)</b>" +
+        "<span class=muted>Route</span><b>" + esc(v.route) + "</b>" +
+        "<span class=muted>Owner</span><b>" + esc(v.owner) + "</b>" +
+        (v.psv ? "<span class=muted>PSV permit</span><b>" + esc(v.psv.permit) + (v.psv.operator ? " &middot; " + esc(v.psv.operator) : "") + "</b>" : "") +
+        (v.allowed_m ? "<span class=muted>From route</span><b>" + v.distance_from_route_m + " m (allowed " + v.allowed_m + " m)</b>" : "") +
+        "<span class=muted>Position</span><span class=mono>" + v.lat.toFixed(4) + ", " + v.lon.toFixed(4) + "</span></div>" +
+        (v.problems.length ? '<div class="error-box" style="margin-top:10px">' + v.problems.map(esc).join("<br>") + "</div>" : "") +
+        '<ul>' + checks + "</ul>" +
+        '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn gold sm" id="lv-follow" type="button">' + (follow ? "Stop following" : "Follow this vehicle") + "</button>" +
+        '<a class="btn ghost sm" href="#/vehicles">Open vehicles</a></div>' +
+        '<div class="small muted" style="margin-top:8px">Simulated position, refreshed every 2 seconds (demo time runs faster than real time so movement is visible).</div>';
+    }
+    function renderPanel() {
+      var box = $("#lv-panel"), v = selected && data[selected];
+      if (!v) { box.style.display = "none"; return; }
+      var top = box.scrollTop; box.innerHTML = panelHtml(v); box.style.display = ""; box.scrollTop = top;
+      $("#lv-close").onclick = function () { select(null); };
+      $("#lv-follow").onclick = function () { follow = !follow; renderPanel(); if (follow) map.panTo([v.lat, v.lon]); };
+    }
+    function renderList() {
+      var rows = order.map(function (id) { return data[id]; }).filter(visible).map(function (v) {
+        return ['<a href="javascript:void(0)" class="lv-row" data-id="' + esc(v.id) + '"><b class="mono">' + esc(v.plate) + "</b></a>", esc([v.make, v.model].join(" ")), esc(v.route), v.speed_kmh + " km/h",
+          pill(WORD[v.state], v.state === "ok" ? "green" : v.state === "offroute" ? "red" : "amber")];
+      });
+      $("#lv-list").innerHTML = rows.length ? tbl(["Plate", "Vehicle", "Route", "Speed", "Status"], rows) : '<div class="empty">Nothing needs attention right now.</div>';
+      $$("#lv-list .lv-row").forEach(function (a) { a.addEventListener("click", function () { select(a.dataset.id, true); window.scrollTo({ top: $("#lv-map").getBoundingClientRect().top + window.scrollY - 70, behavior: "smooth" }); }); });
+    }
+    function select(id, fly) {
+      selected = id; if (!id) follow = false;
+      Object.keys(marks).forEach(function (k) { var el = marks[k].m.getElement(); if (el) el.classList.toggle("lv-sel", k === id); });
+      renderPanel();
+      if (id && fly && data[id]) map.setView([data[id].lat, data[id].lon], Math.max(map.getZoom(), 13));
+      if (id && marks[id]) {   // keep the chosen vehicle in the top half, clear of the info panel
+        var sz = map.getSize(), pt = map.latLngToContainerPoint(marks[id].m.getLatLng());
+        if (window.innerWidth < 900 && pt.y > sz.y * 0.45) map.panBy([0, pt.y - sz.y * 0.3]);
+      }
+    }
+    function apply(list) {
+      var now = performance.now(), seen = {};
+      list.forEach(function (v) {
+        seen[v.id] = 1; data[v.id] = v; if (order.indexOf(v.id) < 0) order.push(v.id);
+        var mk = marks[v.id];
+        if (!mk) {
+          var m = L.marker([v.lat, v.lon], { icon: iconFor(v), keyboard: false, zIndexOffset: v.state === "offroute" ? 500 : 0 }).addTo(map);
+          m.on("click", function () { select(v.id); });
+          mk = marks[v.id] = { m: m, from: [v.lat, v.lon], to: [v.lat, v.lon], t0: now, state: v.state, moving: v.moving };
+        } else {
+          var cur = mk.m.getLatLng(); mk.from = [cur.lat, cur.lng]; mk.to = [v.lat, v.lon]; mk.t0 = now;
+          mk.m.setIcon(iconFor(v)); mk.state = v.state; mk.moving = v.moving; mk.m.setZIndexOffset(v.state === "offroute" ? 500 : 0);
+        }
+        var el = mk.m.getElement(); if (el) { el.classList.toggle("lv-sel", v.id === selected); el.style.display = visible(v) ? "" : "none"; }
+      });
+      if (!fitted && list.length) { map.fitBounds(L.latLngBounds(list.map(function (v) { return [v.lat, v.lon]; })).pad(0.2), { maxZoom: 12 }); fitted = true; }
+      $("#lv-sum").innerHTML = summaryHtml(); renderPanel(); renderList();
+    }
+    function frame() {
+      if (!$("#lv-map")) return;
+      var now = performance.now();
+      Object.keys(marks).forEach(function (k) {
+        var mk = marks[k], f = Math.min(1, (now - mk.t0) / 2000);
+        if (f < 1 || mk.animating) { mk.m.setLatLng([mk.from[0] + (mk.to[0] - mk.from[0]) * f, mk.from[1] + (mk.to[1] - mk.from[1]) * f]); mk.animating = f < 1; }
+      });
+      if (follow && selected && marks[selected]) map.panTo(marks[selected].m.getLatLng(), { animate: false });
+      requestAnimationFrame(frame);
+    }
+    async function poll() {
+      if (!$("#lv-map")) return;
+      try { var r = await api("/api/live/vehicles"); summary = r.summary; apply(r.vehicles); }
+      catch (e) { $("#lv-sum").innerHTML = '<span class="error-box">' + esc(e.message) + "</span>"; }
+      setTimeout(poll, 2000);
+    }
+    $("#lv-only").addEventListener("change", function (e) { only = e.target.checked; Object.keys(marks).forEach(function (k) { var el = marks[k].m.getElement(); if (el) el.style.display = visible(data[k]) ? "" : "none"; }); renderList(); });
+    requestAnimationFrame(frame);
+    poll();
+  };
 })();
