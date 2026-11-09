@@ -97,12 +97,35 @@ def bi(days: int = Query(365, ge=30, le=1825), db: Session = Depends(get_db),
     this_month = db.query(func.count()).select_from(Violation).filter(Violation.timestamp >= month_start).scalar() or 0
     avg_month = total / max(days / 30.4, 1)
     pace = round(this_month / avg_month * 100, 1) if avg_month else 0.0
+    def zmw(n):
+        return f"ZMW {int(n) // 100:,}"
+
     dials = [
-        {"id": "collection", "zones": ZONES_HIGH, "label": "Fines collected", "unit": "%", "value": collection, "max": 100, "zone": _zone(collection, True), "note": "of the value issued"},
-        {"id": "insured", "zones": ZONES_HIGH, "label": "Vehicles insured", "unit": "%", "value": insured_pct, "max": 100, "zone": _zone(insured_pct, True), "note": "with an active policy"},
-        {"id": "fit", "zones": ZONES_HIGH, "label": "Fitness certified", "unit": "%", "value": fit_pct, "max": 100, "zone": _zone(fit_pct, True), "note": "with a valid certificate"},
-        {"id": "overdue", "zones": ZONES_LOW, "label": "Fines overdue", "unit": "%", "value": overdue_share, "max": 100, "zone": _zone(overdue_share, False), "note": "of fines still owed"},
-        {"id": "pace", "zones": ZONES_PACE, "label": "Offences this month", "unit": "% of avg", "value": min(pace, 200), "max": 200, "zone": "green" if pace <= 100 else "amber" if pace <= 130 else "red", "note": f"{this_month} so far vs {avg_month:.0f} a month"},
+        {"id": "collection", "zones": ZONES_HIGH, "label": "Fines collected", "unit": "%", "value": collection, "max": 100, "zone": _zone(collection, True),
+         "note": f"{zmw(paid)} paid of {zmw(issued)} issued",
+         "measures": "How much of the money fined has actually been paid.",
+         "out_of": f"{zmw(paid)} paid out of {zmw(issued)} issued, on fines created in the last {days} days (cancelled fines left out).",
+         "why": "Unpaid fines mean no deterrent and lost revenue. This is the headline revenue-leakage figure.", "good": "High. 75% or more is green."},
+        {"id": "insured", "zones": ZONES_HIGH, "label": "Vehicles insured", "unit": "%", "value": insured_pct, "max": 100, "zone": _zone(insured_pct, True),
+         "note": f"{insured} of {vehicles} active vehicles",
+         "measures": "How many registered vehicles have a valid insurance policy today.",
+         "out_of": f"{insured} insured out of {vehicles} active registered vehicles.",
+         "why": "Uninsured vehicles leave accident victims unpaid. It shows where insurance enforcement is needed.", "good": "High. 75% or more is green."},
+        {"id": "fit", "zones": ZONES_HIGH, "label": "Fitness certified", "unit": "%", "value": fit_pct, "max": 100, "zone": _zone(fit_pct, True),
+         "note": f"{fit} of {vehicles} active vehicles",
+         "measures": "How many registered vehicles hold an unexpired fitness (roadworthiness) certificate.",
+         "out_of": f"{fit} with a valid certificate out of {vehicles} active registered vehicles.",
+         "why": "Unfit vehicles are a direct road-safety risk, so a low figure points to missed inspections.", "good": "High. 75% or more is green."},
+        {"id": "overdue", "zones": ZONES_LOW, "label": "Fines overdue", "unit": "%", "value": overdue_share, "max": 100, "zone": _zone(overdue_share, False),
+         "note": f"{overdue_n} of {open_n} fines still owed",
+         "measures": "Of the fines still owed, how many are past their due date.",
+         "out_of": f"{overdue_n} overdue out of {open_n} unpaid or overdue fines (all time).",
+         "why": "Shows how quickly people pay. A rising share means reminders and follow-up are not working.", "good": "Low. 15% or less is green."},
+        {"id": "pace", "zones": ZONES_PACE, "label": "Offences this month", "unit": "% of avg", "value": min(pace, 200), "max": 200, "zone": "green" if pace <= 100 else "amber" if pace <= 130 else "red",
+         "note": f"{this_month} so far vs {avg_month:.0f} a month",
+         "measures": "Offences recorded this calendar month compared with the usual monthly number.",
+         "out_of": f"{this_month} offences this month against an average of {avg_month:.0f} a month over the last {days} days.",
+         "why": "An early signal of a spike, so patrols can be moved before the month ends.", "good": "At or under 100% of the average is green."},
     ]
 
     # --- warning lights ---
