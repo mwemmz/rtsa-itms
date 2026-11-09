@@ -12,7 +12,7 @@ from app.models.audit_log import AuditLog
 from app.models.driver import Driver
 from app.models.enforcement import Challan, ChallanStatus
 from app.models.notification import Notification, NotificationRule, NotificationStatus
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentStatus
 from app.models.platform import Device, LoginAttempt, RolePermission, UserSession
 from app.models.user import STAFF_ROLES, User, UserRole
 from app.models.vehicle import Vehicle
@@ -434,7 +434,7 @@ def report_summary(
         "challans_unpaid": db.query(Challan).filter(Challan.status.in_([ChallanStatus.UNPAID, ChallanStatus.OVERDUE])).count(),
         "challans_overdue": db.query(Challan).filter(Challan.status == ChallanStatus.OVERDUE).count(),
         "challans_paid": db.query(Challan).filter(Challan.status == ChallanStatus.PAID).count(),
-        "revenue_collected": db.query(func.sum(Payment.amount)).filter(Payment.status == "completed").scalar() or 0,
+        "revenue_collected": db.query(func.sum(Payment.amount)).filter(Payment.status == PaymentStatus.COMPLETED).scalar() or 0,
     }
 
 
