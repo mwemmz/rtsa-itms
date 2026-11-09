@@ -62,6 +62,7 @@ def initiate_payment(
         payload.gateway or "sandbox",
         idempotency_key or payload.idempotency_key,
         payload.description,
+        sim=payload.details,
     )
     db.commit()
     db.refresh(payment)

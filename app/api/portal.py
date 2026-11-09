@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Body
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -361,6 +361,7 @@ def respond_to_nomination(
 @router.post("/fines/{challan_id}/pay", response_model=dict)
 def pay_fine(
     challan_id: str,
+    payload: dict | None = Body(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -371,13 +372,19 @@ def pay_fine(
     if not owes_challan(db, current_user, challan):
         raise HTTPException(status_code=403, detail="This fine is not charged to you or your vehicles")
 
-    payment, _ = create_payment(db, current_user, PaymentType.FINE, challan.id)
+    payload = payload or {}
+    method = payload.get("method")
+    gateway = {"mobile_money": "sim_mobile", "card": "sim_card"}.get(method, "sandbox")
+    payment, _ = create_payment(db, current_user, PaymentType.FINE, challan.id, gateway=gateway, sim=payload.get("details"))
     db.commit()
+    ok = payment.status.value == "completed"
     return {
         "challan_reference": challan.reference,
         "payment_reference": payment.reference,
-        "status": "paid",
-        "message": "Fine settled. Receipt sent to your notifications.",
+        "receipt_number": payment.receipt_number,
+        "status": "paid" if ok else "failed",
+        "reason": payment.failure_reason,
+        "message": "Fine settled. Receipt sent to your notifications." if ok else (payment.failure_reason or "Payment failed."),
     }
 
 

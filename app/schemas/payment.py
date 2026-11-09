@@ -15,6 +15,8 @@ class PaymentCreate(BaseModel):
     gateway: str | None = "sandbox"
     description: str | None = Field(default=None, max_length=300)
     idempotency_key: str | None = Field(default=None, max_length=100)
+    # Simulated gateways only (sim_mobile / sim_card): phone+pin, or card number/expiry/cvv/name. Never stored.
+    details: dict | None = None
 
 
 class PaymentResponse(BaseModel):

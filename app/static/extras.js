@@ -795,3 +795,77 @@ function dialTile(g) {
     } catch (e) { return html; }
   };
 })();
+
+// ---- Simulated payment: mobile money (MTN, Airtel, Zamtel) and card. No real money moves. ----
+function openPayModal(id, ref, amount) {
+  var old = document.getElementById("pay-modal"); if (old) old.remove();
+  var box = document.createElement("div"); box.id = "pay-modal"; box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
+  box.style.cssText = "position:fixed;inset:0;background:rgba(10,20,35,.75);z-index:1100;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px;";
+  var method = "mobile_money", phase = "form", otpNeeded = "", msg = "", keep = {};
+  function networkOf(p) { p = (p || "").replace(/\D/g, ""); if (p.indexOf("260") === 0) p = "0" + p.slice(3); var x = p.slice(0, 3); return x === "096" || x === "076" ? "MTN" : x === "097" || x === "077" ? "Airtel" : x === "095" || x === "075" ? "Zamtel" : ""; }
+  function render() {
+    var h = '<div class="card" style="max-width:480px;width:100%;margin:auto;"><h3>Pay ' + esc(money(amount)) + '</h3><div class="small muted">e-Challan ' + esc(ref) + '</div>' +
+      '<div class="pay-sim">SIMULATION · no real money moves and nothing you type is stored</div>';
+    if (phase === "done") {
+      h += '<div class="pay-result ok"><div class="pay-tick">✓</div><b>Payment received</b><div class="small">' + esc(msg) + '</div></div><div style="margin-top:14px"><button class="btn gold" id="pm-close">Done</button></div></div>';
+    } else if (phase === "failed") {
+      h += '<div class="pay-result err"><div class="pay-tick">✕</div><b>Payment not completed</b><div class="small">' + esc(msg) + '</div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn gold" id="pm-retry">Try again</button><button class="btn" id="pm-close">Close</button></div></div>';
+    } else if (phase === "prompt") {
+      h += '<div class="pay-phone"><div class="small muted">Prompt on ' + esc(keep.phoneFinal) + '</div><b>' + esc(networkOf(keep.phoneFinal) || "Mobile money") + ': approve ' + esc(money(amount)) + ' to RTSA?</b>' +
+        '<label class="small" style="display:block;margin:10px 0 4px">Enter your mobile money PIN</label><input id="pm-pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" style="width:100%;letter-spacing:.5em;font-size:20px"><div class="small muted" style="margin-top:6px">Demo PIN: 1234</div></div>' +
+        '<div id="pm-err" class="error-box hidden" style="margin-top:8px"></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn gold" id="pm-approve">Approve</button><button class="btn" id="pm-close">Cancel</button></div></div>';
+    } else {
+      h += '<div class="pay-tabs" role="tablist"><button class="btn sm ' + (method === "mobile_money" ? "gold" : "") + '" data-m="mobile_money" role="tab">Mobile money</button><button class="btn sm ' + (method === "card" ? "gold" : "") + '" data-m="card" role="tab">Card</button></div>';
+      if (method === "mobile_money") {
+        h += '<label class="small" style="display:block;margin:12px 0 4px" for="pm-phone">Mobile number</label><input id="pm-phone" inputmode="tel" placeholder="0961234567" style="width:100%" autocomplete="off">' +
+          '<div id="pm-net" class="small" style="margin-top:6px;min-height:18px"></div><div class="small muted" style="margin-top:6px">MTN 096/076 · Airtel 097/077 · Zamtel 095/075. Ending 00 simulates no funds.</div>' +
+''; 
+      } else {
+        h += '<label class="small" style="display:block;margin:12px 0 4px" for="pm-num">Card number</label><input id="pm-num" inputmode="numeric" placeholder="4242 4242 4242 4242" style="width:100%" autocomplete="off">' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px"><div><label class="small" for="pm-exp">Expiry (MM/YY)</label><input id="pm-exp" placeholder="12/29" style="width:100%" autocomplete="off"></div><div><label class="small" for="pm-cvv">Security code</label><input id="pm-cvv" type="password" inputmode="numeric" maxlength="4" style="width:100%" autocomplete="off"></div></div>' +
+          '<label class="small" style="display:block;margin:10px 0 4px" for="pm-name">Name on card</label><input id="pm-name" style="width:100%" autocomplete="off">' +
+          (otpNeeded ? '<label class="small" style="display:block;margin:10px 0 4px" for="pm-otp">Bank code</label><input id="pm-otp" inputmode="numeric" maxlength="6" style="width:100%"><div class="small muted">' + esc(otpNeeded) + "</div>" : "") +
+          '<div class="small muted" style="margin-top:8px">Test cards: 4242 4242 4242 4242 approves · 4000 0000 0000 3220 asks for a bank code · 4000 0000 0000 0002 declines</div>';
+      }
+      h += '<div id="pm-err" class="error-box hidden" style="margin-top:8px"></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn gold" id="pm-go">' + (method === "mobile_money" ? "Send prompt to my phone" : "Pay " + esc(money(amount))) + '</button><button class="btn" id="pm-close">Cancel</button></div></div>';
+    }
+    box.innerHTML = h; wire();
+  }
+  function err(t) { var e = document.getElementById("pm-err"); if (e) { e.textContent = t; e.classList.remove("hidden"); } }
+  function pay(details) {
+    var go = document.getElementById("pm-go") || document.getElementById("pm-approve"); if (go) { go.disabled = true; go.textContent = "Processing…"; }
+    api("/api/portal/fines/" + id + "/pay", { method: "POST", body: JSON.stringify({ method: method, details: details }) }).then(function (r) {
+      if (r.status === "paid") { phase = "done"; msg = "Receipt " + (r.receipt_number || r.payment_reference) + " is in your notifications."; if (typeof refreshBell === "function") refreshBell(); }
+      else { phase = "failed"; msg = r.reason || r.message; }
+      render();
+    }).catch(function (e) {
+      var m = e.message || "";
+      if (m.indexOf("OTP_REQUIRED:") === 0) { otpNeeded = m.slice(13); phase = "form"; render(); return; }
+      if (phase === "prompt") phase = "form";
+      render(); err(m);
+    });
+  }
+  function wire() {
+    if (phase !== "form") keep.card = null;
+    var q = function (s) { return box.querySelector(s); };
+    var close = q("#pm-close"); if (close) close.addEventListener("click", function () { box.remove(); if (phase === "done") go("fines"); });
+    var retry = q("#pm-retry"); if (retry) retry.addEventListener("click", function () { phase = "form"; otpNeeded = ""; render(); });
+    box.querySelectorAll("[data-m]").forEach(function (b) { b.addEventListener("click", function () { method = b.dataset.m; otpNeeded = ""; render(); }); });
+    var ph = q("#pm-phone"); if (ph) { ph.value = keep.phone || ""; ph.addEventListener("input", function () { keep.phone = ph.value; var n = networkOf(ph.value); q("#pm-net").textContent = n ? "Network: " + n : ""; }); var n0 = networkOf(ph.value); q("#pm-net").textContent = n0 ? "Network: " + n0 : ""; }
+    var go1 = q("#pm-go");
+    if (go1) go1.addEventListener("click", function () {
+      if (method === "mobile_money") {
+        var p = q("#pm-phone").value; keep.phone = p;
+        if (!networkOf(p)) return err("Enter a Zambian MTN, Airtel or Zamtel number, like 0961234567.");
+        keep.phoneFinal = p; phase = "prompt"; render(); return;
+      }
+      keep.card = { num: q("#pm-num").value, exp: q("#pm-exp").value, cvv: q("#pm-cvv").value, name: q("#pm-name").value };
+      pay({ number: q("#pm-num").value, expiry: q("#pm-exp").value, cvv: q("#pm-cvv").value, name: q("#pm-name").value, otp: otpNeeded && q("#pm-otp") ? q("#pm-otp").value : "" });
+    });
+    var ap = q("#pm-approve"); if (ap) ap.addEventListener("click", function () { pay({ phone: keep.phoneFinal, pin: q("#pm-pin").value }); });
+    var num = q("#pm-num");
+    if (num && keep.card) { num.value = keep.card.num; q("#pm-exp").value = keep.card.exp; q("#pm-cvv").value = keep.card.cvv; q("#pm-name").value = keep.card.name; }
+    if (num) num.addEventListener("input", function () { var d = num.value.replace(/\D/g, "").slice(0, 19); num.value = d.replace(/(.{4})/g, "$1 ").trim(); });
+  }
+  document.body.appendChild(box); render();
+}

@@ -299,3 +299,11 @@ html[data-theme] .login-card input { background: var(--panel-2); }
 .ring-key b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .cluster.six { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px 8px; }
 @media (min-width: 1100px) { .cluster.six { grid-template-columns: repeat(6, 1fr); } }
+
+/* ---- Simulated payment ---- */
+.pay-sim { margin: 10px 0 4px; padding: 6px 10px; border: 1px dashed var(--warn); color: var(--warn); border-radius: 6px; font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; }
+.pay-tabs { display: flex; gap: 8px; margin-top: 10px; }
+.pay-phone { margin-top: 12px; padding: 14px; background: var(--panel-2); border-radius: 12px; }
+.pay-result { text-align: center; padding: 18px 8px 6px; }
+.pay-tick { width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 8px; display: grid; place-items: center; font-size: 26px; font-weight: 700; }
+.pay-result.ok .pay-tick { background: var(--ok); color: var(--bg); } .pay-result.err .pay-tick { background: var(--err); color: var(--bg); }

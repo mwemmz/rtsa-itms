@@ -493,3 +493,7 @@ The demo data includes an appealable fine, a citizen with 9 of 12 points, and a 
 ## Officer plate scan
 
 On the ANPR and Insights screens an officer can photograph a number plate ("Scan plate with camera"). The text is read **on the officer's device** with Tesseract (WebAssembly, bundled in `app/static/vendor/tesseract`, Apache-2.0), so the photo never leaves the phone and no OCR service or API key is needed. The reading is a suggestion: candidates are shown with a confidence and the officer taps the right one (or retypes it) before anything is looked up or recorded. Plates are three letters then three or four digits. Tested on generated plates only; glare, steep angles, dirt and distance can defeat it, in which case the officer retakes the photo or types the plate.
+
+## Simulated payments (mobile money and card)
+
+Citizens pay a fine from **Fines & payments → Pay now**: choose **Mobile money** (MTN, Airtel or Zamtel; the phone number picks the network and a PIN prompt follows) or **Card**. It is a simulation, no real money moves and no PIN or card number is stored (only the network or brand and the last four digits). Demo values: PIN `1234`; a number ending `00` has no funds; card `4242 4242 4242 4242` approves, `4000 0000 0000 3220` asks for a bank code (`123456`), `4000 0000 0000 0002` declines. Code: `app/services/sim_pay.py`, gateways `sim_mobile` and `sim_card` in `app/services/payments.py`.

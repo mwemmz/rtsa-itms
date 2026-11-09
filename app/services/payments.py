@@ -8,6 +8,8 @@ Gateways
 --------
 ``sandbox``          completes instantly (development / demos)
 ``sandbox_decline``  always declines (to exercise failure paths)
+``sim_mobile``       simulated MTN/Airtel/Zamtel mobile money (PIN prompt), see ``sim_pay``
+``sim_card``         simulated card payment (test card numbers), see ``sim_pay``
 ``mobile_money``     asynchronous: payment stays ``pending`` until the gateway
                      calls ``POST /api/payments/webhook/mobile_money`` with an
                      HMAC-signed body.
@@ -40,7 +42,7 @@ from app.services.audit import log_action
 from app.services.notifications import notify
 from app.services.ownership import owes_challan, owner_user_id
 
-GATEWAYS = {"sandbox", "sandbox_decline", "mobile_money"}
+GATEWAYS = {"sandbox", "sandbox_decline", "mobile_money", "sim_mobile", "sim_card"}
 ASYNC_GATEWAYS = {"mobile_money"}
 STAFF = {UserRole.ADMIN, UserRole.OFFICER}
 
@@ -135,6 +137,7 @@ def create_payment(
     gateway: str = "sandbox",
     idempotency_key: str | None = None,
     description: str | None = None,
+    sim: dict | None = None,
 ) -> tuple[Payment, bool]:
     """Create and (for synchronous gateways) settle a payment.
 
@@ -150,6 +153,17 @@ def create_payment(
             if existing.paid_by != user.id:
                 raise HTTPException(status.HTTP_409_CONFLICT, "Idempotency key already used")
             return existing, False
+
+    # Simulated mobile money / card: validate what was typed before anything is created or charged.
+    sim_result = None
+    if gateway in ("sim_mobile", "sim_card"):
+        from app.services import sim_pay
+
+        try:
+            sim_result = sim_pay.run("mobile_money" if gateway == "sim_mobile" else "card", sim or {})
+        except sim_pay.SimError as e:
+            msg = str(e)
+            raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED if msg.startswith(sim_pay.OTP_PREFIX) else status.HTTP_400_BAD_REQUEST, msg)
 
     payable = resolve_payable(db, user, payment_type, entity_id, requested_amount)
 
@@ -182,6 +196,14 @@ def create_payment(
     if gateway in ASYNC_GATEWAYS:
         payment.gateway_reference = f"MM-{secrets.token_hex(6).upper()}"
         record_event(db, payment, "awaiting_gateway", user.id, note="Waiting for gateway confirmation")
+    elif sim_result is not None:
+        payment.gateway_reference = f"SIM-{secrets.token_hex(6).upper()}"
+        payment.gateway_payload_enc = encrypt(json.dumps({"gateway": gateway, "ref": payment.gateway_reference, **sim_result["meta"]}))
+        payment.description = f"{payment.description} ({sim_result['label']}, simulated)"[:300]
+        if sim_result["ok"]:
+            complete_payment(db, payment, user.id)
+        else:
+            fail_payment(db, payment, sim_result["reason"], user.id)
     elif gateway == "sandbox_decline":
         fail_payment(db, payment, "Declined by sandbox gateway", user.id)
     else:

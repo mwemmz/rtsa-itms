@@ -3097,14 +3097,7 @@ VIEWS.fines = async function () {
     $$("#fine-list .finnominate").forEach(function (btn) { btn.addEventListener("click", promptNominations); });
     $$("#fine-list .finpay").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        if (!confirm("Pay " + money(Number(btn.dataset.amount)) + " for " + btn.dataset.ref + "?")) return;
-        api("/api/portal/fines/" + btn.dataset.id + "/pay", { method: "POST" })
-          .then(function (r) {
-            toast("Paid — " + r.payment_reference + ". Receipt in notifications.", "ok");
-            refreshBell();
-            go("fines");
-          })
-          .catch(function (e) { toast(e.message, "err"); });
+        openPayModal(btn.dataset.id, btn.dataset.ref, Number(btn.dataset.amount));
       });
     });
   } catch (e) {
