@@ -137,6 +137,11 @@ def favicon():
     return Response(status_code=204)
 
 
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return FileResponse("app/static/app.html")
+
+
 @app.get("/app", response_class=HTMLResponse)
 def web_app():
     return FileResponse("app/static/app.html")
