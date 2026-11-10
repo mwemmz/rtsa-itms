@@ -42,6 +42,12 @@ DEFINITIONS: list[SettingDef] = [
     SettingDef("security.admin_ip_allowlist", "", "str", "security",
                "Only allow administrator accounts from these networks (comma-separated IPs or CIDR ranges, "
                "e.g. 41.223.10.0/24, 196.1.2.3). Leave empty to allow any network"),
+    SettingDef("security.officer_ip_allowlist", "", "str", "security",
+               "Only allow officer accounts from these networks (comma-separated IPs or CIDR ranges). "
+               "Leave empty to allow any network"),
+    SettingDef("security.blocked_ips", "", "str", "security",
+               "IP addresses or CIDR ranges that are blocked from signing in at all (comma-separated). "
+               "Use this to cut off an attacker's network"),
     SettingDef("security.captcha_enabled", "false", "bool", "security",
                "Require a solved CAPTCHA on login and registration"),
     SettingDef("security.require_email_verification", "false", "bool", "security",
@@ -167,7 +173,7 @@ def validate(key: str, raw_value) -> str:
     if defn is None:
         raise ValueError(f"Unknown setting: {key}")
     raw = ",".join(str(x) for x in raw_value) if isinstance(raw_value, list) else str(raw_value)
-    if key == "security.admin_ip_allowlist":
+    if key == "security.admin_ip_allowlist" or key == "security.officer_ip_allowlist" or key == "security.blocked_ips":
         return ", ".join(parse_networks(raw, strict=True)) if raw.strip() else ""
     if defn.type == "bool":
         if raw.strip().lower() not in ("true", "false", "1", "0", "yes", "no", "on", "off"):

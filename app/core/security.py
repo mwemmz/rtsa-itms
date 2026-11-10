@@ -96,20 +96,38 @@ def enforce_staff_mfa(user: User, path: str, db: Session) -> None:
         )
 
 
-def enforce_admin_network(user: User, request: Request, db: Session) -> None:
-    """Admins may be limited to approved networks (setting `security.admin_ip_allowlist`)."""
-    if user.role != UserRole.ADMIN:
-        return
-    allowlist = runtime_settings.get(db, "security.admin_ip_allowlist")
-    if not allowlist:
-        return
+def enforce_staff_network(user: User, request: Request, db: Session) -> None:
+    """Restrict staff access by network and block listed IPs.
+
+    - `security.blocked_ips` applies to everyone.
+    - `security.admin_ip_allowlist` applies to admins.
+    - `security.officer_ip_allowlist` applies to officers.
+    An empty allowlist means "any network".
+    """
     from app.services.auth import client_ip  # imported here: app.services.auth imports this module
 
-    if not runtime_settings.ip_allowed(allowlist, client_ip(request)):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator access is not allowed from this network.",
-        )
+    ip = client_ip(request)
+    if blocked:
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            addr = None
+        if addr is not None and any(addr in ipaddress.ip_network(n) for n in blocked):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access from this network is blocked.")
+
+    if user.role == UserRole.ADMIN:
+        allowlist = runtime_settings.get(db, "security.admin_ip_allowlist")
+    elif user.role == UserRole.OFFICER:
+        allowlist = runtime_settings.get(db, "security.officer_ip_allowlist")
+    else:
+        allowlist = ""
+    if allowlist:
+        if not runtime_settings.ip_allowed(allowlist, ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access is not allowed from this network.",
+            )
 
 
 def get_user_from_token(token: str, db: Session, typ: str = "access", touch: bool = True) -> User:
@@ -175,7 +193,7 @@ def get_current_user(
 ) -> User:
     background = request.headers.get(BACKGROUND_HEADER) == "1"
     user = get_user_from_token(token, db, touch=not background)
-    enforce_admin_network(user, request, db)
+    enforce_staff_network(user, request, db)
     enforce_staff_mfa(user, request.url.path, db)
     return user
 
