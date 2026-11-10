@@ -1222,7 +1222,7 @@ function tilesWithFallback(map) {
     async function poll() {
       if (!$("#lv-map")) return;
       try { var r = await api("/api/live/vehicles"); summary = r.summary; apply(r.vehicles); }
-      catch (e) { $("#lv-sum").innerHTML = '<span class="error-box">' + esc(e.message) + "</span>"; }
+      catch (e) { var ls = $("#lv-sum"); if (ls) ls.innerHTML = '<span class="error-box">' + esc(e.message) + "</span>"; }
       setTimeout(poll, 2000);
     }
     $("#lv-only").addEventListener("change", function (e) { only = e.target.checked; Object.keys(marks).forEach(function (k) { var el = marks[k].m.getElement(); if (el) el.style.display = visible(data[k]) ? "" : "none"; }); renderList(); });
