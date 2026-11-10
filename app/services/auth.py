@@ -145,11 +145,23 @@ def authenticate(db: Session, request: Request, email: str, password: str) -> di
         if user is not None:
             user.failed_login_count = (user.failed_login_count or 0) + 1
             limit = runtime_settings.get(db, "security.max_login_attempts")
+            base_minutes = runtime_settings.get(db, "security.lockout_minutes")
             if user.failed_login_count >= limit:
-                user.locked_until = now + timedelta(minutes=runtime_settings.get(db, "security.lockout_minutes"))
-                user.failed_login_count = 0
-                reason = "locked_out"
-                log_action(db, "account_locked", "user", str(user.id), f"Too many failed logins from {ip}", None)
+                lockouts = user.failed_login_count // limit
+                # Exponential backoff: each lockout lasts twice as long as the
+                # previous one, capped at 24 hours, so a patient attacker cannot
+                # just wait out a fixed window and keep trying forever.
+                minutes = min(1440, base_minutes * (2 ** (lockouts - 1)))
+                user.locked_until = now + timedelta(minutes=minutes)
+                # Cumulative counter is intentionally NOT reset: the next lockout
+                # is longer, and after enough of them the account is suspended
+                # until an admin reactivates it.
+                log_action(db, "account_locked", "user", str(user.id),
+                           f"Too many failed logins from {ip} (lockout #{lockouts}, {minutes} min)", None)
+                if user.failed_login_count >= limit * 5:
+                    user.is_active = False
+                    log_action(db, "account_suspended", "user", str(user.id),
+                               "Suspended after repeated lockouts; admin must reactivate", None)
         _record_attempt(db, email, ip, False, reason)
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
@@ -210,10 +222,17 @@ def verify_mfa_login(db: Session, request: Request, mfa_token: str, code: str) -
         record_failure(key)
         user.failed_login_count = (user.failed_login_count or 0) + 1
         limit = runtime_settings.get(db, "security.max_login_attempts")
+        base_minutes = runtime_settings.get(db, "security.lockout_minutes")
         if user.failed_login_count >= limit:
-            user.locked_until = utcnow() + timedelta(minutes=runtime_settings.get(db, "security.lockout_minutes"))
-            user.failed_login_count = 0
-            log_action(db, "account_locked", "user", str(user.id), "Too many failed MFA codes", None)
+            lockouts = user.failed_login_count // limit
+            minutes = min(1440, base_minutes * (2 ** (lockouts - 1)))
+            user.locked_until = utcnow() + timedelta(minutes=minutes)
+            log_action(db, "account_locked", "user", str(user.id),
+                       f"Too many failed MFA codes (lockout #{lockouts}, {minutes} min)", None)
+            if user.failed_login_count >= limit * 5:
+                user.is_active = False
+                log_action(db, "account_suspended", "user", str(user.id),
+                           "Suspended after repeated MFA failures; admin must reactivate", None)
         _record_attempt(db, user.email, ip, False, "bad_mfa_code")
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid verification code")
