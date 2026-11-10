@@ -124,6 +124,8 @@ def authenticate(db: Session, request: Request, email: str, password: str) -> di
     ip = client_ip(request)
     ip_key = f"login:{ip}"
     if not check_rate_limit(ip_key):
+        log_action(db, "ip_rate_limited", "auth", ip, f"Login rate limit exceeded from {ip}", None)
+        db.commit()
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many login attempts. Try again later.")
 
     email = email.strip()
@@ -163,6 +165,18 @@ def authenticate(db: Session, request: Request, email: str, password: str) -> di
                     log_action(db, "account_suspended", "user", str(user.id),
                                "Suspended after repeated lockouts; admin must reactivate", None)
         _record_attempt(db, email, ip, False, reason)
+        # Flag an IP that keeps failing across many accounts: this is the signal
+        # for an admin to block it at the firewall/WAF, since per-account lockouts
+        # alone won't stop a distributed or rotating-IP brute force.
+        recent_failures = (
+            db.query(LoginAttempt)
+            .filter(LoginAttempt.ip_address == ip, LoginAttempt.success.is_(False),
+                    LoginAttempt.created_at >= now - timedelta(hours=1))
+            .count()
+        )
+        if recent_failures >= 10:
+            log_action(db, "ip_brute_force_suspected", "auth", ip,
+                       f"{recent_failures} failed logins from {ip} in the last hour", None)
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
