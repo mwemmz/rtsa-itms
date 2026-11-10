@@ -16,7 +16,7 @@ function tbl(headers, rows) {
 }
 
 function pill(text, cls) { return '<span class="pill ' + (cls || "gray") + '">' + esc(text) + "</span>"; }
-function fail(id, e) { $(id).innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+function fail(id, e) { var el = $(id); if (el) el.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
 function short(id) { return String(id || "").slice(0, 8); }
 
 async function download(path, fallbackName) {
