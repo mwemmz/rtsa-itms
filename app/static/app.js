@@ -1443,7 +1443,7 @@ async function openPhotos(violationId) {
             '<br><span class="mono" title="SHA-256 fingerprint taken when stored">' + esc(p.sha256.slice(0, 16)) + "…</span></figcaption></figure>";
         }).join("") + "</div>"
       : '<div class="empty">No photos yet.</div>') +
-      (canAdd ? '<div class="toolbar" style="margin:14px 0 0;"><label class="btn gold sm">Add photos<input type="file" accept="image/*" multiple hidden class="pv-add"></label>' +
+      (canAdd ? '<div class="toolbar" style="margin:14px 0 0;"><label class="btn gold sm">Add photos<input type="file" accept="image/*,video/*" multiple hidden class="pv-add"></label>' +
         '<span class="small muted">' + (MAX_PHOTOS - photos.length) + " more allowed</span></div>" : "");
     $$("img[data-id]", body).forEach(function (img) {
       photoUrl(violationId, img.dataset.id).then(function (u) { img.src = u; }).catch(function () { img.alt = "Couldn't load photo"; });
@@ -2349,7 +2349,7 @@ VIEWS.violations = async function () {
             '<div class="small" id="time-hint" style="margin-top:6px;"></div></div>' +
           '<div class="field"><label>Description<span id="desc-req"> (optional)</span></label><textarea name="description" id="vio-desc" rows="2" maxlength="1000"></textarea></div>' +
           '<div class="field"><label>Photos (optional, up to ' + MAX_PHOTOS + ")</label>" +
-            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="vio-photos" accept="image/*" multiple hidden></label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="vio-photos" accept="image/*,video/*" multiple hidden></label>' +
             '<span class="small muted" id="photo-count"></span></div>' +
             '<div class="small muted" style="margin-top:6px;">The scene, the plate, the reading on the speed device. Photos are evidence: once attached they can\'t be removed.</div>' +
             '<div class="photo-grid" id="photo-preview" style="margin-top:10px;"></div></div>' +
@@ -2987,7 +2987,7 @@ function openAppealModal(id, ref) {
     APPEAL_REASONS.map(function (r) { return '<option value="' + r[0] + '">' + esc(r[1]) + "</option>"; }).join("") + "</select>" +
     '<label class="small" style="display:block;margin:10px 0 4px;">What happened (at least 15 characters)</label><textarea id="ap-details" style="width:100%;" rows="4" maxlength="1000"></textarea>' +
     '<label class="small" style="display:block;margin:10px 0 4px;">Evidence photos (optional, up to 5: a receipt, the scene, a screenshot)</label>' +
-    '<input type="file" id="ap-photos" accept="image/*" multiple style="width:100%;">' +
+    '<input type="file" id="ap-photos" accept="image/*,video/*" multiple style="width:100%;">' +
     '<div id="ap-error" class="error-box hidden" style="margin-top:8px;"></div>' +
     '<div style="display:flex;gap:8px;margin-top:14px;"><button class="btn gold" id="ap-send">Send appeal</button><button class="btn" id="ap-cancel">Cancel</button></div></div>';
   document.body.appendChild(box);
@@ -3583,7 +3583,7 @@ VIEWS.report_driver = async function () {
           '<div class="field"><label for="drv-when">When</label><input id="drv-when" name="observed_at" type="datetime-local" required></div>' +
           '<div class="field"><label for="drv-link">Link to a video (optional)</label><input id="drv-link" name="evidence_url" type="url" maxlength="500" placeholder="https://… e.g. a Facebook, TikTok or YouTube post"></div>' +
           '<div class="field"><label>Photos (optional, up to ' + MAX_PHOTOS + ")</label>" +
-            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="drv-photos" accept="image/*" multiple hidden></label>' +
+            '<div class="toolbar" style="margin-bottom:0;"><label class="btn ghost sm">Take or choose photos<input type="file" id="drv-photos" accept="image/*,video/*" multiple hidden></label>' +
             '<span class="small muted" id="drv-photo-count"></span></div>' +
             '<div class="small muted" style="margin-top:6px;">A video link, photos, or both: an officer needs to see it to act on it. The plate should be readable.</div>' +
             '<div class="photo-grid" id="drv-preview" style="margin-top:10px;"></div></div>' +

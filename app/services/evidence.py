@@ -11,29 +11,51 @@ from fastapi import HTTPException, Response, UploadFile
 
 from app.models.enforcement import ViolationPhoto
 
-MAX_PHOTO_BYTES = 5 * 1024 * 1024
+MAX_PHOTO_BYTES = 25 * 1024 * 1024  # 25 MB: photos or short video clips
 MAX_PHOTOS_PER_VIOLATION = 5
-PHOTO_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+PHOTO_EXTENSIONS = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+    "video/ogg": "ogv",
+}
+# Backwards-compatible alias used by older callers.
+MEDIA_EXTENSIONS = PHOTO_EXTENSIONS
 
 
-def image_type(data: bytes) -> str | None:
+def media_type(data: bytes) -> str | None:
+    # Images (magic bytes).
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    # Videos (magic bytes / ftyp box).
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brand = data[8:12]
+        if brand in (b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"M4A "):
+            return "video/mp4"
+        if brand == b"qt  ":
+            return "video/quicktime"
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/webm"
+    if data[:4] == b"OggS":
+        return "video/ogg"
     return None
 
 
+# Backwards-compatible alias.
+image_type = media_type
+
+
 def read_photo(upload: UploadFile) -> tuple[bytes, str]:
-    """The photo's bytes and type, or an HTTP error saying what's wrong with it."""
+    """The file's bytes and detected media type (image or video), or an HTTP error."""
     data = upload.file.read(MAX_PHOTO_BYTES + 1)
     if len(data) > MAX_PHOTO_BYTES:
-        raise HTTPException(status_code=413, detail="A photo can be up to 5 MB")
-    content_type = image_type(data)
+        raise HTTPException(status_code=413, detail="A file can be up to 25 MB")
+    content_type = media_type(data)
     if content_type is None:
-        raise HTTPException(status_code=415, detail="Only JPEG, PNG or WebP photos can be attached")
+        raise HTTPException(status_code=415, detail="Only JPEG/PNG/WebP photos or MP4/WebM/MOV/OGV videos can be attached")
     return data, content_type
 
 
