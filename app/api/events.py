@@ -89,20 +89,15 @@ def stream_ticket(current_user: User = Depends(get_current_user)) -> dict:
     Put this in the stream URL instead of the access token: it can't be used on
     any other endpoint, expires after ``STREAM_TICKET_SECONDS`` and works once.
     """
-    try:
-        ticket = create_access_token(
-            {
-                "sub": str(current_user.id),
-                "sid": str(current_user._session_id),  # type: ignore[attr-defined]
-                "typ": "stream",
-                "jti": secrets.token_urlsafe(12),
-            },
-            expires_delta=timedelta(seconds=STREAM_TICKET_SECONDS),
-        )
-    except Exception as exc:  # noqa: BLE001
-        import logging
-        logging.getLogger("events").exception("stream_ticket failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"stream ticket error: {exc}")
+    ticket = create_access_token(
+        {
+            "sub": str(current_user.id),
+            "sid": str(current_user._session_id),  # type: ignore[attr-defined]
+            "typ": "stream",
+            "jti": secrets.token_urlsafe(12),
+        },
+        expires_delta=timedelta(seconds=STREAM_TICKET_SECONDS),
+    )
     return {"ticket": ticket, "expires_in": STREAM_TICKET_SECONDS}
 
 

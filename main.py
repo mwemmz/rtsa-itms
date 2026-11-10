@@ -132,10 +132,7 @@ app.add_middleware(PlatformMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
-@app.exception_handler(Exception)
-async def _debug_500(request: Request, exc: Exception):
-    import traceback
-    return JSONResponse(status_code=500, content={"detail": str(exc), "trace": traceback.format_exc()[-1500:]})
+@app.get("/", response_class=HTMLResponse)
 
 
 @app.get("/", response_class=HTMLResponse)

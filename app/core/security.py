@@ -107,6 +107,7 @@ def enforce_staff_network(user: User, request: Request, db: Session) -> None:
     from app.services.auth import client_ip  # imported here: app.services.auth imports this module
 
     ip = client_ip(request)
+    blocked = runtime_settings.parse_networks(runtime_settings.get(db, "security.blocked_ips"))
     if blocked:
         import ipaddress
         try:

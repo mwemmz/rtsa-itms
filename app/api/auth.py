@@ -303,16 +303,11 @@ def get_me(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        data = UserResponse.model_validate(current_user).model_dump(mode="json")
-        data["permissions"] = sorted(permissions_for_role(db, current_user.role.value))
-        data["mfa_setup_required"] = auth_service._mfa_setup_needed(db, current_user)
-        data["email_verified"] = current_user.email_verified_at is not None
-        return data
-    except Exception as exc:  # noqa: BLE001
-        import logging
-        logging.getLogger("auth").exception("get_me failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"me error: {exc}")
+    data = UserResponse.model_validate(current_user).model_dump(mode="json")
+    data["permissions"] = sorted(permissions_for_role(db, current_user.role.value))
+    data["mfa_setup_required"] = auth_service._mfa_setup_needed(db, current_user)
+    data["email_verified"] = current_user.email_verified_at is not None
+    return data
 
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
