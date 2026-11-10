@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import mimetypes
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -132,9 +132,10 @@ app.add_middleware(PlatformMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    return Response(status_code=204)
+@app.exception_handler(Exception)
+async def _debug_500(request: Request, exc: Exception):
+    import traceback
+    return JSONResponse(status_code=500, content={"detail": str(exc), "trace": traceback.format_exc()[-1500:]})
 
 
 @app.get("/", response_class=HTMLResponse)
