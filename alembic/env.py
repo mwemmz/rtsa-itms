@@ -38,7 +38,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # One transaction per migration: a later migration (e.g. ALTER TYPE ... ADD VALUE on its own
+        # autocommit connection) can then see what an earlier one created, also on a brand-new database.
+        context.configure(connection=connection, target_metadata=target_metadata, transaction_per_migration=True)
         with context.begin_transaction():
             context.run_migrations()
 
