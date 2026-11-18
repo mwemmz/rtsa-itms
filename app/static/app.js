@@ -1614,9 +1614,13 @@ async function loadDrivers() {
     table.innerHTML = '<div class="table-wrap"><table><tr><th>Licence</th><th>Name</th><th>Class</th><th>Expires</th><th>Status</th><th></th></tr>' +
       items.map(function (dr) {
         return "<tr><td class='mono'><b>" + esc(dr.licence_number) + '</b></td><td>' + esc(dr.first_name) + " " + esc(dr.last_name) + '</td><td>' + esc(dr.licence_class) + '</td><td class="small">' + dt(dr.licence_expiry_date) + "</td><td>" + statusPill(dr.status) + "</td><td>" +
+          (window.openDriverRecord ? '<button class="btn gold sm drrec" data-id="' + esc(dr.id) + '">Record</button> ' : "") +
           (dr.status === "active" ? '<button class="btn ghost sm suspend" data-id="' + esc(dr.id) + '">Suspend</button>' : "") +
           "</td></tr>";
       }).join("") + "</table></div>";
+    $$("#driver-table .drrec").forEach(function (btn) {
+      btn.addEventListener("click", function () { window.openDriverRecord(btn.dataset.id); });
+    });
     $$("#driver-table .suspend").forEach(function (btn) {
       btn.addEventListener("click", function () {
         if (!confirm("Suspend this driver's licence? This revokes their driving privilege.")) return;

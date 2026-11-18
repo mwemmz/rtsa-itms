@@ -6,6 +6,7 @@
 (function extendNav() {
   [["admin"], ["officer"]].forEach(function (r) {
     NAV[r[0]] = (NAV[r[0]] || []).concat([
+      { id: "driver_record", label: "Driver records" },
       { id: "psv", label: "PSV & routes" },
       { id: "insurance", label: "Insurance" },
       { id: "insights", label: "Insights" },
@@ -20,7 +21,7 @@
 
   var GROUPS = [
     ["Overview", ["dashboard", "live", "bi", "insights", "reports"]],
-    ["Vehicles and drivers", ["vehicles", "drivers", "licensing", "inspections", "insurance", "psv"]],
+    ["Vehicles and drivers", ["vehicles", "drivers", "driver_record", "licensing", "inspections", "insurance", "psv"]],
     ["Enforcement", ["violations", "challans", "driver_reports", "anpr", "toll", "accidents"]],
     ["Roads", ["alerts", "planner"]],
     ["Money and system", ["payments", "integrations", "users", "rules", "settings", "audits", "system", "account"]]
@@ -1229,4 +1230,133 @@ function tilesWithFallback(map) {
     requestAnimationFrame(frame);
     poll();
   };
+})();
+
+
+// ---- Driver records: look up a driver and see their whole history with totals ----
+(function () {
+  var st = document.createElement("style");
+  st.textContent =
+    ".dr-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:space-between}" +
+    ".dr-head h2{margin:0 0 4px}.dr-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:6px 18px;margin-top:10px}" +
+    ".dr-meta div span{display:block;font-size:12px;opacity:.7}.dr-bars .row{display:grid;grid-template-columns:170px 1fr 120px;gap:10px;align-items:center;margin:6px 0}" +
+    ".dr-bar{height:14px;border-radius:7px;background:var(--gold,#ffc800)}.dr-months{display:flex;align-items:flex-end;gap:6px;height:110px;padding-top:6px}" +
+    ".dr-months div{flex:1;text-align:center;font-size:11px}.dr-months i{display:block;background:var(--gold,#ffc800);border-radius:4px 4px 0 0;margin:0 auto 4px;width:70%}" +
+    ".dr-flag{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;margin:2px 4px 2px 0}" +
+    ".dr-red{background:#5c1d1d;color:#ffb4b4}.dr-amber{background:#5a4513;color:#ffd98a}.dr-green{background:#1d4a33;color:#a6f0c6}" +
+    "@media (max-width:600px){.dr-bars .row{grid-template-columns:110px 1fr 80px}}" +
+    "@media print{nav,aside,header,.sidebar,.topbar,#dr-find,.no-print{display:none!important}body,.card{background:#fff!important;color:#000!important}.card{border:1px solid #999!important;break-inside:avoid}}";
+  document.head.appendChild(st);
+
+  var LABEL = {};
+  (typeof VO_TYPES !== "undefined" ? VO_TYPES : []).forEach(function (t) { LABEL[t[0]] = t[1]; });
+  function vtype(t) { return LABEL[t] || String(t || "").replace(/_/g, " "); }
+
+  window.openDriverRecord = function (id) { window.__drId = id; go("driver_record"); };
+
+  VIEWS.driver_record = async function () {
+    $("#content").innerHTML =
+      '<div class="card" id="dr-find"><h3>Look up a driver</h3>' +
+        '<div class="toolbar"><input type="search" id="dr-q" placeholder="Licence number, name or NRC…">' +
+        '<button class="btn gold sm" id="dr-go">Search</button></div><div id="dr-results" class="small">Search to see a driver\'s full record: offences, fines, demerit points, appeals and accidents.</div></div>' +
+      '<div id="dr-out"></div>';
+    $("#dr-go").addEventListener("click", search);
+    $("#dr-q").addEventListener("keydown", function (e) { if (e.key === "Enter") search(); });
+    if (window.__drId) { var id = window.__drId; window.__drId = null; show(id); }
+  };
+
+  async function search() {
+    var q = $("#dr-q").value.trim(), box = $("#dr-results");
+    if (!q) return;
+    box.innerHTML = '<div class="empty">Searching…</div>';
+    try {
+      var items = await api("/api/drivers?limit=50&search=" + encodeURIComponent(q));
+      if (!items.length) { box.innerHTML = '<div class="empty">No driver matches "' + esc(q) + '".</div>'; return; }
+      if (items.length === 1) { box.innerHTML = ""; return show(items[0].id); }
+      box.innerHTML = '<div class="table-wrap"><table><tr><th>Licence</th><th>Name</th><th>NRC</th><th>Status</th><th></th></tr>' +
+        items.map(function (d) {
+          return "<tr><td class='mono'><b>" + esc(d.licence_number) + "</b></td><td>" + esc(d.first_name + " " + d.last_name) + "</td><td>" + esc(d.id_number) +
+            "</td><td>" + statusPill(d.status) + '</td><td><button class="btn gold sm dr-open" data-id="' + esc(d.id) + '">Open record</button></td></tr>';
+        }).join("") + "</table></div>";
+      $$(".dr-open").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.id); }); });
+    } catch (e) { box.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+  }
+
+  async function show(id) {
+    var out = $("#dr-out");
+    out.innerHTML = '<div class="empty">Loading record…</div>';
+    try {
+      var r = await api("/api/drivers/" + id + "/record");
+      out.innerHTML = render(r);
+      $("#dr-print").addEventListener("click", function () { window.print(); });
+      out.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) { out.innerHTML = '<div class="error-box">' + esc(e.message) + "</div>"; }
+  }
+
+  function render(r) {
+    var d = r.driver, s = r.summary;
+    var flags = [];
+    if (d.status !== "active") flags.push(['dr-red', "Licence " + d.status]);
+    if (d.licence_expired) flags.push(["dr-red", "Licence expired"]);
+    if (s.points_left === 0) flags.push(["dr-red", "Demerit limit reached"]);
+    else if (s.points_left <= 3) flags.push(["dr-amber", s.points_left + " point(s) from suspension"]);
+    if (s.fines_overdue) flags.push(["dr-red", s.fines_overdue + " overdue fine(s)"]);
+    else if (s.fines_owed) flags.push(["dr-amber", s.fines_owed + " unpaid fine(s)"]);
+    if (s.offences_90d >= 2) flags.push(["dr-amber", "Repeat offender: " + s.offences_90d + " offences in 90 days"]);
+    if (!flags.length) flags.push(["dr-green", "Clean standing"]);
+
+    var head = '<div class="card"><div class="dr-head"><div><h2>' + esc(d.name) + '</h2><div class="mono">' + esc(d.licence_number) + "</div>" +
+      '<div style="margin-top:6px">' + flags.map(function (f) { return '<span class="dr-flag ' + f[0] + '">' + esc(f[1]) + "</span>"; }).join("") + "</div></div>" +
+      '<div class="no-print"><button class="btn ghost sm" id="dr-print">Print record</button></div></div>' +
+      '<div class="dr-meta">' +
+        meta("Status", statusPill(d.status)) + meta("Licence class", esc(d.licence_class)) + meta("NRC / ID", esc(d.id_number)) +
+        meta("Issued", dday(d.issue_date)) + meta("Expires", dday(d.expiry_date)) + meta("Phone", esc(d.phone || "—")) +
+        meta("Vehicles owned", esc((d.vehicles_owned || []).join(", ") || "—")) + meta("Restrictions", esc(d.restrictions || "None")) +
+      "</div></div>";
+
+    var kp = '<div class="grid cards">' +
+      kpi("Total offences", s.offences_total, s.offences_12m + " in the last 12 months · " + s.offences_90d + " in 90 days") +
+      kpi("Demerit points", s.points + " / " + s.points_limit, s.points_left + " left before suspension") +
+      kpi("Fines issued", s.fines_total, money(s.amount_issued) + " in total") +
+      kpi("Fines paid", s.fines_paid, money(s.amount_paid)) +
+      kpi("Fines owed", s.fines_owed, money(s.amount_owed) + (s.fines_overdue ? " · " + s.fines_overdue + " overdue" : "")) +
+      kpi("Appeals", s.appeals_total, s.appeals_upheld + " upheld · " + s.appeals_dismissed + " dismissed · " + s.appeals_pending + " pending") +
+      kpi("Fines cancelled", s.fines_cancelled, s.fines_under_appeal ? s.fines_under_appeal + " under appeal now" : "") +
+      kpi("Accidents", s.accidents_total, Object.keys(s.accidents_by_severity || {}).map(function (k) { return s.accidents_by_severity[k] + " " + k; }).join(" · ")) +
+      "</div>";
+
+    var max = Math.max.apply(null, r.by_type.map(function (t) { return t.count; }).concat([1]));
+    var types = r.by_type.length ? '<div class="dr-bars">' + r.by_type.map(function (t) {
+        return '<div class="row"><div>' + esc(vtype(t.type)) + '</div><div><div class="dr-bar" style="width:' + Math.max(6, 100 * t.count / max) + '%"></div></div><div class="small">' +
+          t.count + " × · " + money(t.amount) + "</div></div>";
+      }).join("") + "</div>" : '<div class="empty">No offences recorded.</div>';
+
+    var mmax = Math.max.apply(null, r.by_month.map(function (m) { return m.count; }).concat([1]));
+    var months = '<div class="dr-months">' + r.by_month.map(function (m) {
+      var lab = new Date(m.month + "-01T00:00:00").toLocaleString("en-ZM", { month: "short" });
+      return '<div title="' + m.count + ' offence(s)"><i style="height:' + (m.count ? Math.max(8, 80 * m.count / mmax) : 2) + 'px"></i>' + (m.count || "") + "<br>" + esc(lab) + "</div>";
+    }).join("") + "</div>";
+
+    var offences = r.offences.length ? '<div class="table-wrap"><table><tr><th>Date</th><th>Offence</th><th>Location</th><th>Vehicle</th><th>e-Challan</th><th>Fine</th><th>Status</th><th>Points</th></tr>' +
+      r.offences.map(function (o) {
+        return "<tr><td class='small'>" + dday(o.date) + "</td><td>" + esc(vtype(o.type)) + "</td><td class='small'>" + esc(o.location) + "</td><td class='mono'>" + esc(o.plate || "—") +
+          "</td><td class='mono small'>" + esc(o.challan || "—") + "</td><td>" + (o.amount != null ? money(o.amount) : "—") + "</td><td>" + (o.fine_status ? statusPill(o.fine_status) : "—") +
+          "</td><td>" + (o.points || "—") + "</td></tr>";
+      }).join("") + "</table></div>" : '<div class="empty">No offences recorded.</div>';
+
+    var acc = r.accidents.length ? '<div class="table-wrap"><table><tr><th>Date</th><th>Location</th><th>Severity</th><th>Vehicle</th><th>Role</th><th>Status</th></tr>' +
+      r.accidents.map(function (a) {
+        return "<tr><td class='small'>" + dday(a.date) + "</td><td>" + esc(a.location) + "</td><td>" + statusPill(a.severity) + "</td><td class='mono'>" + esc(a.plate) +
+          "</td><td>" + esc(a.role || "—") + "</td><td>" + statusPill(a.status) + "</td></tr>";
+      }).join("") + "</table></div>" : '<div class="empty">No accidents on record.</div>';
+
+    return head + kp +
+      '<div class="grid cards" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">' +
+        '<div class="card"><h3>Offences by type</h3>' + types + "</div>" +
+        '<div class="card"><h3>Offences per month (last 12 months)</h3>' + months + "</div></div>" +
+      '<div class="card"><h3>Offence history (' + r.offences.length + ")</h3>" + offences + "</div>" +
+      '<div class="card"><h3>Accidents</h3>' + acc + "</div>" +
+      '<div class="small" style="opacity:.7;margin:6px 2px">Record generated ' + dt(r.generated_at) + ". Viewing this record is written to the audit log.</div>";
+  }
+  function meta(k, v) { return "<div><span>" + esc(k) + "</span>" + v + "</div>"; }
 })();

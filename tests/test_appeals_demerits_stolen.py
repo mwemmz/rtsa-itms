@@ -265,3 +265,17 @@ def test_appeal_can_carry_photos_the_officer_can_see():
     assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=officer).status_code == 200
     assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=owner).status_code == 200
     assert client.get(f"/api/portal/appeals/{a['id']}/photos/{pid}", headers=stranger).status_code == 404
+
+
+def test_driver_record_totals_offences_fines_and_points():
+    officer, owner, vid, plate, driver_id = _world()
+    _fine(officer, vid, driver_id, "using_phone")
+    _fine(officer, vid, driver_id, "running_red_light")
+    r = client.get(f"/api/drivers/{driver_id}/record", headers=officer)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    s = j["summary"]
+    assert s["offences_total"] == 2 and s["fines_total"] == 2 and s["fines_owed"] == 2
+    assert s["points"] > 0 and {t["type"] for t in j["by_type"]} == {"using_phone", "running_red_light"}
+    assert len(j["offences"]) == 2 and all(o["challan"] for o in j["offences"])
+    assert client.get(f"/api/drivers/{driver_id}/record", headers=owner).status_code == 403

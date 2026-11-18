@@ -647,6 +647,86 @@ def seed_demo_owner_bal9999() -> None:
         db.close()
 
 
+def seed_driver_history() -> None:
+    """A repeat offender with a year of history, so the driver record screen has something to total:
+    offences of several kinds, fines paid, owed, overdue and cancelled on appeal, demerit points and an accident.
+    Safe to run repeatedly: does nothing once the driver exists."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.api.enforcement import VIOLATION_PENALTIES
+    from app.core.security import hash_password
+    from app.models.accident import Accident, AccidentSeverity, AccidentStatus, AccidentVehicle
+    from app.models.driver import Driver, LicenceClass
+    from app.models.enforcement import Appeal, Challan, ChallanStatus, DemeritPoint, Violation, ViolationType
+    from app.models.user import User, UserRole
+    from app.models.vehicle import Vehicle
+    from app.services.demerits import POINTS
+
+    db = SessionLocal()
+    try:
+        if db.query(Driver).filter(Driver.licence_number == "ZM-PHIRI-2019").first():
+            return
+        veh = db.query(Vehicle).filter(Vehicle.registration_number == "BAL 5678").first()
+        officer = db.query(User).filter(User.email == "officer@rtsa.gov.zm").first()
+        now = datetime.utcnow()
+        user = db.query(User).filter(User.email == "mutale.phiri@example.com").first()
+        if not user:
+            user = User(email="mutale.phiri@example.com", hashed_password=hash_password("mutale123"), full_name="Mutale Phiri",
+                        phone_number="+260966100200", nrc_number="246810/11/1", role=UserRole.CITIZEN,
+                        email_verified_at=datetime.now(timezone.utc))
+            db.add(user)
+            db.flush()
+        drv = Driver(user_id=user.id, licence_number="ZM-PHIRI-2019", first_name="Mutale", last_name="Phiri", id_number="246810",
+                     date_of_birth=datetime(1991, 4, 17), phone_number="+260966100200", email="mutale.phiri@example.com",
+                     licence_class=LicenceClass.B, licence_issue_date=now - timedelta(days=2200),
+                     licence_expiry_date=now + timedelta(days=45))
+        db.add(drv)
+        db.flush()
+        # (days ago, type, location, fine status, speed, limit)
+        history = [
+            (420, ViolationType.ILLEGAL_PARKING, "Great East Road - Chelstone", ChallanStatus.PAID, None, None),
+            (395, ViolationType.REAR_SEAT_BELT, "Cairo Road - Lusaka CBD", ChallanStatus.PAID, None, None),
+            (375, ViolationType.ILLEGAL_PARKING, "Kafue Road - Chilanga", ChallanStatus.PAID, None, None),
+            (175, ViolationType.RUNNING_RED_LIGHT, "Independence Ave / Church Rd", ChallanStatus.CANCELLED, None, None),
+            (120, ViolationType.SPEEDING, "Great North Road - Chibombo", ChallanStatus.PAID, 104, 80),
+            (60, ViolationType.ILLEGAL_PARKING, "Cha Cha Cha Road", ChallanStatus.OVERDUE, None, None),
+            (28, ViolationType.USING_PHONE, "Leopards Hill Road", ChallanStatus.UNPAID, None, None),
+            (6, ViolationType.SPEEDING, "Mumbwa Road - Lilayi turn-off", ChallanStatus.UNPAID, 97, 80),
+        ]
+        for i, (ago, vt, loc, st, spd, lim) in enumerate(history):
+            when = now - timedelta(days=ago)
+            v = Violation(vehicle_id=veh.id if veh else None, driver_id=drv.id, violation_type=vt, location=loc, timestamp=when,
+                          speed_kmh=spd, speed_limit_kmh=lim, recorded_by=officer.id if officer else None,
+                          description="Recorded at a roadside check.")
+            db.add(v)
+            db.flush()
+            c = Challan(reference=f"CH-PHIRI-{i + 1:03d}", violation_id=v.id, vehicle_id=veh.id if veh else None, driver_id=drv.id,
+                        penalty_amount=VIOLATION_PENALTIES.get(vt, 100000), due_date=when + timedelta(days=30), status=st)
+            db.add(c)
+            db.flush()
+            pts = POINTS.get(vt, 0)
+            if pts:
+                db.add(DemeritPoint(driver_id=drv.id, violation_id=v.id, points=pts, reason=vt.value, awarded_at=when,
+                                    voided_at=when + timedelta(days=20) if st == ChallanStatus.CANCELLED else None,
+                                    voided_reason="Appeal upheld" if st == ChallanStatus.CANCELLED else None))
+            if st == ChallanStatus.CANCELLED:
+                db.add(Appeal(challan_id=c.id, appellant_id=user.id, reason="signal_fault",
+                              details="The traffic light at this junction was not working; photo of the dark signal attached.",
+                              prior_status="unpaid", status="upheld", decided_by=officer.id if officer else None,
+                              decided_at=when + timedelta(days=20), decision_note="Signal fault confirmed by the council."))
+        acc = Accident(location="Great East Road - Arcades roundabout", occurred_at=now - timedelta(days=150),
+                       severity=AccidentSeverity.MINOR, status=AccidentStatus.CLOSED,
+                       description="Rear-end collision in slow traffic; no injuries.")
+        db.add(acc)
+        db.flush()
+        db.add(AccidentVehicle(accident_id=acc.id, vehicle_id=veh.id if veh else None, driver_id=drv.id,
+                               plate_number=veh.registration_number if veh else "BAL 5678", role="at fault"))
+        db.commit()
+        print("Driver history ready: Mutale Phiri, licence ZM-PHIRI-2019 (mutale.phiri@example.com / mutale123)")
+    finally:
+        db.close()
+
+
 def seed_psv_baseline() -> None:
     """Make PSV & routes show something on a fresh database: 3 operators, 3 minibuses with permits,
     two with a geo-fence route, and one sample route alert. Skipped if any PSV operator exists."""
@@ -714,4 +794,5 @@ if __name__ == "__main__":
     seed_demo_portal()
     seed_psv_baseline()
     seed_demo_owner_bal9999()
+    seed_driver_history()
     print("Seed complete.")
